@@ -1,0 +1,52 @@
+# Raw legal-document corpus: large binaries, reproducible from Laws/SOURCES.md
+Laws/*
+!Laws/*.md
+
+# OS junk
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Editors
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# Env files (never commit secrets/local config)
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+
+# --- frontend/ (Next.js) ---
+frontend/node_modules
+frontend/.pnp
+frontend/.pnp.*
+frontend/.yarn/*
+!frontend/.yarn/patches
+!frontend/.yarn/plugins
+!frontend/.yarn/releases
+!frontend/.yarn/versions
+frontend/coverage
+frontend/.next/
+frontend/out/
+frontend/build
+*.pem
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+frontend/.vercel
+*.tsbuildinfo
+frontend/next-env.d.ts
+
+# --- backend/ (Python/FastAPI) ---
+backend/.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+
+
+sample.html

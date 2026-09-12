@@ -1,0 +1,131 @@
+"""Pydantic schemas for the /api/query contract.
+
+These mirror frontend/lib/types.ts field-for-field (snake_case here,
+camelCase there) so the two sides can be kept in sync by hand until
+codegen is worth the trouble.
+"""
+
+from __future__ import annotations
+
+from typing import Annotated, Literal, Union
+
+from pydantic import BaseModel, Field
+
+
+class TextSegment(BaseModel):
+    type: Literal["text"] = "text"
+    text: str
+
+
+class StrongSegment(BaseModel):
+    type: Literal["strong"] = "strong"
+    text: str
+
+
+class CitationSegment(BaseModel):
+    type: Literal["citation"] = "citation"
+    key: str
+    label: str
+
+
+Segment = Annotated[
+    Union[TextSegment, StrongSegment, CitationSegment],
+    Field(discriminator="type"),
+]
+
+
+class ParagraphBlock(BaseModel):
+    type: Literal["paragraph"] = "paragraph"
+    segments: list[Segment]
+
+
+class StepsBlock(BaseModel):
+    """Numbered circle steps, e.g. the FIR filing walkthrough."""
+
+    type: Literal["steps"] = "steps"
+    items: list[list[Segment]]
+
+
+class BulletsBlock(BaseModel):
+    """Bullet list with a bold lead-in per item, e.g. the DAO answer."""
+
+    type: Literal["bullets"] = "bullets"
+    items: list[list[Segment]]
+
+
+ContentBlock = Annotated[
+    Union[ParagraphBlock, StepsBlock, BulletsBlock],
+    Field(discriminator="type"),
+]
+
+
+class Citation(BaseModel):
+    key: str
+    title: str
+    badge: str
+    source: str
+    text: str
+    note: str
+
+
+IconColorToken = Literal["amber", "blue", "emerald", "purple", "slate"]
+
+
+class Reference(BaseModel):
+    title: str
+    subtitle: str
+    url: str
+    icon: str
+    # A semantic token, not a raw Tailwind class: the frontend owns the
+    # actual class string so Tailwind's content scanner can see it
+    # statically (it can't see strings that only ever exist server-side).
+    icon_color: IconColorToken
+
+
+class CopyQuickAction(BaseModel):
+    kind: Literal["copy"] = "copy"
+    label: str
+    copy_text: str
+
+
+class PreviewQuickAction(BaseModel):
+    kind: Literal["preview"] = "preview"
+    label: str
+    citation_key: str
+
+
+class FollowupQuickAction(BaseModel):
+    kind: Literal["followup"] = "followup"
+    label: str
+    question: str
+
+
+QuickAction = Annotated[
+    Union[CopyQuickAction, PreviewQuickAction, FollowupQuickAction],
+    Field(discriminator="kind"),
+]
+
+
+class HistoryMessage(BaseModel):
+    """A prior turn, as sent back by the client for context."""
+
+    id: str
+    role: Literal["user", "assistant"]
+    text: str | None = None
+
+
+class QueryRequest(BaseModel):
+    question: str
+    history: list[HistoryMessage] = Field(default_factory=list)
+
+
+class AssistantMessage(BaseModel):
+    id: str
+    role: Literal["assistant"] = "assistant"
+    heading: str
+    subheading: str
+    unsupported: bool = False
+    blocks: list[ContentBlock]
+    citations: dict[str, Citation] = Field(default_factory=dict)
+    references: list[Reference] = Field(default_factory=list)
+    quick_actions: list[QuickAction] = Field(default_factory=list)
