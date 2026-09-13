@@ -19,3 +19,10 @@
 - Sourced from bdcode.gov.bd and bdlaws.minlaw.gov.bd and logged in `Laws/SOURCES.md` with each file's origin URL, so provenance is traceable per document.
 - Renamed files from their source-URL-derived names to their actual act titles, since the original names gave no indication of content.
 - Found duplicate copies of the same act (CrPC had 3 copies, 5 other acts had 2 each, downloaded from different sources) — deduped, canonical copy kept per act.
+
+## LLM-only baseline (step 4)
+- Added dedicated `ainshonglap` conda env (Python 3.12, torch cu128) for local model work.
+- Added local inference scripts (`backend/scripts/local_llm_test.py`, `local_llm_chat.py`) running Qwen2.5-VL-3B-Instruct on-GPU for text-only Q&A.
+- Added Gemini 2.5 Flash scripts (`backend/scripts/gemini_test.py`, `gemini_chat.py`) using the Google AI Studio API.
+- Both give batch (fixed test questions) and interactive (REPL) modes.
+- Ran both models against the same 5 sample legal questions: Qwen2.5-VL-3B hallucinated section content/citations on 3 of 5; Gemini 2.5 Flash answered all 5 correctly with accurate citations.
