@@ -12,6 +12,7 @@
 ## Step-by-step pipeline
 1. ~~Dedup Laws PDFs, pick canonical copy per act.~~ (done)
 2. Parse PDFs → structured text (act > section > subsection).
+   - Next: trial each viable option from `pdf-parsing-options.md` (PyMuPDF+custom regex, Docling, Marker) on CrPC/Penal Code/Evidence Act, score output against the `bangladesh-legal-qa-dataset` reference JSONs (where they overlap) to pick the best performer before committing.
 3. Chunk respecting section boundaries, attach metadata (act, section, source).
 4. ~~LLM-only baseline (no retrieval) — establish floor.~~ (done: tested Qwen2.5-VL-3B local + Gemini 2.5 Flash API on 5 sample questions)
 5. Basic vector retrieval + LLM (RAG v1).
