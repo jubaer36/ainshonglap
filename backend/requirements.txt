@@ -1,11 +1,14 @@
+# CUDA-linked torch wheels for the local-model experiments below need this
+# extra index — kept at the top per pip's convention for global options.
+--extra-index-url https://download.pytorch.org/whl/cu128
+
 fastapi>=0.115
 uvicorn[standard]>=0.30
 pydantic>=2.7
 python-dotenv==1.2.3
 
 # Local-model / LLM-baseline experiments (scripts/, see plan.md step 4).
-# CUDA-linked torch wheels — needs the ainshonglap conda env, not a plain venv.
---extra-index-url https://download.pytorch.org/whl/cu128
+# Needs the ainshonglap conda env, not a plain venv.
 torch==2.11.0+cu128
 torchvision==0.26.0+cu128
 

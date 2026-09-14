@@ -19,12 +19,14 @@ first since the frontend calls it over HTTP.
 ### Backend
 
 ```bash
+conda create -n ainshonglap python=3.12   # first time only
+conda activate ainshonglap
 cd backend
-python3 -m venv .venv
-source .venv/bin/activate
 pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
+
+(see `backend/README.md` for details, incl. the local-model experiment scripts)
 
 Runs at http://localhost:8000 (API docs at `/docs`, health check at `/health`).
 
