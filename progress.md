@@ -41,6 +41,14 @@
 - `verify_chunks.py` checks the output against the parsed JSON independently — 3/3 acts pass all seven checks: text reproduced as an ordered word sequence, no duplication, no orphans, unique ids, metadata and prefix in agreement.
 - It caught three bugs the chunker reported as clean, including duplicate chunk ids that would have silently overwritten entries in a vector store. The first fidelity check was itself wrong — a set comparison, which passes even when text is duplicated or scrambled.
 
+## Retrieval (step 6-8)
+- BGE-M3 embeddings + FAISS flat index over the 1,321 chunks; dense-only to start, per statute-specific evidence that hybrid BM25 does not reliably help here.
+- Built an eval harness first: 608 questions from `bangladesh-legal-qa-dataset` with gold Act + section, scored on Recall@k, MRR and Act accuracy. Nothing is adopted without moving a number on it.
+- Baseline: R@1 32.7%, R@20 68.4%, Act accuracy 82.2%. Checked the test was fair — only 2% of gold answers are absent from our corpus, and 9 of those 10 are mislabelled in the dataset itself.
+- A/B'd the two assumptions baked into chunking (hierarchy prefix, chunk budget). **Both flat** — 3.0pp and 0.7pp spreads against a ±3.7pp confidence interval. The prefix was cut back to `Act, Section N: title`, saving 38 tokens a chunk for no measurable loss.
+- Added `bge-reranker-v2-m3` over the dense top-20: **R@1 32.7% → 41.9%** (+9.2pp, ~4.8 standard errors) and Act accuracy 82.2% → 87.2%. First significant result.
+- Full log with hypotheses, configs and decisions in `experiments.md`.
+
 ## What this establishes
-- Parsing, verification and chunking are done for the 3 main acts, with correctness measured rather than assumed at each stage.
-- Next: embed the chunks and stand up a vector store (step 6), likely after parsing the remaining 25 acts so the index is built once.
+- Parsing, verification, chunking and retrieval are done for the 3 main acts, with correctness measured rather than assumed at each stage — including two negative results that overturned assumptions taken from published work.
+- Next: query rewriting — 32% of gold sections are never retrieved at all, now the largest single bucket and beyond what reranking can reach.

@@ -42,22 +42,20 @@ def ntok(s: str) -> int:
 
 
 def hierarchy_path(act: str, sec: dict) -> str:
-    bits = [act]
-    if sec.get("part"):
-        p = f"Part {sec['part']}"
-        if sec.get("part_title"):
-            p += f": {sec['part_title'].title()}"
-        bits.append(p)
-    if sec.get("chapter"):
-        c = f"Chapter {sec['chapter']}"
-        if sec.get("chapter_title"):
-            c += f": {sec['chapter_title'].title()}"
-        bits.append(c)
-    s = f"Section {sec['section_number']}"
+    """Act + section + title only.
+
+    E2 (experiments.md) A/B'd five prefix shapes and found a 3.0pp total spread
+    against a +/-3.7pp confidence interval — nothing separable, including no
+    prefix at all. The full Part>Chapter>Section path cost 38 tokens a chunk
+    (35% larger) for no measurable gain, so it is gone. This shorter form was
+    nominally best on every metric; that lead is NOT significant, it is simply
+    the cheapest of the equals. Part and chapter remain in metadata for
+    filtering and citation display.
+    """
+    t = f"{act}, Section {sec['section_number']}"
     if sec.get("section_title"):
-        s += f": {sec['section_title']}"
-    bits.append(s)
-    return " > ".join(bits)
+        t += f": {sec['section_title']}"
+    return t
 
 
 def split_oversized(sec: dict, max_tokens: int) -> list[tuple[str, str | None]]:

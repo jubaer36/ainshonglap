@@ -61,7 +61,13 @@ retrieval-side change; it does not alter how we chunk, so it can wait until
 there is an eval set to measure it against.
 
 ### 5. Context prepended to each chunk
-**Adopted — and this is the highest-value piece.** Two independent results:
+**Adopted, then cut back after measurement — see `experiments.md` E2.** The
+reasoning below is what justified it; an A/B on our own corpus later found the
+effect undetectable (3.0pp spread against a ±3.7pp interval), including versus
+no prefix at all. The prefix is now `Act, Section N: title` rather than the full
+Part>Chapter path, saving 38 tokens a chunk. Recorded here rather than rewritten
+because importing a published number without its setup was the mistake worth
+remembering. Two results originally cited:
 
 - [Anthropic, *Contextual Retrieval*](https://www.anthropic.com/engineering/contextual-retrieval):
   prepending chunk-specific context before embedding cut retrieval failures by

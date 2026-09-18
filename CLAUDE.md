@@ -14,6 +14,9 @@ section-level citations.
 Supporting detail, read only when working on that area:
 `parsing-plan.md` (parser options tested and the decision),
 `chunking-plan.md` (chunking options and the decision),
+`retrieval-plan.md` (embedder and retrieval options and the decision),
+`retrieval-baseline.md` (measured retrieval numbers),
+`experiments.md` (experiment log — read before re-testing something),
 `verification.md` (how both stages are checked).
 
 **Ignore `findings.md`.** It is old scratch notes, not a source of truth.
@@ -45,5 +48,33 @@ uvicorn app.main:app --reload            # API on :8000
 ```
 
 Secrets live in `backend/.env.local` (gitignored).
+
+## The pipeline
+
+Each stage is checked against something external, not self-reported:
+
+```bash
+python scripts/parse_law_pdf.py --all    # PDFs    -> Laws/main/parsed/*.json
+python scripts/verify_parsed.py          #   check vs the PDF + bdlaws oracle
+python scripts/chunk_sections.py         # parsed  -> Laws/main/chunks/*.json
+python scripts/verify_chunks.py          #   check vs the parsed JSON
+python scripts/build_index.py            # chunks  -> BGE-M3 vectors + FAISS
+python scripts/eval_retrieval.py         #   Recall@k / MRR / Act accuracy
+python scripts/rerank.py --topk 20       # + cross-encoder rerank, with delta
+python scripts/experiment_retrieval.py --what all   # A/B prefix, chunk budget
+```
+
+## Conventions
+
+- Parsing and chunking are deterministic: re-running reproduces byte-identical
+  output.
+- Verifiers re-read the source rather than trusting the previous stage's own
+  statistics. A parser that drops text can drop it from its own accounting too.
+- When a check and the data disagree, **suspect the check first** — several
+  "failures" turned out to be bugs in the checker.
+- **Nothing is adopted without moving a number on the 608-question eval set.**
+  At n=608 the 95% confidence interval is ±3.7pp, so smaller gaps are not
+  results. Two techniques taken from published work were later found to do
+  nothing here — read `experiments.md` before re-testing something.
 
 

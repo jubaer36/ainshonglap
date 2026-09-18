@@ -20,6 +20,9 @@ citations.
 - `parsing-plan.md` — PDF parsing: options tested, decision, results, gaps
 - `verification.md` — how the parsed JSON is verified, and what is outstanding
 - `chunking-plan.md` — chunking options, evidence, and the decision
+- `retrieval-plan.md` — embedder / vector store / reranking options and the decision
+- `retrieval-baseline.md` — first measured retrieval numbers and what they say to do next
+- `experiments.md` — experiment log: objective, hypothesis, config, result, decision
 
 ## Parsing the law PDFs
 
@@ -42,6 +45,15 @@ Then chunk for retrieval, and verify that too:
 ```bash
 python scripts/chunk_sections.py     # -> Laws/main/chunks/<act>.json
 python scripts/verify_chunks.py
+```
+
+Then embed, index and measure retrieval:
+
+```bash
+python scripts/build_index.py        # BGE-M3 vectors -> Laws/main/index/
+python scripts/eval_retrieval.py     # Recall@k / MRR / Act accuracy vs gold
+python scripts/rerank.py --topk 20   # + cross-encoder rerank, with the delta
+python scripts/experiment_retrieval.py --what all   # A/B prefix and chunk budget
 ```
 
 ## Running locally

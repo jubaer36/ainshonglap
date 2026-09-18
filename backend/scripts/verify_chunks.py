@@ -118,10 +118,14 @@ def verify(act_key: str, verbose: bool) -> bool:
             k5_bad.append((c["id"], "metadata != parsed section"))
             continue
         pre = prefix_of(c)
+        # The prefix must identify the chunk's section and its Act — those are
+        # what a reader needs to place a citation. It is NOT required to repeat
+        # the chapter: E2 showed the longer Part>Chapter path bought nothing, so
+        # chapter now lives in metadata only (used for filtering and display).
         if f"Section {m['section']}" not in pre:
             k5_bad.append((c["id"], "prefix omits its own section number"))
-        elif m.get("chapter") and f"Chapter {m['chapter']}" not in pre:
-            k5_bad.append((c["id"], "prefix omits its chapter"))
+        elif m.get("act") and m["act"].split(",")[0] not in pre:
+            k5_bad.append((c["id"], "prefix omits its Act"))
 
     # K6 — sizes
     sizes = sorted(int(len(c["text"].split()) * 1.35) for c in chunks)
