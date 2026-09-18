@@ -10,6 +10,32 @@ citations.
 - `backend/` — FastAPI API, currently serving canned responses behind the
   real `/api/query` contract (see `backend/README.md`)
 - `Laws/` — source legal PDFs; see `Laws/SOURCES.md` for provenance
+- `Laws/main/parsed/` — parser output, one hierarchical JSON per act
+  (Act → Part → Chapter → Section → Subsection → Clause)
+
+## Documents
+
+- `plan.md` — pipeline steps and where each one stands
+- `progress.md` — what has been built, and why
+- `parsing-plan.md` — PDF parsing: options tested, decision, results, gaps
+- `verification.md` — how the parsed JSON is verified, and what is outstanding
+- `pdf-parsing-options.md` — superseded; the pre-testing survey
+
+## Parsing the law PDFs
+
+```bash
+conda activate ainshonglap
+cd backend
+python scripts/parse_law_pdf.py --all       # CrPC, Penal Code, Evidence Act
+python scripts/parse_law_pdf.py --act crpc  # one act
+```
+
+Writes `Laws/main/parsed/<act>.json`. Then verify against the source PDF and an
+independent oracle — see `verification.md` for what each check does:
+
+```bash
+python scripts/verify_parsed.py
+```
 
 ## Running locally
 

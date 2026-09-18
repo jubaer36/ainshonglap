@@ -1,6 +1,11 @@
-# Raw legal-document corpus: large binaries, reproducible from Laws/SOURCES.md
+# Raw legal-document corpus: large binaries, reproducible from Laws/SOURCES.md.
+# Laws/main/ is the exception — the three acts actually ingested, plus their
+# parsed JSON, are tracked so the pipeline's input and output are reviewable.
+# Note: git will not descend into an ignored directory, so the directory itself
+# has to be un-ignored before anything inside it can be.
 Laws/*
 !Laws/*.md
+!Laws/main/
 
 # OS junk
 .DS_Store
@@ -47,6 +52,9 @@ backend/.venv/
 __pycache__/
 *.pyc
 *.egg-info/
+
+# Parser output — regenerate with backend/scripts/build_hierarchy.py
+backend/scripts/*_out/
 
 
 

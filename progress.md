@@ -1,28 +1,38 @@
 # Progress
 
 ## Frontend
-- Built a Next.js chat UI as the user-facing entry point for asking legal questions.
-- Wired it to a `POST /api/query` contract so UI and backend can be developed independently against a shared shape.
-- Rendering supports structured answer content — paragraphs, numbered steps, bullet lists — because legal answers (e.g. FIR filing steps) need more than a flat text blob.
-- Citations render as inline previews and a reference panel, so a claim in an answer can be traced back to its source without leaving the chat.
-- Quick actions (copy / preview citation / ask followup) added to reduce friction for common next steps a user takes after an answer.
-- TypeScript types (`lib/types.ts`) hand-mirror the backend's Pydantic schemas field-for-field, keeping both sides in sync until codegen is worth adding.
+- Next.js chat UI, wired to a `POST /api/query` contract so UI and backend could be built independently.
+- Renders structured answers (paragraphs, numbered steps, bullets) rather than flat text — legal answers like FIR filing steps need the structure.
+- Citations render inline with a reference panel, so a claim traces back to its source without leaving the chat.
+- TS types mirror the backend's Pydantic schemas by hand.
 
 ## Backend
-- FastAPI service scaffolded with the real route shapes (`/health`, `POST /api/query`, `GET /api/citations`) so the frontend has a stable contract to build against before retrieval/LLM logic exists.
-- `/api/query` is currently backed by canned data with keyword matching (`app/data/mock_responses.py`) — a stand-in that returns realistic-shaped answers so the full UI (citations, blocks, quick actions) could be built and tested end-to-end before the retrieval pipeline exists.
-- Isolating the mock logic to one module was deliberate: replacing it with real ingestion/retrieval/generation should require no changes to the route or the frontend.
-- Only 2 Q&A examples are seeded, enough to exercise every content-block/citation type in the schema, not meant as coverage.
+- FastAPI service with the real route shapes (`/health`, `POST /api/query`, `GET /api/citations`).
+- `/api/query` still returns canned data — a deliberate stand-in so the full UI could be built and tested before the retrieval pipeline existed. Isolated to one module, so replacing it needs no route or frontend change.
 
 ## Legal documents
-- Collected 30 PDFs under `Laws/` — the Code of Criminal Procedure, 1898 plus related criminal-law acts (Penal Code, Evidence Act, Police Act, Arms Act, etc.) — scoped to match the assessment's brief rather than pulling in unrelated civil/tax/corporate law.
-- Sourced from bdcode.gov.bd and bdlaws.minlaw.gov.bd and logged in `Laws/SOURCES.md` with each file's origin URL, so provenance is traceable per document.
-- Renamed files from their source-URL-derived names to their actual act titles, since the original names gave no indication of content.
-- Found duplicate copies of the same act (CrPC had 3 copies, 5 other acts had 2 each, downloaded from different sources) — deduped, canonical copy kept per act.
+- 34 PDFs under `Laws/` — CrPC 1898 plus related criminal-law acts, scoped to the assessment brief. Provenance per file in `Laws/SOURCES.md`.
+- Duplicates (CrPC ×3, 5 acts ×2) still on disk; not yet deduped.
+- The 3 acts actually ingested live in `Laws/main/` and are tracked in git alongside their parsed output; the rest is gitignored.
 
 ## LLM-only baseline (step 4)
-- Added dedicated `ainshonglap` conda env (Python 3.12, torch cu128) for local model work.
-- Added local inference scripts (`backend/scripts/local_llm_test.py`, `local_llm_chat.py`) running Qwen2.5-VL-3B-Instruct on-GPU for text-only Q&A.
-- Added Gemini 2.5 Flash scripts (`backend/scripts/gemini_test.py`, `gemini_chat.py`) using the Google AI Studio API.
-- Both give batch (fixed test questions) and interactive (REPL) modes.
-- Ran both models against the same 5 sample legal questions: Qwen2.5-VL-3B hallucinated section content/citations on 3 of 5; Gemini 2.5 Flash answered all 5 correctly with accurate citations.
+- Dedicated `ainshonglap` conda env; scripts for a local model (Qwen2.5-VL-3B on GPU) and a hosted one (Gemini 2.5 Flash), each with batch and REPL modes.
+- Same 5 legal questions to both: Qwen hallucinated section content or citations on 3 of 5; Gemini got all 5 right with accurate citations.
+- Conclusion: the generator is not the weak link — retrieval will be. Matches `findings.md`, which puts the embedder ahead of the generator for legal RAG.
+
+## PDF parsing (step 2)
+- Evaluated 8 parsers by running each against the actual PDFs, not on reputation. Docling loses text; LandingAI ADE is capable but its elements straddle section boundaries; `bluebell` is an authoring format, not a parser. Full comparison in `parsing-plan.md`.
+- Adopted PyMuPDF plus a rule-based legal-structure parser (`backend/scripts/parse_law_pdf.py`). Text and hierarchy both come from the PDF.
+- Output: `Laws/main/parsed/<act>.json` — Act → Part → Chapter → Section → Subsection → Clause, plus Explanation/Illustration/Exception/Proviso, with page numbers and full ancestry inline on every section.
+- Parsed CrPC (508 sections), Penal Code (557), Evidence Act (182). Deterministic — regenerating reproduces byte-identical files.
+- Hard cases solved: sections split across page boundaries (300 of them across the three acts), the Penal Code's gloss column swapping sides every page, and contents pages that mimic real sections.
+
+## Verification (step 3)
+- Found `Ashik2380/bdlaws` on HF — an independently scraped copy of all 1,467 Bangladesh acts. Used strictly as an oracle, never as a source: complete text, zero hierarchy.
+- `backend/scripts/verify_parsed.py` runs 7 checks, all by re-reading the PDF rather than trusting the parser's own stats. Method and results in `verification.md`.
+- Results: **zero phantom sections in any act**, zero real numbering gaps, 100% line-level text recovery on Penal and Evidence (99.99% CrPC). Evidence Act passes every check.
+- The suite earned its keep immediately — it caught contents pages leaking into the body, and gloss notes being silently dropped when they matched no section. Both were invisible in the parser's own summary stats.
+
+## What this establishes
+- Parsing and verification are done for the 3 main acts, with correctness measured rather than assumed.
+- Next: chunk → embed → retrieve (step 5), likely after parsing the remaining 25 acts so the vector store is built once.
