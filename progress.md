@@ -25,14 +25,22 @@
 - Adopted PyMuPDF plus a rule-based legal-structure parser (`backend/scripts/parse_law_pdf.py`). Text and hierarchy both come from the PDF.
 - Output: `Laws/main/parsed/<act>.json` — Act → Part → Chapter → Section → Subsection → Clause, plus Explanation/Illustration/Exception/Proviso, with page numbers and full ancestry inline on every section.
 - Parsed CrPC (508 sections), Penal Code (557), Evidence Act (182). Deterministic — regenerating reproduces byte-identical files.
+- Trailing endnote pages are excluded: the CrPC closes with 24 pages of amendment notes that were being appended to its last section, leaving s.565 at 10,918 words. Now 280. Verified nothing statutory was dropped — 1,218 of 1,221 removed lines are 7.6pt against a 9.0pt body, all past the final section, none a section opener.
 - Hard cases solved: sections split across page boundaries (300 of them across the three acts), the Penal Code's gloss column swapping sides every page, and contents pages that mimic real sections.
 
 ## Verification (step 3)
 - Found `Ashik2380/bdlaws` on HF — an independently scraped copy of all 1,467 Bangladesh acts. Used strictly as an oracle, never as a source: complete text, zero hierarchy.
 - `backend/scripts/verify_parsed.py` runs 7 checks, all by re-reading the PDF rather than trusting the parser's own stats. Method and results in `verification.md`.
-- Results: **zero phantom sections in any act**, zero real numbering gaps, 100% line-level text recovery on Penal and Evidence (99.99% CrPC). Evidence Act passes every check.
-- The suite earned its keep immediately — it caught contents pages leaking into the body, and gloss notes being silently dropped when they matched no section. Both were invisible in the parser's own summary stats.
+- Results: **zero phantom sections in any act**, zero real numbering gaps, 100% line-level text recovery on Penal and Evidence (99.99% CrPC). Evidence Act matches its oracle exactly, 182 for 182, and passes every check.
+- The suite earned its keep immediately — contents pages leaking into the body, gloss notes silently dropped when they matched no section, and two bugs in the checker itself. All invisible in the parser's own summary stats.
+- It also showed the limit of coverage checking: s.565's 24 pages of endnotes counted as *recovered* because they landed somewhere. Coverage catches deletion; only size and shape checks catch misfiling.
+
+## Chunking (step 5)
+- Section-level chunking, split at subsection/clause boundaries when oversized, hierarchy path prepended to each chunk's text. Options and evidence in `chunking-plan.md`.
+- 1,321 chunks from 1,247 sections: CrPC 536, Penal 583, Evidence 202. Median 133-172 tokens.
+- `verify_chunks.py` checks the output against the parsed JSON independently — 3/3 acts pass all seven checks: text reproduced as an ordered word sequence, no duplication, no orphans, unique ids, metadata and prefix in agreement.
+- It caught three bugs the chunker reported as clean, including duplicate chunk ids that would have silently overwritten entries in a vector store. The first fidelity check was itself wrong — a set comparison, which passes even when text is duplicated or scrambled.
 
 ## What this establishes
-- Parsing and verification are done for the 3 main acts, with correctness measured rather than assumed.
-- Next: chunk → embed → retrieve (step 5), likely after parsing the remaining 25 acts so the vector store is built once.
+- Parsing, verification and chunking are done for the 3 main acts, with correctness measured rather than assumed at each stage.
+- Next: embed the chunks and stand up a vector store (step 6), likely after parsing the remaining 25 acts so the index is built once.

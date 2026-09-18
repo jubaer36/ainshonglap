@@ -149,10 +149,17 @@ def strip_furniture(
     lines: list[Line], doc: pymupdf.Document, act_name: str
 ) -> tuple[list[Line], list[Line]]:
     base = statistics.mode([round(l.size, 1) for l in lines]) if lines else 0.0
+    by_page: dict[int, list[Line]] = {}
+    for l in lines:
+        by_page.setdefault(l.page, []).append(l)
+
     act_words = {w for w in re.findall(r"\w+", act_name.lower()) if w not in {"the", "of"}}
 
     def is_header(l: Line) -> bool:
-        if l.y0 >= doc[l.page].rect.height * 0.12:
+        # 18%, not 12%: the Evidence Act's running header sits at y=123 on an
+        # 842pt page (14.7%). The test below is content-specific enough that a
+        # looser band is safe.
+        if l.y0 >= doc[l.page].rect.height * 0.18:
             return False
         t = l.text.strip()
         if re.fullmatch(r"\d{1,4}", t):
@@ -160,8 +167,30 @@ def strip_furniture(
         words = set(re.findall(r"\w+", t.lower()))
         return bool(words) and len(words) <= 6 and len(words & act_words) >= 2
 
+    def is_small(l: Line) -> bool:
+        return l.size < base * 0.88
+
+
+
+    # Whole-page endnote apparatus. The CrPC closes with 24 pages of amendment
+    # notes set entirely in the footnote size (7.6pt against a 9.0pt body).
+    # The per-line rule below spares anything in the top 55% of a page — right
+    # for a footnote block under real text, wrong for a page that is nothing but
+    # notes. Left in, those 24 pages were appended to the last open section,
+    # giving s.565 10,918 words (24 pages) of endnotes and a copyright footer.
+    by_page: dict[int, list[Line]] = {}
+    for l in lines:
+        by_page.setdefault(l.page, []).append(l)
+    note_pages = {
+        p
+        for p, pl in by_page.items()
+        if len(pl) >= 8 and sum(1 for l in pl if is_small(l)) / len(pl) >= 0.9
+    }
+
     def is_footnote(l: Line) -> bool:
-        return l.size < base * 0.88 and l.y0 > doc[l.page].rect.height * 0.55
+        if l.page in note_pages:
+            return True
+        return is_small(l) and l.y0 > doc[l.page].rect.height * 0.55
 
     kept, dropped = [], []
     for l in lines:
@@ -410,15 +439,35 @@ def parse(act_key: str, start: int = 0, limit: int | None = None) -> dict:
     ordered_headings = sorted(heading_lines, key=lambda l: (l.page, l.y0))
     all_sorted = sorted(kept, key=lambda l: (l.page, l.y0))
     headings: list[tuple] = []
+    def title_like(t: str) -> bool:
+        """A heading's title line is set in caps; a gloss note is not.
+
+        Without this, a chapter that has no title of its own takes whatever line
+        follows it — CrPC Chapter I is printed as `PART I / PRELIMINARY /
+        CHAPTER I` with no title, and picked up the gloss note "Short title".
+        """
+        letters = [c for c in t if c.isalpha()]
+        return bool(letters) and sum(c.isupper() for c in letters) / len(letters) > 0.8
+
     for h in ordered_headings:
         kind = "part" if PART_RE.match(h.text) else "chapter"
         num = (PART_RE.match(h.text) or CHAPTER_RE.match(h.text)).group(1)
-        title = None
+        # Titles wrap: take consecutive caps lines, so "OF THE CONSTITUTION OF
+        # CRIMINAL COURTS AND / OFFICES" is not truncated at the line break.
+        parts: list[str] = []
         for l in all_sorted:
-            if (l.page, l.y0) > (h.page, h.y0) and l.text.strip():
-                title = l.text.strip()
+            if (l.page, l.y0) <= (h.page, h.y0) or not l.text.strip():
+                continue
+            t = l.text.strip()
+            if PART_RE.match(t) or CHAPTER_RE.match(t) or SECTION_RE.match(t):
                 break
-        headings.append((kind, num, title, h.page, h.y0))
+            if title_like(t):
+                parts.append(t)
+            elif parts:
+                break
+            else:
+                break
+        headings.append((kind, num, " ".join(parts) or None, h.page, h.y0))
 
     # ---- ONE ordered stream across every page: this is what makes a section
     # broken by a page break reassemble instead of splitting in two.

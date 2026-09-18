@@ -19,7 +19,7 @@ citations.
 - `progress.md` — what has been built, and why
 - `parsing-plan.md` — PDF parsing: options tested, decision, results, gaps
 - `verification.md` — how the parsed JSON is verified, and what is outstanding
-- `pdf-parsing-options.md` — superseded; the pre-testing survey
+- `chunking-plan.md` — chunking options, evidence, and the decision
 
 ## Parsing the law PDFs
 
@@ -35,6 +35,13 @@ independent oracle — see `verification.md` for what each check does:
 
 ```bash
 python scripts/verify_parsed.py
+```
+
+Then chunk for retrieval, and verify that too:
+
+```bash
+python scripts/chunk_sections.py     # -> Laws/main/chunks/<act>.json
+python scripts/verify_chunks.py
 ```
 
 ## Running locally

@@ -119,6 +119,12 @@ Two rules, both learned from real bugs during the spike:
   Penal p45 body 11.0/gloss 10.0; Penal p52 body 10.7/gloss 9.7/footnote 8.8).
   A flat `base - 0.6` deleted 341 lines on Penal — every gloss note and every
   Illustration. Use `size < 0.88 × body_size` **and** bottom-of-page.
+- **Endnote pages: drop whole.** The CrPC ends with 24 pages set entirely in
+  footnote type. The bottom-of-page guard spares their upper half, so they were
+  appended to the last section — s.565 reached 10,918 words. A page that is
+  ≥90% footnote-sized is endnote apparatus and goes entirely. Checked
+  afterwards: 1,218 of 1,221 removed lines are 7.6pt against a 9.0pt body, all
+  past the final section, none a section opener.
 
 ### Hazard B — hierarchy
 
@@ -211,11 +217,11 @@ structure both come from the PDF (no JSONL in the parse path).
 
 ### Results (3 acts, validated against the oracle)
 
-| act | sections | phantom | missing | titled | chapters | parts | median sim | orphaned |
+| act | sections | phantom | missing | titled | chapters | parts | C1 recovery | orphaned |
 |---|---|---|---|---|---|---|---|---|
-| CrPC | 508 | **0** | 7 | 502 | 42 | 9 | 99.7% | **0** |
-| Penal Code | 567 | **0** | 1 | 547 | 23 | 0 | **100%** | **0** |
-| Evidence Act | 190 | **0** | 0 | 177 | 11 | 3 | 99.2% | **0** |
+| CrPC | 508 | **0** | 7 | 502 | 42 | 9 | 99.99% | **0** |
+| Penal Code | 557 | **0** | 1 | 540 | 23 | 0 | **100%** | **0** |
+| Evidence Act | 182 | **0** | **0** | 170 | 11 | 3 | **100%** | **0** |
 
 Sections spanning a page break — the case that defeated every per-page
 parser — CrPC 148, Penal 87, Evidence 65, all reassembled.

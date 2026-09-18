@@ -13,7 +13,8 @@ section-level citations.
 
 Supporting detail, read only when working on that area:
 `parsing-plan.md` (parser options tested and the decision),
-`verification.md` (how parsed output is checked).
+`chunking-plan.md` (chunking options and the decision),
+`verification.md` (how both stages are checked).
 
 **Ignore `findings.md`.** It is old scratch notes, not a source of truth.
 
