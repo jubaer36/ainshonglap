@@ -7,8 +7,8 @@
 - TS types mirror the backend's Pydantic schemas by hand.
 
 ## Backend
-- FastAPI service with the real route shapes (`/health`, `POST /api/query`, `GET /api/citations`).
-- `/api/query` still returns canned data — a deliberate stand-in so the full UI could be built and tested before the retrieval pipeline existed. Isolated to one module, so replacing it needs no route or frontend change.
+- FastAPI service over the real pipeline: `POST /api/query`, `GET /api/retrieve`, `GET /api/acts`, `GET /api/sections[/{key}]`, `GET /health`. Contract and configuration in `backend/API.md`.
+- The mock response module is gone; every endpoint serves the indexed corpus.
 
 ## Legal documents
 - 34 PDFs under `Laws/` — CrPC 1898 plus related criminal-law acts, scoped to the assessment brief. Provenance per file in `Laws/SOURCES.md`.
@@ -49,6 +49,24 @@
 - Added `bge-reranker-v2-m3` over the dense top-20: **R@1 32.7% → 41.9%** (+9.2pp, ~4.8 standard errors) and Act accuracy 82.2% → 87.2%. First significant result.
 - Full log with hypotheses, configs and decisions in `experiments.md`.
 
+## Making it servable (step 9)
+- Both best results existed only inside eval scripts: reranking lived in `scripts/rerank.py`, and dual-granularity indexing was written but the index had never been rebuilt with it. The logged 41.9% described a pipeline nothing could execute.
+- Extracted `backend/app/rag/` so the API and the eval scripts call one `retrieve()`. Rebuilt the index dual-granularity: 2,320 vectors (1,321 section + 999 subsection).
+- Measured the two together for the first time (E7): **they do not stack.** Reranked R@1 is 41.8% with dual granularity against 41.9% without — the reranker was already promoting the sections dual granularity pulls in. Kept anyway: it costs nothing at query time and lifts R@20 to 71.4%, the ceiling query rewriting has to work inside.
+- Served numbers: R@1 41.8%, R@5 59.0%, R@20 71.4%, MRR 0.498, Act accuracy 87.5%.
+
+## Generation (step 12)
+- Options surveyed against published evidence in `generation-plan.md`. The design constraint is our own R@5: 41% of the time the correct section is absent from the context, replaced by plausible adjacent statute — the condition under which prompt-based abstention is reported to fail worst.
+- `app/rag/`: pluggable generator (OpenRouter / Gemini / local), JSON-schema output where every claim carries a section number and a verbatim quote.
+- Two deterministic gates run on every answer. **C2**: the cited section was actually retrieved, and where acts share a section number the act must match. **C3**: the quoted span appears verbatim in that section. Failing claims are dropped; if none survive the answer becomes a refusal.
+- C3 is cheap here only because parsing is verified — the cited section's exact text is known, so a fabricated quotation cannot survive a string match. That is the E1 failure closed by construction rather than by prompting.
+- The disclaimer is appended server-side from a constant on every path, including refusals. A disclaimer the model emits is one it can omit.
+- Requests pin `provider.require_parameters` so a route that ignores JSON schemas fails loudly instead of returning prose — which would otherwise have surfaced as a false refusal. Verified enforcing: deepseek-v4-flash, liquid/lfm-2.5-2.6b, nemotron-3-super. Verified not: gemma-4-31b, despite advertising it.
+- Bugs found and fixed while testing: C2 ignored the act entirely (all three acts have a s.25); the section regex matched inside the year, resolving "Penal Code, 1860, Section 379" to 186; reasoning tokens exhausted the output budget on ~20% of calls.
+- **E8 (does the generator answer anyway when retrieval missed) is unfinished** — 21 of 40 calls spent before the run was interrupted. Partial: 5 of 16 valid responses answered rather than refused when the gold section was absent. n=16, so the interval is wide; treat as unmeasured.
+
 ## What this establishes
-- Parsing, verification, chunking and retrieval are done for the 3 main acts, with correctness measured rather than assumed at each stage — including two negative results that overturned assumptions taken from published work.
-- Next: query rewriting — 32% of gold sections are never retrieved at all, now the largest single bucket and beyond what reranking can reach.
+- The full path runs end to end: question → retrieval → reranking → generation → per-claim citation verification → cited answer or refusal, served over HTTP.
+- Retrieval is measured at every stage against 608 external gold questions, including three negative results that overturned assumptions taken from published work (E2, E3, E7) and one that was never validly measured at all (E6).
+- Generation is verified per claim at request time, but its *quality* is not yet measured — no faithfulness or abstention numbers exist. That is the largest gap.
+- Next: finish E8, then query rewriting — 28.6% of gold sections are never retrieved at all, the largest remaining bucket and beyond what reranking can reach.

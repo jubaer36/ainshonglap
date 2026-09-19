@@ -1,5 +1,12 @@
 # Verification
 
+> Scope: parsing and chunking. Retrieval is measured rather than verified
+> (`retrieval-baseline.md`, `experiments.md`). Generated answers are checked
+> per claim at request time by the C2/C3 gates in `app/rag/verify.py` — the
+> cited section must have been retrieved, and the quoted span must appear
+> verbatim in it. That check is only cheap because parsing is verified here:
+> the cited section's exact text is known.
+
 How we know the parse and the chunks are correct, and what is still
 outstanding. Two suites, one per stage.
 

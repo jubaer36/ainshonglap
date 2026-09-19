@@ -2,6 +2,11 @@
 
 BGE-M3 dense retrieval, then cross-encoder reranking. Numbers, not impressions.
 
+**Current served numbers** (dual-granularity index + reranking, `experiments.md`
+E7): **R@1 41.8%, R@5 59.0%, R@20 71.4%, MRR 0.498, Act accuracy 87.5%.** The
+baseline below is the section-only dense starting point those improved on; it is
+kept because the deltas are the argument, not the endpoint.
+
 First measured numbers for the retrieval stage, and what they say to do next.
 Everything here comes from `backend/scripts/eval_retrieval.py`, scored against
 an external gold standard rather than judged by eye.

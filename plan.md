@@ -22,11 +22,11 @@
 9. ~~Make E4 + E5 live: shared `backend/app/rag/` pipeline, dual-granularity index.~~ **done** — served numbers are now R@1 **41.8%**, R@20 **71.4%**, Act **87.5%** (E7). The two gains do **not** stack; E5 bought the R@20 ceiling, not R@1.
 10. **← NEXT:** Query rewriting — 29% of gold sections are never retrieved, which reranking cannot reach.
 11. Parse the remaining 25 in-scope acts.
-12. Answer generation with citations + refusal path.
+12. ~~Answer generation with citations + refusal path.~~ **done** — schema-constrained claims, C2/C3 citation gates, refusal on gate failure, disclaimer server-side. See `generation-plan.md`, `backend/API.md`.
 13. Prompt improvements (grounding, citation format, refusal behaviour).
 14. Citation validation (cited text matches source).
 15. Eval dataset extension + failure-case log.
-16. Wire `/api/query` to generation (`/api/retrieve` already serves the real pipeline; `/api/query` is still the mock module because step 12 does not exist yet).
+16. ~~Wire the API to the real pipeline.~~ **done** — mock module removed; `/api/query`, `/api/retrieve`, `/api/acts`, `/api/sections` all serve the index.
 17. Docs: architecture diagram, README, AI_USAGE.md.
 
 ## Next step in detail (step 10) — full reasoning in `retrieval-plan.md`

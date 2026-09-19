@@ -14,6 +14,14 @@ from __future__ import annotations
 from app.models.schemas import Citation
 from app.rag.pipeline import Retrieved
 
+# Stable url-safe slug per act; the citation key is built from it, so it is
+# part of the API contract rather than a display detail.
+ACT_SLUGS_BY_NAME = {
+    "the code of criminal procedure, 1898": "crpc",
+    "the penal code, 1860": "penal",
+    "the evidence act, 1872": "evidence",
+}
+
 SHORT_NAMES = {
     "the code of criminal procedure, 1898": "CrPC",
     "the penal code, 1860": "Penal Code",
@@ -21,7 +29,7 @@ SHORT_NAMES = {
 }
 
 
-def _strip_prefix(text: str) -> str:
+def strip_prefix(text: str) -> str:
     """Drop the hierarchy line chunking prepends for the embedder.
 
     It is `Act, Section N: Title` followed by a blank line — retrieval context,
@@ -51,7 +59,7 @@ def to_citation(r: Retrieved) -> Citation:
     note = " › ".join(parts) if parts else f"{r.act}, Section {r.section}"
 
     return Citation(key=r.key, title=title, badge=badge, source=source,
-                    text=_strip_prefix(r.text), note=note)
+                    text=strip_prefix(r.text), note=note)
 
 
 def to_citations(results: list[Retrieved]) -> dict[str, Citation]:

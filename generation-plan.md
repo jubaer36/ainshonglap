@@ -270,6 +270,30 @@ can omit. It belongs in the API response schema.
 
 ---
 
+## Status
+
+Built and serving (`backend/app/rag/`, `backend/API.md`):
+
+| decision | shipped |
+|---|---|
+| A model | pluggable backend; OpenRouter default. `provider.require_parameters` pins routing to providers that enforce schemas — verified: deepseek-v4-flash, lfm-2.5-2.6b, nemotron-3-super; verified not: gemma-4-31b |
+| B answer shape | JSON schema, one claim per assertion, each with section number and verbatim quote |
+| C citations | **C2 + C3 live.** C2 resolves the act too, not just the number — all three acts have a s.25. Failing claims dropped; none surviving becomes a refusal. C4 (NLI) not built |
+| D abstention | prompt + gates. The D2 score threshold is **not** fitted: `min_score` exists but has no default, because inventing one would put an unmeasured constant in the pipeline |
+| E evaluation | **not built.** No faithfulness, citation-precision or abstention numbers exist yet |
+
+**E8 is unfinished**, at 21 of 40 calls: on the 16 valid responses where the gold
+section was absent from the context, 5 answered rather than refused. At n=16 the
+interval is roughly [15%, 54%] — it rules out "refuses reliably" and little
+else. Treat as unmeasured.
+
+That matters for reading the rest of this document: the gates were built on
+GRAB-RAG's finding, not on our own measurement. They are cheap and
+deterministic, so building them first was defensible — but "the generator
+over-answers on our corpus" remains imported, not established.
+
+---
+
 ## Summary
 
 **The constraint.** R@5 is 59.0%, so **41% of the time the correct section is

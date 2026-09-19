@@ -23,6 +23,7 @@ citations.
 - `retrieval-plan.md` — embedder / vector store / reranking options and the decision
 - `retrieval-baseline.md` — first measured retrieval numbers and what they say to do next
 - `generation-plan.md` — answer generation: model, citation enforcement and abstention options
+- `backend/API.md` — endpoints, configuration, and what the citation gates guarantee
 - `experiments.md` — experiment log: objective, hypothesis, config, result, decision
 - `similar-projects.md` — what comparable legal/Bangla RAG repos chose at each stage
 

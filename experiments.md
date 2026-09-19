@@ -307,7 +307,61 @@ both arms come from one code path.
 
 ---
 
-## What E2-E7 together establish
+## E8 — does the generator answer anyway when retrieval missed? (INCOMPLETE)
+
+**Objective.** Served R@5 is 59.0%, so 41% of the time the correct section is
+absent from the generator's context — replaced by five plausible, adjacent,
+professionally drafted sections. Nothing in the prompt looks broken. Does the
+generator notice, or answer from the wrong section?
+
+**Why it matters.** The C2/C3 citation gates in `app/rag/verify.py` were built
+on the assumption that it over-answers. That assumption is imported from
+GRAB-RAG (arXiv 2608.22228), which measured 3.8-8B models answering 13.6-74.3%
+of the time under misleading context against <=1% when evidence is simply
+absent. Our model is larger and our wrong passages are merely wrong rather than
+adversarially constructed, so the finding transfers in direction at best.
+
+**Config.** `scripts/experiment_abstention.py`, measuring the shipping pipeline
+(`answer()` — prompt and gates together, not the prompt alone). Two strata from
+the 608-question set: gold_absent (retrieval missed; answering is the failure)
+and gold_present (the control, which prices the abstention). Sequential, free
+OpenRouter route.
+
+**Result — partial, 21 of 40 planned calls.** The run was interrupted and the
+script only persisted at the end, so only the log survives.
+
+| stratum | n valid | answered | refused | errored |
+|---|---|---|---|---|
+| gold_absent | 16 | 5 | 11 | 4 |
+| gold_present | — | — | — | not reached |
+
+5/16 = 31% answered when the gold section was absent. At n=16 the 95% interval
+is roughly [15%, 54%]: it rules out "refuses reliably" and essentially nothing
+else. **This is not a result.** The control stratum, without which the number
+cannot be read at all, was never run.
+
+**What it did establish, incidentally.** The 4 errors were not refusals but
+empty responses: reasoning tokens had consumed the whole output budget before
+any JSON was emitted. Two harness defects fixed as a result — `max_tokens`
+raised, and empty content now raises a diagnostic naming `finish_reason` and the
+reasoning-token count instead of a bare JSON parse error. A fifth of calls were
+being silently wasted.
+
+**Decision.** Recorded as **unmeasured**, alongside E6. The gates ship
+regardless: they are deterministic, cost nothing at request time, and C3 closes
+E1's fabricated-quotation failure by construction. But whether the prompt alone
+would have sufficed is an open question, and the honest statement is that this
+project does not yet know how often its generator over-answers.
+
+**To finish it:** ~19 calls for the control stratum, with incremental writes so
+an interrupted run resumes instead of re-spending. Worth running against
+deepseek-v4-flash and liquid/lfm-2.5-2.6b both — GRAB-RAG's collapse was
+measured in the 2.6B size class, so a gap between them would be the published
+finding reproducing on our corpus.
+
+---
+
+## What E2-E8 together establish
 
 Both chunk-formatting knobs are flat — retrieval on this corpus is not limited
 by how chunks are labelled or sized. Ranking is where the gains were, exactly as
@@ -323,7 +377,11 @@ Where the 608 questions stand on the live pipeline (dual index + reranking):
 | wrong statute at rank 1 | 17.8% | −5.3pp | **12.5%** |
 
 **Next.** Query rewriting for the never-retrieved bucket, which is now within
-1pp of being the largest and which no reranker can reach. Structure-aware
+1pp of being the largest and which no reranker can reach.
+
+Generation is now built and served, and is the part of the system with no
+numbers attached to it: no faithfulness, citation-precision or abstention
+measurement exists. E8 was meant to be the first and is unfinished. Structure-aware
 reranking and Act-filtering remain candidates for the ranking gap, but E7 is a
 warning about them: they attack the same bucket E4 already emptied, so each one
 has to be measured *on top of* the reranker, never against dense alone.

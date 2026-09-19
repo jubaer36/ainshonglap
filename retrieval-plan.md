@@ -125,6 +125,11 @@ retrieved?" should gate answering.
 
 ## Plan
 
+Status: 1-4 done. Cross-encoder reranking adopted (E4); structure-aware
+reranking and hybrid BM25 still untested; step 5's refusal path is built as
+citation gates rather than a score threshold, and is **not yet measured** —
+see `generation-plan.md`.
+
 1. **Baseline** — BGE-M3, local store, dense-only. Index 1,321 chunks with
    metadata.
 2. **Eval set before tuning.** `Laws/bangladesh-legal-qa-dataset` ships 2,165 QA

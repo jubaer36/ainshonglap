@@ -19,7 +19,7 @@ Supporting detail, read only when working on that area:
 `generation-plan.md` (answer generation, citation enforcement, abstention options),
 `experiments.md` (experiment log — read before re-testing something),
 `similar-projects.md` (what comparable repos chose at each stage),
-`verification.md` (how both stages are checked).
+`verification.md` (how parsing and chunking are checked).
 
 **Ignore `findings.md`.** It is old scratch notes, not a source of truth.
 
@@ -64,7 +64,18 @@ python scripts/build_index.py            # chunks  -> BGE-M3 vectors + FAISS
 python scripts/eval_retrieval.py         #   Recall@k / MRR / Act accuracy
 python scripts/rerank.py --topk 20       # + cross-encoder rerank, with delta
 python scripts/experiment_retrieval.py --what all   # A/B prefix, chunk budget
+python scripts/experiment_granularity.py           # retrieval unit (E5)
+python scripts/experiment_abstention.py --n 20     # does the generator over-answer (E8)
 ```
+
+Serving: `uvicorn app.main:app --reload`. The API and the eval scripts share
+`app/rag/pipeline.retrieve()` — keep it that way. They were once separate, and
+the logged numbers ended up describing a pipeline nothing could serve (E7).
+Endpoints and configuration: `backend/API.md`.
+
+Generator routes must enforce JSON schema; check one with
+`python scripts/openrouter_chat.py --json --model <alias>`. A route that ignores
+the schema returns prose, which the pipeline would surface as a false refusal.
 
 ## Conventions
 
@@ -80,3 +91,4 @@ python scripts/experiment_retrieval.py --what all   # A/B prefix, chunk budget
   nothing here — read `experiments.md` before re-testing something.
 
 
+And remember you are not allowed to commit in any way. The commits will be done manually by me . At best you can provide the instructions to commit. Basically don't worry about git and commits at all . I will handle that

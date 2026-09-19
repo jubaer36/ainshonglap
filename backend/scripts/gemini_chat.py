@@ -13,13 +13,18 @@ Reads GEMINI_API_KEY from backend/.env.local.
 from __future__ import annotations
 
 import os
+import pathlib
 import time
 
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 
-MODEL_ID = "gemini-2.5-flash"
+# backend/.env.local, resolved from this file so the script runs
+# from any working directory rather than only from backend/.
+ENV_FILE = pathlib.Path(__file__).resolve().parents[1] / ".env.local"
+
+MODEL_ID = "gemini-3.5-flash"
 
 SYSTEM_PROMPT = (
     "You are AinShonglap, a legal information assistant for Bangladesh "
@@ -34,7 +39,7 @@ SYSTEM_PROMPT = (
 
 
 def main() -> None:
-    load_dotenv(".env.local", override=True)
+    load_dotenv(ENV_FILE, override=True)
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         raise SystemExit("GEMINI_API_KEY not set (expected in backend/.env.local)")
