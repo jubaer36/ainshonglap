@@ -162,21 +162,171 @@ any building").
 
 ---
 
-## What E2, E3 and E4 together establish
+## E5 — Retrieval granularity (parent-child / small-to-big)
+
+**Objective.** E3 varied the split *budget* and found it flat, but that only
+touches the 3-8% of sections large enough to split. It never tested the
+retrieval **unit**. Parent-child retrieval embeds finer units and returns the
+coarser parent; reported to improve accuracy 15-30% on queries needing broad
+context, at the cost of added distractors.
+
+**Hypothesis.** One vector per section blurs a long provision into a single
+average. Embedding each subsection separately gives sharper vectors, and because
+our eval scores at *section* level, a subsection hit still counts — so the
+finer unit costs nothing in how it is judged.
+
+**Config.** BGE-M3, three corpora built from the same parsed JSON. Metadata
+always names the parent section, so scoring is identical across variants.
+Retrieval over-fetches 60 vectors then dedupes to 20 distinct sections, since
+several vectors can collapse to one section.
+
+**Result.**
+
+| granularity | vectors | R@1 | R@5 | R@20 | MRR | Act% |
+|---|---|---|---|---|---|---|
+| section (was in use) | 1,247 | 32.1% | 52.8% | 66.6% | 0.414 | 81.7% |
+| subsection only | 1,879 | 32.7% | 54.9% | 65.6% | 0.421 | 85.2% |
+| **both** | 2,246 | **35.5%** | **57.4%** | **70.4%** | **0.452** | **85.2%** |
+
+**The important number is R@20, not R@1.** E4 established that reranking cannot
+exceed R@20 — it only reorders what was already found. Indexing both
+granularities lifts that ceiling **66.6% → 70.4%**, which is the one thing a
+reranker cannot do for itself. R@1 +3.4pp is just under the ±3.7pp threshold on
+its own, but four metrics move together and in the same direction, which is
+more persuasive than any single one.
+
+**Subsection-only is not the answer.** It sharpens Act accuracy (+3.5pp) and
+R@5, but *drops* R@20 to 65.6% — the finest unit loses whole-section context
+some questions need. Keeping both granularities is what wins; this is the
+"adds distractors" trade-off resolving in our favour because the dedupe step
+collapses redundant hits before scoring.
+
+**Caveat.** The section baseline here reads 32.1% against 32.7% in the live
+index, because this harness rebuilds chunks from the parsed JSON without the
+oversized-section splitting. The comparison between variants is internally
+consistent; the small offset is not a result.
+
+**Decision.** Adopt dual-granularity indexing. Cost is 2,246 vectors against
+1,247 — irrelevant at this scale.
+
+---
+
+## E6 — Alternative rerankers (INCONCLUSIVE — harness, not models)
+
+**Objective.** Published benchmarks disagree about which reranker is best, and
+none cover legal retrieval, so measure the alternatives here.
+
+**Config.** Same dense top-20, same 608 questions. `bge-reranker-v2-m3` re-run
+as a control.
+
+**Result.**
+
+| model | R@1 delta | verdict |
+|---|---|---|
+| `bge-reranker-v2-m3` (control) | **+9.2** | reproduces E4 exactly |
+| `mxbai-rerank-base-v2` | −28.0 | **not a valid measurement** |
+| `Qwen3-Reranker-0.6B` | −29.8 | **not a valid measurement** |
+| `jina-reranker-v2` | crashed | needs `trust_remote_code`, prompts interactively |
+
+**Both negatives are a harness bug, and the cause is confirmed.**
+`Qwen3-Reranker-0.6B`'s config declares `"architectures": ["Qwen3ForCausalLM"]`
+— it is a causal LM. Loading it through `AutoModelForSequenceClassification`
+silently attaches a **freshly randomly-initialised** classification head, so
+both models were being ranked by random weights. A −29pp delta is what that
+looks like.
+
+Three harness bugs were found before the cause was located: a missing pad
+token, a decoder/encoder dispatch keyed on the wrong signal, and reading
+`logits[:,0]` (the *irrelevant* class) on a binary head.
+
+**What the control bought.** Re-running BGE alongside is what made this
+diagnosable. "mxbai is bad" and "my scorer is inverted" produce identical
+evidence; only an unchanged control separates them. It reproduced +9.2 / +3.6 /
++0.0 / +0.068 / +4.9 exactly.
+
+**Decision.** `bge-reranker-v2-m3` stays — not because the alternatives lost,
+but because it is the only one measured correctly. Recorded as **unmeasured,
+not disproven**. Testing them properly needs each model's own scoring protocol
+(Qwen3: chat template plus yes/no token logits from the LM head), which is a
+separate piece of work and should not be reported as a model comparison until
+it is done.
+
+---
+
+## E7 — E4 and E5 together, in the pipeline that actually serves
+
+**Objective.** E4 (+9.2pp R@1) and E5 (+3.8pp R@20) were measured
+independently, each against a section-only dense baseline. Neither had ever
+been measured with the other on, and neither ran in anything servable: E4 lived
+only in `scripts/rerank.py`, and E5's code was in `build_index.py` but the
+index had never been rebuilt with it. The logged 41.9% described a pipeline
+nothing could execute.
+
+**Hypothesis.** They should stack. They fix different failures — E5 raises the
+candidate ceiling (never-retrieved sections), E4 reorders inside it (retrieved
+but badly ranked) — so the gains should be close to additive.
+
+**Config.** `app/rag/` extracted so the API and the eval scripts run the same
+retrieve() rather than two copies. Index rebuilt dual-granularity: 2,320
+vectors (1,321 section chunks + 999 subsection children). Same 608 questions,
+same top-20 candidate set, `bge-reranker-v2-m3`.
+
+**Result.**
+
+| index | rerank | R@1 | R@5 | R@20 | MRR | Act% |
+|---|---|---|---|---|---|---|
+| section only | off | 32.7% | 54.1% | 68.4% | 0.425 | 82.2% |
+| section only | on (E4) | **41.9%** | 57.7% | 68.4% | 0.493 | 87.2% |
+| dual (E5) | off | 35.7% | 59.5% | 71.4% | 0.461 | 85.2% |
+| dual (E5) | on (E4+E5) | **41.8%** | 59.0% | 71.4% | 0.498 | 87.5% |
+
+**They do not stack. The hypothesis is wrong.** Reranked R@1 is 41.8% with E5
+against 41.9% without it — identical. E5's entire +3.0pp dense gain is absorbed
+by the reranker: the sections dual granularity pulls into the top 20 are ones
+the cross-encoder was already promoting from further down. Two fixes for
+"retrieved but badly ranked" were being counted twice.
+
+**What E5 does still buy, and it is not much.** R@20 68.4% → 71.4% and R@5
+57.7% → 59.0% under reranking. Both are inside the ±3.7pp interval, so by this
+log's own rule neither is a result on its own. MRR +0.005 and Act accuracy
++0.3pp are noise outright.
+
+**Decision.** Keep dual granularity, on a weaker argument than E5 claimed:
+it costs nothing at query time (index build only, 999 extra vectors), and R@20
+is the ceiling step 9's query rewriting has to work inside — a wider candidate
+set is worth having *before* that work, not after. But the honest headline is
+that **the pipeline is at 41.8% R@1, which is where E4 alone already put it**,
+and E5 did not move it.
+
+**Method note.** This is the failure mode the rest of the log guards against in
+the other direction. Every earlier entry asked "is this gain bigger than
+noise?" — none asked "is this gain the *same* gain I already counted?" Two
+experiments can each be correct against a shared baseline and still not add up.
+The only way to know is to run them together, which is now the default because
+both arms come from one code path.
+
+---
+
+## What E2-E7 together establish
 
 Both chunk-formatting knobs are flat — retrieval on this corpus is not limited
 by how chunks are labelled or sized. Ranking is where the gains were, exactly as
-the R@1-vs-R@20 gap predicted.
+the R@1-vs-R@20 gap predicted. And, per E7, there was only ever one ranking gain
+to collect: E4 took it, and E5 could not take it again.
 
-| problem | at baseline | after E4 | remaining |
+Where the 608 questions stand on the live pipeline (dual index + reranking):
+
+| problem | at baseline | now | remaining |
 |---|---|---|---|
-| retrieved but badly ranked | 35.7pp | −9.2pp | **26.5pp** |
-| never retrieved at all | 31.6pp | unchanged | **31.6pp** |
-| wrong statute at rank 1 | 17.8% | −4.9pp | **12.8%** |
+| retrieved but badly ranked | 35.7pp | −6.1pp | **29.6pp** |
+| never retrieved at all | 31.6pp | −3.0pp (E5) | **28.6pp** |
+| wrong statute at rank 1 | 17.8% | −5.3pp | **12.5%** |
 
-**Next.** Structure-aware reranking and Act-filtering for the remaining ranking
-gap; query rewriting for the never-retrieved third, which is now the single
-largest bucket and which no reranker can reach.
+**Next.** Query rewriting for the never-retrieved bucket, which is now within
+1pp of being the largest and which no reranker can reach. Structure-aware
+reranking and Act-filtering remain candidates for the ranking gap, but E7 is a
+warning about them: they attack the same bucket E4 already emptied, so each one
+has to be measured *on top of* the reranker, never against dense alone.
 
 ## Method note
 

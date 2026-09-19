@@ -19,23 +19,27 @@
 6. ~~Embed the chunks, build an index, measure retrieval.~~ **baseline done** — BGE-M3 + FAISS, Recall@1 31% / @20 68%, Act accuracy 81% — see `retrieval-baseline.md`
 7. ~~Validate chunking assumptions (prefix, budget).~~ **done** — both flat, see `experiments.md` E2/E3
 8. ~~Cross-encoder reranking.~~ **done** — R@1 32.7% → **41.9%**, Act acc. 82% → **87%** (E4)
-9. **← NEXT:** Query rewriting — 32% of gold sections are never retrieved, which reranking cannot reach.
-10. Parse the remaining 25 in-scope acts.
-11. Answer generation with citations + refusal path.
-12. Prompt improvements (grounding, citation format, refusal behaviour).
-13. Citation validation (cited text matches source).
-14. Eval dataset extension + failure-case log.
-15. Wire the pipeline into `/api/query` (replace the mock module).
-16. Docs: architecture diagram, README, AI_USAGE.md.
+9. ~~Make E4 + E5 live: shared `backend/app/rag/` pipeline, dual-granularity index.~~ **done** — served numbers are now R@1 **41.8%**, R@20 **71.4%**, Act **87.5%** (E7). The two gains do **not** stack; E5 bought the R@20 ceiling, not R@1.
+10. **← NEXT:** Query rewriting — 29% of gold sections are never retrieved, which reranking cannot reach.
+11. Parse the remaining 25 in-scope acts.
+12. Answer generation with citations + refusal path.
+13. Prompt improvements (grounding, citation format, refusal behaviour).
+14. Citation validation (cited text matches source).
+15. Eval dataset extension + failure-case log.
+16. Wire `/api/query` to generation (`/api/retrieve` already serves the real pipeline; `/api/query` is still the mock module because step 12 does not exist yet).
+17. Docs: architecture diagram, README, AI_USAGE.md.
 
-## Next step in detail (step 9) — full reasoning in `retrieval-plan.md`
+## Next step in detail (step 10) — full reasoning in `retrieval-plan.md`
 
-- **Query rewriting is now the biggest single bucket.** 31.6pp of gold sections
+- **Query rewriting is now the biggest single bucket.** 28.6pp of gold sections
   are never retrieved at all, and no reranker can reach them. The failures show
   a register mismatch: questions are narrative ("I stole a bag of grain from a
   neighbour's building"), statutes are drafted ("Whoever commits theft in any
   building"). HyDE or LLM query expansion targets exactly this.
-- **Still worth testing for the remaining 26.5pp of ranking headroom**:
+- **Anything else aimed at ranking must be measured on top of the reranker.**
+  E7 found E4 and E5 attacking the same failures and not adding up; a gain
+  measured against dense-only can be a gain already collected. Remaining
+  candidates for the 29.6pp of ranking headroom:
   structure-aware reranking (28% of chunks cite another section) and metadata
   Act-filtering (cheapest fix for the residual 12.8% wrong-Act rate).
 - **Refusal path in parallel**: domain-adapted models are reported to

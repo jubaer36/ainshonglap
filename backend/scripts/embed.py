@@ -1,39 +1,23 @@
-"""BGE-M3 dense encoding, via transformers directly.
+"""Backwards-compatible shim.
 
-sentence-transformers 6.x cannot load this repo (it looks for an AutoProcessor
-and raises). BGE-M3's dense representation is the CLS token of the last hidden
-state, L2-normalised, so going direct costs nothing and removes a dependency
-that was actively in the way.
-
-Normalised vectors mean inner product == cosine similarity, which is what the
-FAISS IndexFlatIP in build_index.py expects.
+The real implementation moved to `app/rag/encoder.py` so that the API and the
+eval scripts encode identically by construction. Kept because several scripts
+import `from embed import ...`.
 """
 
 from __future__ import annotations
 
-import numpy as np
-import torch
-from transformers import AutoModel, AutoTokenizer
+import pathlib
+import sys
 
-MAX_LEN = 1024   # our largest chunk is ~945 tokens; 8192 is available if needed
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+
+from app.rag.config import MAX_SEQ_LEN as MAX_LEN  # noqa: E402,F401
+from app.rag.encoder import embed_texts  # noqa: E402,F401
+from app.rag.encoder import load_encoder as _load_encoder  # noqa: E402
 
 
 def load_encoder(name: str, device: str):
-    tok = AutoTokenizer.from_pretrained(name)
-    model = AutoModel.from_pretrained(name).to(device).eval()
+    """(tok, model) — the old two-value signature."""
+    tok, model, _ = _load_encoder(name, device)
     return tok, model
-
-
-@torch.no_grad()
-def embed_texts(texts, tok, model, device, batch=16, progress=False):
-    out = []
-    for i in range(0, len(texts), batch):
-        chunk = texts[i : i + batch]
-        enc = tok(chunk, padding=True, truncation=True, max_length=MAX_LEN,
-                  return_tensors="pt").to(device)
-        hidden = model(**enc).last_hidden_state[:, 0]        # CLS
-        hidden = torch.nn.functional.normalize(hidden, p=2, dim=-1)
-        out.append(hidden.cpu().numpy())
-        if progress and (i // batch) % 10 == 0:
-            print(f"    {min(i+batch, len(texts))}/{len(texts)}", flush=True)
-    return np.vstack(out).astype("float32")

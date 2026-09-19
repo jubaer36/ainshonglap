@@ -16,7 +16,9 @@ Supporting detail, read only when working on that area:
 `chunking-plan.md` (chunking options and the decision),
 `retrieval-plan.md` (embedder and retrieval options and the decision),
 `retrieval-baseline.md` (measured retrieval numbers),
+`generation-plan.md` (answer generation, citation enforcement, abstention options),
 `experiments.md` (experiment log — read before re-testing something),
+`similar-projects.md` (what comparable repos chose at each stage),
 `verification.md` (how both stages are checked).
 
 **Ignore `findings.md`.** It is old scratch notes, not a source of truth.
