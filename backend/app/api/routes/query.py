@@ -27,7 +27,8 @@ async def query(payload: QueryRequest) -> AssistantMessage:
     if not q:
         raise HTTPException(422, "question is empty")
     try:
-        return to_message(answer(q))
+        return to_message(answer(q, model=payload.model,
+                                 refine_query=payload.refine))
     except Exception as exc:
         log.exception("generation failed")
         raise HTTPException(502, f"generator unavailable: {type(exc).__name__}") from exc

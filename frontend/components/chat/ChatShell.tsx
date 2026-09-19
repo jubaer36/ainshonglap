@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { fetchCitationLibrary, sendQuery } from "@/lib/api";
+import { ApiError, fetchSection, sendQuery } from "@/lib/api";
 import type { AssistantMessage, ChatMessage, Citation, UserMessage } from "@/lib/types";
 import { Header } from "../layout/Header";
 import { ReferencesDrawer } from "../layout/ReferencesDrawer";
@@ -19,24 +19,41 @@ function newId(): string {
     : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-function errorAssistantMessage(): AssistantMessage {
+/**
+ * Failure messages are split by cause because they call for different actions.
+ * A refusal is NOT one of these — the backend returns that as a normal 200 with
+ * `unsupported: true`, and it is an answer, not an error.
+ */
+function errorAssistantMessage(error: unknown): AssistantMessage {
+  let subheading = "Connection issue";
+  let text =
+    "Couldn't reach the backend API. Confirm it's running (see backend/README.md) and try again.";
+
+  if (error instanceof DOMException && error.name === "AbortError") {
+    subheading = "Timed out";
+    text =
+      "The answer took too long. Reasoning models can be slow — try a faster one from the model picker, or ask again.";
+  } else if (error instanceof ApiError) {
+    if (error.status === 502) {
+      subheading = "Generator unavailable";
+      text =
+        "Retrieval worked, but the language model could not be reached — often a rate limit on a free route. Try another model, or retry shortly.";
+    } else if (error.status === 422) {
+      subheading = "Empty question";
+      text = "Type a question before sending.";
+    } else {
+      subheading = `API error ${error.status}`;
+      text = "The backend rejected the request. Check its logs for the cause.";
+    }
+  }
+
   return {
     id: newId(),
     role: "assistant",
     heading: "AinShonglap Plain Legal Guide",
-    subheading: "Connection issue",
+    subheading,
     unsupported: true,
-    blocks: [
-      {
-        type: "paragraph",
-        segments: [
-          {
-            type: "text",
-            text: "Couldn't reach the backend API. Confirm it's running (see backend/README.md) and try again.",
-          },
-        ],
-      },
-    ],
+    blocks: [{ type: "paragraph", segments: [{ type: "text", text }] }],
     citations: {},
     references: [],
     quickActions: [],
@@ -52,15 +69,40 @@ export function ChatShell() {
   const [drawerOpen, setDrawerOpen] = useState(true);
   const [citationLibrary, setCitationLibrary] = useState<Record<string, Citation>>({});
   const [activeCitationKey, setActiveCitationKey] = useState<string | null>(null);
+  const [model, setModel] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchCitationLibrary()
-      .then(setCitationLibrary)
+    // Sections are fetched one at a time, when something asks to see one. The
+    // previous version pulled the whole citation library on mount, which was
+    // fine for five canned entries and is not for ~1,300 real sections.
+    if (!activeCitationKey || citationLibrary[activeCitationKey]) return;
+    let cancelled = false;
+    fetchSection(activeCitationKey)
+      .then((section) => {
+        if (cancelled) return;
+        setCitationLibrary((current) => ({
+          ...current,
+          [section.key]: {
+            key: section.key,
+            title: `${section.act} Section ${section.section}${
+              section.sectionTitle ? ` • ${section.sectionTitle}` : ""
+            }`,
+            badge: section.actNo ? `${section.act} ${section.actNo}` : section.act,
+            source: section.sourcePdf
+              ? `${section.sourcePdf}${section.pageStart ? ` • p. ${section.pageStart}` : ""}`
+              : section.act,
+            text: section.text,
+            note: section.chapterTitle ?? section.chapter ?? "",
+          },
+        }));
+      })
       .catch(() => {
-        // Sidebar statute previews just won't resolve; chat-driven
-        // citations (carried on each AssistantMessage) still work.
+        // Nothing to preview; the drawer shows its empty state.
       });
-  }, []);
+    return () => {
+      cancelled = true;
+    };
+  }, [activeCitationKey, citationLibrary]);
 
   useEffect(() => {
     // Below lg, sidebar/drawer are fixed overlays (see Sidebar/ReferencesDrawer)
@@ -85,11 +127,13 @@ export function ChatShell() {
     setLoading(true);
 
     try {
-      const assistantMessage = await sendQuery(trimmed, historyForRequest);
+      const assistantMessage = await sendQuery(trimmed, historyForRequest, {
+        model: model ?? undefined,
+      });
       setMessages((current) => [...current, assistantMessage]);
       setCitationLibrary((current) => ({ ...current, ...assistantMessage.citations }));
-    } catch {
-      setMessages((current) => [...current, errorAssistantMessage()]);
+    } catch (error) {
+      setMessages((current) => [...current, errorAssistantMessage(error)]);
     } finally {
       setLoading(false);
     }
@@ -176,6 +220,8 @@ export function ChatShell() {
             onChange={setInputValue}
             onSubmit={() => submitQuestion(inputValue)}
             disabled={loading}
+            model={model}
+            onModelChange={setModel}
           />
         </main>
         <ReferencesDrawer

@@ -213,13 +213,16 @@ def chunk_act(act_key: str, max_tokens: int) -> dict:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--act", choices=["crpc", "penal", "evidence"])
+    ap.add_argument("--act", help="slug of one act; default is every parsed act")
     ap.add_argument("--max-tokens", type=int, default=DEFAULT_MAX)
     ap.add_argument("--show", type=int, default=2, help="sample chunks to print")
     args = ap.parse_args()
 
     OUT.mkdir(parents=True, exist_ok=True)
-    keys = [args.act] if args.act else ["crpc", "penal", "evidence"]
+    # Whatever the parser produced, in whatever order it produced it.
+    keys = [args.act] if args.act else sorted(p.stem for p in PARSED.glob("*.json"))
+    if not keys:
+        raise SystemExit(f"no parsed acts in {PARSED} — run parse_law_pdf.py first")
     grand = 0
     for k in keys:
         res = chunk_act(k, args.max_tokens)

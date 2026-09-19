@@ -4,7 +4,7 @@ side-by-side against the Qwen2.5-VL-3B local baseline.
 
 Run (from backend/, with the ainshonglap conda env active):
 
-    python scripts/gemini_chat.py
+    python experiments/gemini_chat.py
 
 Type a question and hit enter. Empty line / Ctrl-D / "exit" to quit.
 Reads GEMINI_API_KEY from backend/.env.local.
@@ -24,7 +24,7 @@ from google.genai import types
 # from any working directory rather than only from backend/.
 ENV_FILE = pathlib.Path(__file__).resolve().parents[1] / ".env.local"
 
-MODEL_ID = "gemini-3.5-flash"
+MODEL_ID = "gemini-3.5-flash-lite"
 
 SYSTEM_PROMPT = (
     "You are AinShonglap, a legal information assistant for Bangladesh "

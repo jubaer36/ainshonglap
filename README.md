@@ -40,14 +40,14 @@ Writes `Laws/main/parsed/<act>.json`. Then verify against the source PDF and an
 independent oracle — see `verification.md` for what each check does:
 
 ```bash
-python scripts/verify_parsed.py
+python scripts/verify/verify_parsed.py
 ```
 
 Then chunk for retrieval, and verify that too:
 
 ```bash
 python scripts/chunk_sections.py     # -> Laws/main/chunks/<act>.json
-python scripts/verify_chunks.py
+python scripts/verify/verify_chunks.py
 ```
 
 Then embed, index and measure retrieval:
@@ -56,7 +56,7 @@ Then embed, index and measure retrieval:
 python scripts/build_index.py        # BGE-M3 vectors -> Laws/main/index/
 python scripts/eval_retrieval.py     # Recall@k / MRR / Act accuracy vs gold
 python scripts/rerank.py --topk 20   # + cross-encoder rerank, with the delta
-python scripts/experiment_retrieval.py --what all   # A/B prefix and chunk budget
+python scripts/experiments/experiment_retrieval.py --what all   # A/B prefix and chunk budget
 ```
 
 ## Running locally

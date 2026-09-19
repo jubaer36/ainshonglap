@@ -37,10 +37,12 @@ only the corpus endpoints are needed.
 ```
 app/
   main.py            app, CORS, lifespan warmup, /health
-  api/routes/        query.py, retrieve.py, citations.py
+  api/routes/        query.py, retrieve.py, citations.py, models.py
   models/schemas.py  Pydantic contract, mirrored by frontend/lib/types.ts
   rag/               the pipeline — see API.md for the file-by-file map
-scripts/             ingestion, verification, evaluation, experiments
+scripts/             ingestion + tooling: parse, chunk, index, eval, rerank, REPLs
+  verify/            correctness checks, run against the source not the parser's stats
+  experiments/       measurement; nothing here runs in the product
 ```
 
 `app/rag/pipeline.retrieve()` is shared by the API and the eval scripts by
@@ -53,17 +55,31 @@ Each stage is checked against something external, not self-reported:
 
 ```bash
 python scripts/parse_law_pdf.py --all    # PDFs   -> Laws/main/parsed/*.json
-python scripts/verify_parsed.py          #   vs the PDF + the bdlaws oracle
+python scripts/verify/verify_parsed.py          #   vs the PDF + the bdlaws oracle
 python scripts/chunk_sections.py         # parsed -> Laws/main/chunks/*.json
-python scripts/verify_chunks.py          #   vs the parsed JSON
+python scripts/verify/verify_chunks.py          #   vs the parsed JSON
 python scripts/build_index.py            # chunks -> BGE-M3 vectors + FAISS
 python scripts/eval_retrieval.py         #   Recall@k / MRR / Act accuracy
 python scripts/rerank.py --topk 20       #   dense vs + reranker, with delta
 ```
 
-Experiments: `experiment_retrieval.py` (prefix, chunk budget),
+Ingest a PDF that is not one of the three acts — chunking and indexing discover
+whatever the parser wrote, so nothing downstream needs editing:
+
+```bash
+python scripts/parse_law_pdf.py --pdf "Laws/The Arms Act, 1878.pdf" \
+    --name "The Arms Act, 1878" --act-no "XI of 1878" --slug arms
+```
+
+`--backend auto` measures text per page and falls back to Docling (OCR) below
+120 chars/page, i.e. for scans. Docling is much worse wherever PyMuPDF works
+(5 of 13 sections on a 6-page sample) — see `parsing-plan.md`.
+
+Measurement lives in `scripts/experiments/`: `eval_retrieval.py`, `rerank.py`,
+`fit_threshold.py`, `experiment_retrieval.py` (prefix, chunk budget),
 `experiment_granularity.py` (retrieval unit), `experiment_abstention.py`
-(does the generator answer when retrieval missed).
+(does the generator answer when retrieval missed), plus the LLM baselines
+`openrouter_chat.py`, `gemini_chat.py`, `local_llm_chat.py`.
 
 ## Generator baselines
 

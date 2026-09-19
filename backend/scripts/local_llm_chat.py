@@ -3,7 +3,7 @@ then lets you type questions and see answers until you quit.
 
 Run (from backend/, with the ainshonglap conda env active):
 
-    python scripts/local_llm_chat.py
+    python experiments/local_llm_chat.py
 
 Type a question and hit enter. Empty line / Ctrl-D / "exit" to quit.
 """

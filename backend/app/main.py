@@ -2,6 +2,7 @@
 
   POST /api/query          question -> cited answer, or a refusal
   GET  /api/retrieve       raw retrieval, no generation (inspection/debugging)
+  GET  /api/models         selectable generators
   GET  /api/acts           indexed acts
   GET  /api/sections       browse sections
   GET  /api/sections/{key} one section, by citation key
@@ -21,6 +22,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes.citations import router as citations_router
+from app.api.routes.models import router as models_router
 from app.api.routes.query import router as query_router
 from app.api.routes.retrieve import router as retrieve_router
 
@@ -77,6 +79,7 @@ app.add_middleware(
 app.include_router(query_router)
 app.include_router(citations_router)
 app.include_router(retrieve_router)
+app.include_router(models_router)
 
 
 @app.get("/health", tags=["ops"])
@@ -88,9 +91,8 @@ async def health() -> dict:
         "error": STATE["error"],
         "index": STATE["index"],
         "reranker": config.RERANK_MODEL,
-        "generator": {
-            "backend": os.getenv("RAG_LLM_BACKEND", "openrouter"),
-            "model": os.getenv("RAG_OPENROUTER_MODEL",
-                               "deepseek/deepseek-v4-flash-0731:free"),
-        },
+        "generator": dict(zip(("backend", "model"),
+                              config.resolve_generator(None))) |
+                     {"alias": config.DEFAULT_GENERATOR,
+                      "refine_queries": config.REFINE_QUERIES},
     }

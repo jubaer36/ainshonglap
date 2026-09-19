@@ -72,3 +72,55 @@ export interface AssistantMessage {
 }
 
 export type ChatMessage = UserMessage | AssistantMessage;
+
+/** One indexed act, from GET /api/acts. */
+export interface Act {
+  slug: string;
+  name: string;
+  actNo: string | null;
+  sections: number;
+  sourcePdf: string | null;
+}
+
+/** A section as it appears in a browse listing (no statutory text). */
+export interface SectionSummary {
+  key: string;
+  act: string;
+  actSlug: string;
+  section: string;
+  sectionTitle: string | null;
+  chapter: string | null;
+  pageStart: number | null;
+}
+
+/** A section with its text, from GET /api/sections/{key}. */
+export interface SectionDetail extends SectionSummary {
+  actNo: string | null;
+  part: string | null;
+  chapterTitle: string | null;
+  pageEnd: number | null;
+  sourcePdf: string | null;
+  text: string;
+}
+
+export interface SectionPage {
+  total: number;
+  limit: number;
+  offset: number;
+  results: SectionSummary[];
+}
+
+/** A selectable generator, from GET /api/models. */
+export interface GeneratorInfo {
+  alias: string;
+  backend: string;
+  model: string;
+  /**
+   * Whether the route was measured to honour the JSON schema the pipeline
+   * requires. false means it returns prose, which the backend surfaces as a
+   * refusal rather than an answer; null means advertised but unverified.
+   */
+  enforcesSchema: boolean | null;
+  note: string | null;
+  default: boolean;
+}

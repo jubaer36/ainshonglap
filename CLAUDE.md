@@ -21,8 +21,6 @@ Supporting detail, read only when working on that area:
 `similar-projects.md` (what comparable repos chose at each stage),
 `verification.md` (how parsing and chunking are checked).
 
-**Ignore `findings.md`.** It is old scratch notes, not a source of truth.
-
 ## Scope
 
 Work only with the acts in **`Laws/main/`** — the Code of Criminal Procedure
@@ -56,16 +54,24 @@ Secrets live in `backend/.env.local` (gitignored).
 Each stage is checked against something external, not self-reported:
 
 ```bash
+# scripts/ is the pipeline and its tools.
+# scripts/verify/ checks correctness; scripts/experiments/ measures.
 python scripts/parse_law_pdf.py --all    # PDFs    -> Laws/main/parsed/*.json
-python scripts/verify_parsed.py          #   check vs the PDF + bdlaws oracle
+python scripts/verify/verify_parsed.py          #   check vs the PDF + bdlaws oracle
 python scripts/chunk_sections.py         # parsed  -> Laws/main/chunks/*.json
-python scripts/verify_chunks.py          #   check vs the parsed JSON
+python scripts/verify/verify_chunks.py          #   check vs the parsed JSON
 python scripts/build_index.py            # chunks  -> BGE-M3 vectors + FAISS
-python scripts/eval_retrieval.py         #   Recall@k / MRR / Act accuracy
-python scripts/rerank.py --topk 20       # + cross-encoder rerank, with delta
-python scripts/experiment_retrieval.py --what all   # A/B prefix, chunk budget
-python scripts/experiment_granularity.py           # retrieval unit (E5)
-python scripts/experiment_abstention.py --n 20     # does the generator over-answer (E8)
+
+# any legal PDF, not just the three acts; --backend auto OCRs scans via Docling
+python scripts/parse_law_pdf.py --pdf "Laws/The Arms Act, 1878.pdf" \
+    --name "The Arms Act, 1878" --act-no "XI of 1878" --slug arms
+
+python scripts/eval_retrieval.py     #   Recall@k / MRR / Act accuracy
+python scripts/rerank.py --topk 20   # + cross-encoder rerank, with delta
+python scripts/experiments/fit_threshold.py      #   abstention operating curve (E10)
+python scripts/experiments/experiment_retrieval.py --what all   # A/B prefix, chunk budget
+python scripts/experiments/experiment_granularity.py            # retrieval unit (E5)
+python scripts/experiments/experiment_abstention.py --n 20      # over-answering (E8)
 ```
 
 Serving: `uvicorn app.main:app --reload`. The API and the eval scripts share

@@ -17,8 +17,8 @@ Variants:
 
 Run (from backend/, ainshonglap conda env active):
 
-    python scripts/experiment_granularity.py
-    python scripts/experiment_granularity.py --rerank
+    python scripts/experiments/experiment_granularity.py
+    python scripts/experiments/experiment_granularity.py --rerank
 """
 
 from __future__ import annotations
@@ -31,12 +31,15 @@ import time
 
 import numpy as np
 
+BACKEND = pathlib.Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(BACKEND))                 # app.rag
+sys.path.insert(0, str(BACKEND / "scripts"))     # chunk_sections
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from chunk_sections import hierarchy_path, ntok  # noqa: E402
-from embed import embed_texts, load_encoder  # noqa: E402
+from app.rag.encoder import embed_texts, load_encoder  # noqa: E402
 from eval_retrieval import load_eval  # noqa: E402
 
-ROOT = pathlib.Path(__file__).resolve().parents[2]
+ROOT = pathlib.Path(__file__).resolve().parents[3]
 PARSED = ROOT / "Laws" / "main" / "parsed"
 EMBEDDER = "BAAI/bge-m3"
 ACTS = ["crpc", "penal", "evidence"]

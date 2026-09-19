@@ -53,8 +53,16 @@ __pycache__/
 *.pyc
 *.egg-info/
 
-# Parser output — regenerate with backend/scripts/build_hierarchy.py
+# Parser scratch output
 backend/scripts/*_out/
+
+# Regenerable retrieval caches: intermediate scoring passes that experiments
+# write so an interrupted run resumes. Large, derived, and reproducible from the
+# index — unlike the *_results.json files, which are the measured findings that
+# experiments.md cites and are tracked deliberately.
+Laws/main/index/abstention_ctx_k*.json
+Laws/main/index/threshold_scores_k*.json
+Laws/main/index/refine_cache_*.json
 
 
 

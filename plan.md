@@ -20,8 +20,9 @@
 7. ~~Validate chunking assumptions (prefix, budget).~~ **done** — both flat, see `experiments.md` E2/E3
 8. ~~Cross-encoder reranking.~~ **done** — R@1 32.7% → **41.9%**, Act acc. 82% → **87%** (E4)
 9. ~~Make E4 + E5 live: shared `backend/app/rag/` pipeline, dual-granularity index.~~ **done** — served numbers are now R@1 **41.8%**, R@20 **71.4%**, Act **87.5%** (E7). The two gains do **not** stack; E5 bought the R@20 ceiling, not R@1.
-10. **← NEXT:** Query rewriting — 29% of gold sections are never retrieved, which reranking cannot reach.
-11. Parse the remaining 25 in-scope acts.
+10. **← IN PROGRESS:** Query rewriting — refiner built (`app/rag/refine.py`), off by default pending `experiments/experiment_refine.py`. Abstention threshold fitted (E10) and deliberately left opt-in.
+11. Query rewriting — 29% of gold sections are never retrieved, which reranking cannot reach.
+12. Parse the remaining 25 in-scope acts.
 12. ~~Answer generation with citations + refusal path.~~ **done** — schema-constrained claims, C2/C3 citation gates, refusal on gate failure, disclaimer server-side. See `generation-plan.md`, `backend/API.md`.
 13. Prompt improvements (grounding, citation format, refusal behaviour).
 14. Citation validation (cited text matches source).

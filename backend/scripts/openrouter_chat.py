@@ -9,11 +9,11 @@ work. Swap to the SDK if streaming or tool calls are ever needed.
 
 Run (from backend/, with the ainshonglap conda env active):
 
-    python scripts/openrouter_chat.py                 # REPL, default model
-    python scripts/openrouter_chat.py --model lfm     # alias, or a full id
-    python scripts/openrouter_chat.py --list          # known aliases
-    python scripts/openrouter_chat.py --check --model all   # verify every route (free)
-    python scripts/openrouter_chat.py --json --model gemma  # structured-output probe
+    python experiments/openrouter_chat.py                 # REPL, default model
+    python experiments/openrouter_chat.py --model lfm     # alias, or a full id
+    python experiments/openrouter_chat.py --list          # known aliases
+    python experiments/openrouter_chat.py --check --model all   # verify every route (free)
+    python experiments/openrouter_chat.py --json --model gemma  # structured-output probe
 
 Inside the REPL, `/model <alias>` switches without restarting and `/models`
 lists them.
@@ -27,6 +27,7 @@ import argparse
 import json
 import os
 import pathlib
+import sys
 import time
 
 import requests
@@ -42,17 +43,14 @@ TIMEOUT = 300
 # Short aliases for the free routes under consideration, so switching model is
 # `--model lfm` rather than pasting an id. Order is roughly small-to-large;
 # `--list` prints it, and any full OpenRouter id still works in place of an alias.
-MODELS = {
-    "deepseek":  "deepseek/deepseek-v4-flash-0731:free",
-    "lfm":       "liquid/lfm-2.5-2.6b:free",
-    "qwen":      "qwen/qwen3.8-27b:free",
-    "gemma":     "google/gemma-4-31b-it:free",
-    "nemotron":  "nvidia/nemotron-3-ultra-550b-a55b:free",
-    "super":     "nvidia/nemotron-3-super-120b-a12b:free",
-    "lightning": "nvidia/nemotron-3.5-lightning:free",
-    "ling":      "inclusionai/ling-3.0-flash-fin:free",
-}
-DEFAULT = "deepseek"
+# Single source of truth: app/rag/config.GENERATORS. Kept in one place so the
+# REPL, the experiments and the API cannot disagree about what "lfm" means.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+from app.rag import config as _cfg  # noqa: E402
+
+MODELS = {a: g["model"] for a, g in _cfg.GENERATORS.items()
+          if g["backend"] == "openrouter"}
+DEFAULT = _cfg.DEFAULT_GENERATOR
 MODEL_ID = MODELS[DEFAULT]
 
 

@@ -143,7 +143,7 @@ exists, since the 49% figure it is justified by comes from someone else's corpus
 
 ## Verification
 
-`backend/scripts/verify_chunks.py` — recomputed from the parsed JSON, never
+`backend/scripts/verify/verify_chunks.py` — recomputed from the parsed JSON, never
 trusting what the chunker reported. **3/3 acts pass all seven checks.**
 
 | | |

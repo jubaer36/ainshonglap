@@ -15,9 +15,9 @@ reranker on top of it.
 
 Run (from backend/, ainshonglap conda env active):
 
-    python scripts/experiment_retrieval.py --what prefix
-    python scripts/experiment_retrieval.py --what budget
-    python scripts/experiment_retrieval.py --what all
+    python scripts/experiments/experiment_retrieval.py --what prefix
+    python scripts/experiments/experiment_retrieval.py --what budget
+    python scripts/experiments/experiment_retrieval.py --what all
 """
 
 from __future__ import annotations
@@ -30,13 +30,16 @@ import time
 
 import numpy as np
 
+BACKEND = pathlib.Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(BACKEND))                  # app.rag
+sys.path.insert(0, str(BACKEND / "scripts"))      # chunk_sections, eval_retrieval
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 from chunk_sections import chunk_act, hierarchy_path, ntok  # noqa: E402
-from embed import embed_texts, load_encoder  # noqa: E402
+from app.rag.encoder import embed_texts, load_encoder  # noqa: E402
 from eval_retrieval import load_eval  # noqa: E402
 
-ROOT = pathlib.Path(__file__).resolve().parents[2]
+ROOT = pathlib.Path(__file__).resolve().parents[3]
 PARSED = ROOT / "Laws" / "main" / "parsed"
 MODEL = "BAAI/bge-m3"
 ACTS = ["crpc", "penal", "evidence"]

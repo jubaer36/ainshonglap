@@ -4,7 +4,7 @@ Each entry: objective, hypothesis, configuration, result, decision. Negative
 results are kept — two of the three so far overturned an assumption, which is
 more useful than confirming one.
 
-Harness: `backend/scripts/experiment_retrieval.py`. All runs score against the
+Harness: `backend/scripts/experiments/experiment_retrieval.py`. All runs score against the
 same 608 gold questions from `bangladesh-legal-qa-dataset` (external, scraped
 independently of our PDFs). A hit requires the right **Act and** section.
 
@@ -258,7 +258,7 @@ it is done.
 **Objective.** E4 (+9.2pp R@1) and E5 (+3.8pp R@20) were measured
 independently, each against a section-only dense baseline. Neither had ever
 been measured with the other on, and neither ran in anything servable: E4 lived
-only in `scripts/rerank.py`, and E5's code was in `build_index.py` but the
+only in `experiments/rerank.py`, and E5's code was in `build_index.py` but the
 index had never been rebuilt with it. The logged 41.9% described a pipeline
 nothing could execute.
 
@@ -321,7 +321,7 @@ of the time under misleading context against <=1% when evidence is simply
 absent. Our model is larger and our wrong passages are merely wrong rather than
 adversarially constructed, so the finding transfers in direction at best.
 
-**Config.** `scripts/experiment_abstention.py`, measuring the shipping pipeline
+**Config.** `experiments/experiment_abstention.py`, measuring the shipping pipeline
 (`answer()` — prompt and gates together, not the prompt alone). Two strata from
 the 608-question set: gold_absent (retrieval missed; answering is the failure)
 and gold_present (the control, which prices the abstention). Sequential, free
@@ -361,7 +361,70 @@ finding reproducing on our corpus.
 
 ---
 
-## What E2-E8 together establish
+## E10 — fitting the D2 abstention threshold
+
+**Objective.** `generation-plan.md` proposed refusing before generating when the
+reranker score says nothing retrieved answers the question, and deliberately
+shipped `min_score` with **no default** — inventing a constant was the thing to
+avoid. This fits it.
+
+**The anecdote that motivated it.** Asked "state some laws of the penal code",
+top-1 reranker score was **-0.30**; asked "what is the punishment for theft",
+**+6.15**. Opposite signs, apparently clean separation.
+
+**Config.** `experiments/fit_threshold.py`. All 608 gold questions at k=5, recording
+the top-1 reranker score and whether the gold section was retrieved. Those two
+columns are a binary classifier; sweep the threshold, report both error
+directions. No API calls.
+
+**Result.** The distributions overlap heavily.
+
+| | min | p10 | p25 | median | p75 | max |
+|---|---|---|---|---|---|---|
+| retrieval hit | -6.17 | -3.42 | -1.83 | **-0.06** | 2.90 | 8.40 |
+| retrieval miss | -6.80 | -4.64 | -3.46 | **-1.92** | -0.83 | 5.81 |
+
+**AUC 0.727** — real signal, weak separation. 43 of 249 misses outscore the
+median hit. The two-example anecdote was two points from the tails.
+
+The cost of using it (precision = share of answered questions whose gold section
+was actually in context; 59.0% is R@5, i.e. answering everything):
+
+| threshold | answers | precision | misses refused | **hits lost** |
+|---|---|---|---|---|
+| none | 100% | 59.0% | 0% | 0% |
+| -3.00 | 78.9% | 65.2% | 32.9% | 12.8% |
+| -1.48 | 56.2% | 73.4% | 63.5% | 30.1% |
+| -1.10 | 50.5% | 75.9% | 70.3% | **35.1%** |
+| 0.04 | 35.9% | 80.7% | 83.1% | **51.0%** |
+| 2.32 | 18.6% | 92.0% | 96.4% | **71.0%** |
+
+**Reading it honestly.** Refusing 70% of the cases where retrieval had already
+failed costs **35% of the questions the system could have answered correctly**.
+That is the same brutal shape GRAB-RAG reported for its strongest policy — 13.3%
+misleading-context answering bought at the price of discarding 49.8% of
+answerable questions. No threshold here is free, and none is obviously right.
+
+**Decision.** **No default threshold.** `min_score` stays opt-in, now with a
+published curve behind it rather than a missing number. The argument against
+shipping one: the system already has two downstream defences that cost nothing —
+the generator's own refusal, and the deterministic C2/C3 citation gates, which
+drop claims that cite unretrieved sections or misquote them. A score gate is a
+*third* filter applied earliest and most bluntly, where it cannot see what the
+generator would have made of the context.
+
+Recommended if one is wanted anyway: **-3.00**, which refuses a third of the
+already-failed cases for 12.8% of hits. The aggressive end of this table is a
+trap; 71% utility loss for 92% precision is not a legal assistant, it is a
+system that mostly declines to work.
+
+**What it does buy, for free.** The score is now a usable *confidence signal*
+even without gating — worth surfacing to the reader ("weak match") rather than
+spending as a refusal.
+
+---
+
+## What E2-E10 together establish
 
 Both chunk-formatting knobs are flat — retrieval on this corpus is not limited
 by how chunks are labelled or sized. Ranking is where the gains were, exactly as

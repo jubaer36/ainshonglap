@@ -8,7 +8,7 @@ plugged into the FastAPI route.
 
 Run (from backend/, with the ainshonglap conda env active):
 
-    python scripts/local_llm_test.py
+    python scripts/experiments/local_llm_test.py
 """
 
 from __future__ import annotations

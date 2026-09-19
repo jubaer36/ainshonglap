@@ -145,6 +145,63 @@ def extract_lines(doc: pymupdf.Document, start: int, limit: int | None) -> list[
     return lines
 
 
+# Below this many characters per page, PyMuPDF is reading an image, not text.
+# A scanned statute yields near-zero: there are no text objects to extract, and
+# every downstream rule here keys off text, so the parse does not fail loudly —
+# it produces an empty act. Docling is the fallback because it OCRs; PyMuPDF
+# cannot, at any setting.
+TEXT_DENSITY_FLOOR = 120
+
+
+def text_density(doc: pymupdf.Document, sample: int = 8) -> float:
+    """Mean extractable characters per page over the first `sample` pages."""
+    n = min(sample, len(doc))
+    if not n:
+        return 0.0
+    return sum(len(doc[i].get_text("text").strip()) for i in range(n)) / n
+
+
+def extract_lines_docling(pdf_path: pathlib.Path, start: int,
+                          limit: int | None) -> list[Line]:
+    """Same Line shape, via Docling's OCR pipeline.
+
+    Used only for PDFs PyMuPDF cannot read at all, and measured to be much worse
+    wherever PyMuPDF works. On the first 6 pages of the Borstal Schools Act:
+
+        PyMuPDF   247 lines, 13 section starts (ss.1-13)
+        Docling    61 lines,  5 section starts (ss.9-13 only)
+
+    It dropped three quarters of the lines and the first eight sections, which
+    reproduces the failure parsing-plan.md rejected it for. This is not an
+    alternative parser; it is the only one that reads an image at all, and on a
+    scan a degraded parse beats an empty one.
+
+    Geometry is synthesised rather than reported: OCR coordinates are not
+    reliable enough for the gloss-column detection this parser does on native
+    PDFs, so scanned documents are treated as single-column. The section,
+    subsection and clause rules are text-based and apply unchanged.
+    """
+    from docling.document_converter import DocumentConverter
+
+    doc = DocumentConverter().convert(str(pdf_path)).document
+    lines: list[Line] = []
+    for item, _level in doc.iterate_items():
+        text = (getattr(item, "text", "") or "").strip()
+        if not text:
+            continue
+        prov = (getattr(item, "prov", None) or [None])[0]
+        pno = (getattr(prov, "page_no", 1) - 1) if prov else 0
+        if pno < start or (limit is not None and pno >= start + limit):
+            continue
+        bbox = getattr(prov, "bbox", None) if prov else None
+        y = getattr(bbox, "t", len(lines)) if bbox else len(lines)
+        for i, part in enumerate(text.split("\n")):
+            part = part.strip()
+            if part:
+                lines.append(Line(pno, 0.0, 100.0, y + i, y + i + 1, 10.0, part))
+    return lines
+
+
 def strip_furniture(
     lines: list[Line], doc: pymupdf.Document, act_name: str
 ) -> tuple[list[Line], list[Line]]:
@@ -388,12 +445,60 @@ def split_children(text: str) -> list[dict]:
 # --------------------------------------------------------------------------
 # 3. the parse
 # --------------------------------------------------------------------------
-def parse(act_key: str, start: int = 0, limit: int | None = None) -> dict:
-    act_name, act_no, pdf_name = ACTS[act_key]
-    pdf_path = LAWS / pdf_name
+def slugify(name: str) -> str:
+    """Filename -> a short stable key. This becomes the citation prefix
+    (`penal-s379`), so it is derived once from the source and then fixed."""
+    stem = re.sub(r"\.pdf$", "", name, flags=re.I)
+    stem = re.sub(r"\(.*?\)", "", stem)                 # drop "(bdcode.gov.bd copy)"
+    stem = re.sub(r"[^A-Za-z0-9]+", "-", stem).strip("-").lower()
+    stem = re.sub(r"^(the)-", "", stem)
+    return re.sub(r"-\d{4}$", "", stem) or "act"
+
+
+def parse(act_key: str, start: int = 0, limit: int | None = None, *,
+          pdf: pathlib.Path | None = None, act_name: str | None = None,
+          act_no: str | None = None, backend: str = "auto") -> dict:
+    """Parse one act's PDF into the hierarchical JSON the pipeline consumes.
+
+    `act_key` selects a known act; `pdf` overrides it with any legal PDF, so
+    ingesting a new document is a command rather than a source edit. The
+    structural rules are content-based (section numbering, font size, column
+    geometry) and carry no per-act knowledge, so an unseen act goes through the
+    same path — verify_parsed.py is what says whether it came out right.
+    """
+    if pdf is not None:
+        pdf_path = pathlib.Path(pdf)
+        if not pdf_path.is_absolute():
+            pdf_path = (LAWS / pdf_path) if (LAWS / pdf_path).exists() else pdf_path.resolve()
+        if not pdf_path.exists():
+            raise SystemExit(f"no such PDF: {pdf_path}")
+        act_name = act_name or re.sub(r"\.pdf$", "", pdf_path.name, flags=re.I)
+        act_no = act_no or ""
+        pdf_name = pdf_path.name
+    else:
+        act_name, act_no, pdf_name = ACTS[act_key]
+        pdf_path = LAWS / pdf_name
     doc = pymupdf.open(pdf_path)
 
-    raw = extract_lines(doc, start, limit)
+    # Pick the extractor from what the file actually contains, not from its
+    # extension. `auto` uses PyMuPDF unless the pages are effectively empty of
+    # text, which means a scan.
+    chosen = backend
+    if backend == "auto":
+        density = text_density(doc)
+        chosen = "pymupdf" if density >= TEXT_DENSITY_FLOOR else "docling"
+        print(f"  text density {density:.0f} chars/page -> {chosen}"
+              + ("  (scanned; OCR required)" if chosen == "docling" else ""))
+
+    if chosen == "docling":
+        print("  ! Docling loses text on native PDFs (measured: 5 of 13 sections "
+              "on a 6-page sample). Verify with verify_parsed.py.")
+        raw = extract_lines_docling(pdf_path, start, limit)
+        if not raw:
+            raise SystemExit(
+                f"no text recovered from {pdf_path.name} by either backend")
+    else:
+        raw = extract_lines(doc, start, limit)
     kept, dropped = strip_furniture(raw, doc, act_name)
 
     toc_pages: list[int] = []
@@ -626,16 +731,40 @@ def report(res: dict) -> None:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--act", choices=sorted(ACTS), default="penal")
-    ap.add_argument("--all", action="store_true", help="parse every act")
+    ap = argparse.ArgumentParser(
+        description="Parse a legal PDF into hierarchical JSON "
+                    "(Act > Part > Chapter > Section > Subsection > Clause).",
+        epilog="After parsing: verify_parsed.py, chunk_sections.py, build_index.py.",
+    )
+    ap.add_argument("--act", choices=sorted(ACTS), help="a known act")
+    ap.add_argument("--all", action="store_true", help="parse every known act")
+    ap.add_argument("--pdf", help="any legal PDF, by path or by name inside Laws/main/")
+    ap.add_argument("--name", help="act title for citations (default: the filename)")
+    ap.add_argument("--act-no", default="", help='e.g. "XLV of 1860"')
+    ap.add_argument("--slug", help="citation key prefix (default: derived from the filename)")
+    ap.add_argument("--backend", choices=["auto", "pymupdf", "docling"], default="auto",
+                    help="auto picks by text density: PyMuPDF for native text, "
+                         "Docling (OCR) for scans")
     ap.add_argument("--start", type=int, default=0)
     ap.add_argument("--pages", type=int, default=None, help="limit pages (default: all)")
     args = ap.parse_args()
 
+    if not (args.act or args.all or args.pdf):
+        ap.error("give --pdf, --act or --all")
+
     OUT.mkdir(parents=True, exist_ok=True)
-    for key in sorted(ACTS) if args.all else [args.act]:
-        res = parse(key, args.start, args.pages)
+
+    if args.pdf:
+        key = args.slug or slugify(pathlib.Path(args.pdf).name)
+        res = parse(key, args.start, args.pages, pdf=args.pdf,
+                    act_name=args.name, act_no=args.act_no, backend=args.backend)
+        jobs = [(key, res)]
+    else:
+        keys = sorted(ACTS) if args.all else [args.act]
+        jobs = [(k, parse(k, args.start, args.pages, backend=args.backend))
+                for k in keys]
+
+    for key, res in jobs:
         path = OUT / f"{key}.json"
         path.write_text(json.dumps(res, indent=2, ensure_ascii=False), encoding="utf-8")
         report(res)

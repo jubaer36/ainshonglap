@@ -15,7 +15,7 @@ import uuid
 from app.models.schemas import (AssistantMessage, Citation, CitationSegment,
                                 ParagraphBlock, StrongSegment, TextSegment)
 from app.rag.answer import DISCLAIMER, Answer
-from app.rag.citations import to_citations
+from app.rag.citations import SHORT_NAMES, to_citations
 
 
 def _para(*segments) -> ParagraphBlock:
@@ -26,7 +26,16 @@ def to_message(a: Answer) -> AssistantMessage:
     blocks = []
     citations: dict[str, Citation] = {}
 
-    if a.refused:
+    if a.kind == "meta":
+        # No citations, and `unsupported` stays false: this is an answer about
+        # the assistant, not a claim about the law, so there is nothing to cite
+        # and nothing was refused.
+        heading = "About this assistant"
+        subheading = "Not a legal question"
+        for para in a.summary.split("\n\n"):
+            if para.strip():
+                blocks.append(_para(TextSegment(text=para.strip())))
+    elif a.refused:
         heading = "Not covered by the indexed Acts"
         subheading = "No answer given"
         blocks.append(_para(TextSegment(
@@ -38,8 +47,13 @@ def to_message(a: Answer) -> AssistantMessage:
                                 TextSegment(text=a.clarification)))
         # The sections that were considered are still shown. A refusal that
         # explains what it looked at is reviewable; a bare "I don't know" is not.
+        # Each one is named with its act: "s.5" identifies nothing when all three
+        # acts have a section 5.
         if a.sources:
-            considered = ", ".join(f"s.{h.section}" for h in a.sources[:5])
+            considered = ", ".join(
+                f"{SHORT_NAMES.get(h.act.strip().lower(), h.act)} s.{h.section}"
+                for h in a.sources[:5]
+            )
             blocks.append(_para(TextSegment(
                 text=f"Sections considered and rejected: {considered}.")))
     else:

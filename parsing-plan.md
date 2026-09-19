@@ -20,7 +20,7 @@ split across a page break.
 | **pdftotext -layout** (poppler) | ⚠️ via character offset | ⚠️ via character offset | ❌ | free | Viable, loses font sizes |
 | **pymupdf4llm** | ⚠️ pairs then degrades | untested | ❌ | free | `<mark>` noise; fires OCR on text PDFs |
 | **pdfplumber** `layout=True` | ⚠️ as pdftotext | ⚠️ | ❌ | free | No advantage over pdftotext |
-| **Docling** | ❌ | ❌ | ❌ | free | **Rejected** — loses text |
+| **Docling** | ❌ | ❌ | ❌ | free | **Rejected as primary; kept as the scan fallback** — loses text |
 | **bluebell** | n/a — authoring format | n/a | n/a | free | Output target only |
 
 Detail on the ones that decided the design:
@@ -295,3 +295,51 @@ retrieval needs no tree walk and citations are already page-level.
   copies that should be removed first (step 1 in plan.md, still outstanding).
 - Licence on the HF oracle dataset is stated as "unknown". The underlying
   statute text is government material, but confirm before anything ships.
+
+
+## Ingesting a PDF that is not one of the three acts
+
+The parser takes any legal PDF. Structure detection is content-based — section
+numbering, font size relative to the page's body text, column geometry — and
+carries no per-act knowledge, so an unseen act goes through the same path.
+
+```bash
+python scripts/parse_law_pdf.py --pdf "Laws/The Arms Act, 1878.pdf" \
+    --name "The Arms Act, 1878" --act-no "XI of 1878" --slug arms
+python scripts/verify/verify_parsed.py          # then chunk_sections.py, build_index.py
+```
+
+Chunking and indexing discover whatever is in `Laws/main/parsed/`, so nothing
+downstream needs editing to add an act.
+
+Verified on the Arms Act 1878 (unseen, 17 pages): 32 sections, 30 titled, 8
+spanning a page break, 609 of 609 lines placed, 0 orphaned.
+
+### Choosing the extractor
+
+`--backend auto` (the default) measures extractable text per page and picks:
+
+| | |
+|---|---|
+| >= 120 chars/page | PyMuPDF — native text |
+| < 120 chars/page | Docling — the page is an image, so OCR is the only option |
+
+Every PDF in this corpus measures 1,000-2,400 chars/page, so Docling never
+fires on them. That threshold exists for scanned statutes, where PyMuPDF
+extracts nothing and would otherwise produce an empty act **without failing** —
+every rule downstream keys off text, so no text means no sections rather than an
+error.
+
+**Docling remains the worse parser wherever PyMuPDF works.** Forced onto the
+first 6 pages of the Borstal Schools Act:
+
+| backend | lines | section starts |
+|---|---|---|
+| PyMuPDF | 247 | 13 (ss.1-13) |
+| Docling | 61 | 5 (ss.9-13 only) |
+
+Three quarters of the lines gone, and the first eight sections with them —
+the same failure this table rejected it for. It is a fallback for the case where
+the alternative is nothing, not a second opinion. OCR geometry is also too
+unreliable for the gloss-column detection, so scanned documents are treated as
+single-column.

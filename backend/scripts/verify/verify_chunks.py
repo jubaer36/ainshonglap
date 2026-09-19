@@ -23,8 +23,8 @@ self-reported and cannot be the proof. Everything here is recomputed from
 
 Run (from backend/, ainshonglap conda env active):
 
-    python scripts/verify_chunks.py
-    python scripts/verify_chunks.py --act crpc --verbose
+    python scripts/verify/verify_chunks.py
+    python scripts/verify/verify_chunks.py --act crpc --verbose
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ import re
 import statistics
 from collections import Counter
 
-LAWS = pathlib.Path(__file__).resolve().parents[2] / "Laws" / "main"
+LAWS = pathlib.Path(__file__).resolve().parents[3] / "Laws" / "main"
 PARSED = LAWS / "parsed"
 CHUNKS = LAWS / "chunks"
 BUDGET = 512

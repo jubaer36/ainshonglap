@@ -31,9 +31,9 @@ Checks, in order of how much they would hurt if they failed:
 
 Run (from backend/, ainshonglap conda env active):
 
-    python scripts/verify_parsed.py                # all acts
-    python scripts/verify_parsed.py --act crpc
-    python scripts/verify_parsed.py --verbose      # list every failure
+    python scripts/verify/verify_parsed.py                # all acts
+    python scripts/verify/verify_parsed.py --act crpc
+    python scripts/verify/verify_parsed.py --verbose      # list every failure
 """
 
 from __future__ import annotations
@@ -48,10 +48,13 @@ import unicodedata
 
 import pymupdf
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+# The verifier re-reads the PDF with the same extractor the parser used, so a
+# bug in extraction shows up in both and cannot hide. It deliberately does NOT
+# reuse the parser's own structure logic beyond that.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 from parse_law_pdf import ACTS, LAWS, SECTION_RE, extract_lines, strip_furniture  # noqa: E402
 
-ORACLE = pathlib.Path(__file__).resolve().parents[2] / "Laws" / "bdlaws" / "bdlaws.jsonl"
+ORACLE = pathlib.Path(__file__).resolve().parents[3] / "Laws" / "bdlaws" / "bdlaws.jsonl"
 PARSED = LAWS / "parsed"
 
 ROMAN_ORDER = [

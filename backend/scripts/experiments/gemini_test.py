@@ -4,7 +4,7 @@ Qwen2.5-VL-3B baseline.
 
 Run (from backend/, with the ainshonglap conda env active):
 
-    python scripts/gemini_test.py
+    python scripts/experiments/gemini_test.py
 """
 
 from __future__ import annotations
@@ -19,9 +19,9 @@ from google.genai import types
 
 # backend/.env.local, resolved from this file so the script runs
 # from any working directory rather than only from backend/.
-ENV_FILE = pathlib.Path(__file__).resolve().parents[1] / ".env.local"
+ENV_FILE = pathlib.Path(__file__).resolve().parents[2] / ".env.local"
 
-MODEL_ID = "gemini-2.5-flash"
+MODEL_ID = "gemini-3.5-flash-lite"
 
 SYSTEM_PROMPT = (
     "You are AinShonglap, a legal information assistant for Bangladesh "

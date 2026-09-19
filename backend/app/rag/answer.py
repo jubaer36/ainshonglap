@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 from app.rag import config
 from app.rag.llm import get_llm
 from app.rag.pipeline import Retrieved, retrieve
+from app.rag.refine import Refined, refine
 from app.rag.citations import strip_prefix
 from app.rag.verify import VerifiedAnswer, check_claims
 
@@ -111,6 +112,7 @@ class Answer:
     question: str
     refused: bool
     reason: str | None                  # why, when refused
+    kind: str = "legal"          # "legal" | "meta" — meta answers carry no citations
     ambiguous: bool = False
     clarification: str = ""
     summary: str = ""
@@ -119,6 +121,37 @@ class Answer:
     sources: list[Retrieved] = field(default_factory=list)
     verification: VerifiedAnswer | None = None
     model: str = ""
+    refined: Refined | None = None      # None when routing is off
+
+
+def capability_answer() -> str:
+    """What this assistant is, assembled from the index rather than written down.
+
+    Deliberately not an LLM call and not a hardcoded blurb: both drift from what
+    the system actually contains. Read from the corpus, the description cannot
+    claim an act that is not indexed.
+    """
+    from app.rag import library
+
+    try:
+        acts = library.acts()
+    except Exception:
+        acts = []
+    if not acts:
+        return ("I answer questions about Bangladesh criminal law from the text of "
+                "the Acts themselves. The index is currently unavailable.")
+    listed = "; ".join(f"{a['name']} ({a['sections']} sections)" for a in acts)
+    total = sum(a["sections"] for a in acts)
+    return (
+        "I answer questions about Bangladesh criminal law using only the text of "
+        f"the Acts indexed here: {listed} — {total} sections in all, parsed "
+        "directly from the source PDFs.\n\n"
+        "Every claim I make cites a section and quotes it verbatim, and the quote "
+        "is checked against the source before you see it; claims that fail that "
+        "check are dropped. If the indexed Acts do not answer something, I say so "
+        "rather than answering from memory. I cannot advise on your situation, "
+        "cover case law or other statutes, or tell you what a court would decide."
+    )
 
 
 def build_context(hits: list[Retrieved]) -> str:
@@ -139,7 +172,8 @@ def build_context(hits: list[Retrieved]) -> str:
 
 def answer(question: str, k: int | None = None, *, backend: str | None = None,
            model: str | None = None, min_score: float | None = None,
-           hits: list[Retrieved] | None = None) -> Answer:
+           hits: list[Retrieved] | None = None,
+           refine_query: bool | None = None) -> Answer:
     """Retrieve, generate, verify. Refusal is a normal outcome, not an error.
 
     `min_score` is decision D2: a reranker-score floor below which we do not
@@ -149,18 +183,47 @@ def answer(question: str, k: int | None = None, *, backend: str | None = None,
     unmeasured constant this project keeps out of the pipeline.
     """
     k = k or config.FINAL_K
+    # Routing decides whether retrieval is the right tool; rewriting changes what
+    # gets embedded. Separate switches: the first is a correctness fix, the
+    # second is an unproven retrieval technique.
+    use_route = config.ROUTE_QUERIES if refine_query is None else refine_query
+    use_refine = config.REFINE_QUERIES if refine_query is None else refine_query
+
+    ref = None
+    if use_route and hits is None:
+        # Deliberately not passing `model`: that is the answering model, and the
+        # router is a separate, smaller one (config.DEFAULT_ROUTER).
+        ref = refine(question, rewrite=use_refine)
+        # Three of the four routes are served better by something other than
+        # retrieval. All three previously arrived here as five loosely-matching
+        # sections plus a wasted generation call.
+        if ref.intent == "meta":
+            return Answer(question, refused=False, kind="meta", reason=None,
+                          summary=capability_answer(), refined=ref)
+        if ref.intent == "browse":
+            return Answer(question, refused=True, refined=ref,
+                          reason="this asks to list provisions rather than answer a "
+                                 "question — browse the statute list instead")
+        if ref.intent == "out_of_scope":
+            return Answer(question, refused=True, refined=ref,
+                          reason="not a question about Bangladesh criminal law")
+
     # `hits` lets an experiment reuse a cached retrieval pass. Retrieval over the
     # eval set costs ~10 minutes of cross-encoder time, and re-paying it per run
     # would make measuring the generator needlessly expensive.
-    hits = hits if hits is not None else retrieve(question, k=k)
+    hits = hits if hits is not None else retrieve(ref.query if ref else question, k=k)
     if not hits:
-        return Answer(question, refused=True, reason="nothing retrieved")
+        return Answer(question, refused=True, reason="nothing retrieved", refined=ref)
 
+    # D2: refuse before generating when the reranker says nothing here answers
+    # the question. Fitted on the 608-question set — see scripts/fit_threshold.py
+    # and the operating point recorded in generation-plan.md. Still no default:
+    # the caller opts in with a number that has evidence behind it.
     if min_score is not None and hits[0].score < min_score:
         return Answer(question, refused=True,
                       reason=f"top reranker score {hits[0].score:.2f} below "
                              f"threshold {min_score:.2f}",
-                      sources=hits)
+                      sources=hits, refined=ref)
 
     llm = get_llm(backend, model)
     raw = llm.generate_json(SYSTEM, f"Sections:\n\n{build_context(hits)}\n\n---\n\n"
@@ -171,7 +234,7 @@ def answer(question: str, k: int | None = None, *, backend: str | None = None,
                       reason="the retrieved sections do not cover this question",
                       ambiguous=bool(raw.get("ambiguous")),
                       clarification=raw.get("clarification") or "",
-                      sources=hits, model=llm.name)
+                      sources=hits, model=llm.name, refined=ref)
 
     # C2 + C3. Claims that fail either gate are dropped rather than shown with a
     # warning: a citation the reader has to second-guess is worse than one fewer
@@ -191,7 +254,7 @@ def answer(question: str, k: int | None = None, *, backend: str | None = None,
         return Answer(question, refused=True,
                       reason="no claim survived citation verification",
                       dropped=dropped, sources=hits, verification=checked,
-                      model=llm.name)
+                      model=llm.name, refined=ref)
 
     cited = {c["section"] for c in kept}
     return Answer(
@@ -202,5 +265,5 @@ def answer(question: str, k: int | None = None, *, backend: str | None = None,
         claims=kept, dropped=dropped,
         # only sections that survived into the answer are offered as citations
         sources=[h for h in hits if str(h.section) in cited],
-        verification=checked, model=llm.name,
+        verification=checked, model=llm.name, refined=ref,
     )

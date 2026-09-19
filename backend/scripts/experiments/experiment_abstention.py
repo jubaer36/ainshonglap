@@ -32,8 +32,8 @@ burst of parallel requests buys nothing here.
 
 Run (from backend/, ainshonglap conda env active):
 
-    python scripts/experiment_abstention.py --n 20          # 40 calls
-    python scripts/experiment_abstention.py --n 20 --dry-run
+    python scripts/experiments/experiment_abstention.py --n 20          # 40 calls
+    python scripts/experiments/experiment_abstention.py --n 20 --dry-run
 """
 
 from __future__ import annotations
@@ -45,7 +45,9 @@ import random
 import sys
 import time
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+BACKEND = pathlib.Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(BACKEND))            # app.rag
+sys.path.insert(0, str(BACKEND / "scripts"))  # eval_retrieval, chunk_sections
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 from app.rag import config  # noqa: E402

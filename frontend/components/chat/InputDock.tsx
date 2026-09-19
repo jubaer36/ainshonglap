@@ -2,49 +2,34 @@
 
 import { useRef, useState } from "react";
 import { Disclaimer } from "./Disclaimer";
+import { ModelPicker } from "./ModelPicker";
 
 interface InputDockProps {
   value: string;
   onChange: (value: string) => void;
   onSubmit: () => void;
   disabled: boolean;
+  /** null = whatever the server has configured as default. */
+  model: string | null;
+  onModelChange: (alias: string | null) => void;
 }
 
 const DEFAULT_STATUS = "Bangladeshi Codex Active";
 
-export function InputDock({ value, onChange, onSubmit, disabled }: InputDockProps) {
+export function InputDock({
+  value,
+  onChange,
+  onSubmit,
+  disabled,
+  model,
+  onModelChange,
+}: InputDockProps) {
   const [status, setStatus] = useState(DEFAULT_STATUS);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   function flashStatus(text: string, thenSet?: string) {
     setStatus(text);
     setTimeout(() => setStatus(thenSet ?? DEFAULT_STATUS), 2000);
-  }
-
-  // Stubs: these acknowledge the affordance exists (per the assessment's
-  // optional-feature list) without implementing real capture/OCR/upload yet.
-  function triggerAudioDictate() {
-    flashStatus("Listening to voice input…");
-    setTimeout(() => {
-      onChange("What are the grounds for granting anticipatory bail under Section 498 CrPC in Bangladesh?");
-      flashStatus("Voice captured");
-    }, 1200);
-  }
-
-  function triggerOcrScan() {
-    flashStatus("Scanning document via camera OCR…");
-    setTimeout(() => {
-      onChange("Scanned Charge Sheet: Review Section 173 CrPC submission compliance for Dhanmondi Thana Case No. 12.");
-      flashStatus("OCR extracted");
-    }, 1000);
-  }
-
-  function triggerFileUpload() {
-    flashStatus("Attaching petition file…");
-    setTimeout(() => {
-      onChange("Brief attached: Bail Petition under Section 497 CrPC before Sessions Judge. Analyze merits.");
-      flashStatus("Attached: Bail_Petition.pdf");
-    }, 900);
   }
 
   function handleSubmit() {
@@ -73,32 +58,10 @@ export function InputDock({ value, onChange, onSubmit, disabled }: InputDockProp
           />
           <div className="flex items-center justify-between px-3 pb-2.5 pt-1">
             <div className="flex items-center gap-1 text-slate-500">
-              <button
-                type="button"
-                className="p-1.5 rounded-lg hover:bg-slate-200/70 hover:text-slate-900 transition-colors"
-                onClick={triggerAudioDictate}
-                title="Voice dictation"
-              >
-                <span className="material-symbols-outlined text-[19px]">mic</span>
-              </button>
-              <button
-                type="button"
-                className="p-1.5 rounded-lg hover:bg-slate-200/70 hover:text-slate-900 transition-colors"
-                onClick={triggerOcrScan}
-                title="Scan / OCR physical charge sheet, plaint or FIR"
-              >
-                <span className="material-symbols-outlined text-[19px]">photo_camera</span>
-              </button>
-              <button
-                type="button"
-                className="p-1.5 rounded-lg hover:bg-slate-200/70 hover:text-slate-900 transition-colors"
-                onClick={triggerFileUpload}
-                title="Attach FIR, Charge Sheet or Petition Brief (PDF)"
-              >
-                <span className="material-symbols-outlined text-[19px]">attach_file</span>
-              </button>
-              <div className="h-4 w-px bg-slate-200 mx-1.5 hidden sm:block" />
-              <span className="font-mono text-[11px] text-slate-400 hidden sm:inline">{status}</span>
+              <ModelPicker value={model} onChange={onModelChange} disabled={disabled} />
+              <span className="font-mono text-[11px] text-slate-400 hidden md:inline ml-1.5">
+                {status}
+              </span>
             </div>
             <div className="flex items-center gap-2">
               <button

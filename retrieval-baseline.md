@@ -34,7 +34,7 @@ section number right in the wrong statute counts as a miss, because in this
 product that is worse than returning nothing.
 
 `sentence-transformers` 6.x cannot load BGE-M3 (it looks for an `AutoProcessor`
-and raises), so `scripts/embed.py` uses `transformers` directly. BGE-M3's dense
+and raises), so `app/rag/encoder.py` uses `transformers` directly. BGE-M3's dense
 vector is the CLS token normalised, so the wrapper was not buying anything.
 
 ## Results

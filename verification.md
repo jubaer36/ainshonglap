@@ -13,9 +13,9 @@ outstanding. Two suites, one per stage.
 ```bash
 conda activate ainshonglap
 cd backend
-python scripts/verify_parsed.py                  # PDF -> parsed JSON
-python scripts/verify_chunks.py                  # parsed JSON -> chunks
-python scripts/verify_parsed.py --act crpc --verbose
+python scripts/verify/verify_parsed.py                  # PDF -> parsed JSON
+python scripts/verify/verify_chunks.py                  # parsed JSON -> chunks
+python scripts/verify/verify_parsed.py --act crpc --verbose
 ```
 
 ## The principle: never let the parser mark its own homework

@@ -1,17 +1,23 @@
+// Drawn from what the three indexed acts actually contain, so a first-time
+// visitor sees the system working rather than declining. The last is
+// deliberately outside the corpus: refusing is a feature, and it should be
+// reachable without having to guess a question that triggers it.
 const SUGGESTIONS = [
   {
-    label: "FIR recording requirements",
-    question:
-      "What are the mandatory statutory requirements for recording a First Information Report (FIR) under Bangladesh law, and what specific duties are imposed on the Officer-in-Charge of the Thana?",
+    label: "Punishment for theft",
+    question: "What is the punishment for theft?",
   },
   {
-    label: "Can a DAO be prosecuted as a company?",
-    question:
-      "Can smart contract decentralized autonomous organizations (DAOs) be prosecuted as registered corporate bodies under the Bangladesh Companies Act 1994 or Penal Code?",
+    label: "Confession to police",
+    question: "Is a confession made to a police officer admissible as evidence?",
   },
   {
-    label: "Off-topic example (shows the unsupported state)",
-    question: "What's the best way to cook khichuri for a rainy day?",
+    label: "Arrest without warrant",
+    question: "When can the police arrest someone without a warrant?",
+  },
+  {
+    label: "Out of scope (shows a refusal)",
+    question: "How do I register a private limited company in Bangladesh?",
   },
 ];
 

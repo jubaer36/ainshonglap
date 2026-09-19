@@ -279,7 +279,7 @@ Built and serving (`backend/app/rag/`, `backend/API.md`):
 | A model | pluggable backend; OpenRouter default. `provider.require_parameters` pins routing to providers that enforce schemas — verified: deepseek-v4-flash, lfm-2.5-2.6b, nemotron-3-super; verified not: gemma-4-31b |
 | B answer shape | JSON schema, one claim per assertion, each with section number and verbatim quote |
 | C citations | **C2 + C3 live.** C2 resolves the act too, not just the number — all three acts have a s.25. Failing claims dropped; none surviving becomes a refusal. C4 (NLI) not built |
-| D abstention | prompt + gates. The D2 score threshold is **not** fitted: `min_score` exists but has no default, because inventing one would put an unmeasured constant in the pipeline |
+| D abstention | prompt + gates. D2 threshold now **fitted** (E10): AUC 0.727, weak separation. Still no default — refusing 70% of failed retrievals costs 35% of answerable questions. `min_score` is opt-in with a published curve; -3.00 is the least-bad point if one is wanted |
 | E evaluation | **not built.** No faithfulness, citation-precision or abstention numbers exist yet |
 
 **E8 is unfinished**, at 21 of 40 calls: on the 16 valid responses where the gold

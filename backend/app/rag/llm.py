@@ -23,7 +23,7 @@ import os
 import pathlib
 from typing import Any, Protocol
 
-DEFAULT_GEMINI = os.getenv("RAG_GEMINI_MODEL", "gemini-2.5-flash")
+DEFAULT_GEMINI = os.getenv("RAG_GEMINI_MODEL", "gemini-3.5-flash-lite")
 DEFAULT_OPENROUTER = os.getenv("RAG_OPENROUTER_MODEL",
                                "deepseek/deepseek-v4-flash-0731:free")
 ENV_FILE = pathlib.Path(__file__).resolve().parents[2] / ".env.local"
@@ -233,7 +233,17 @@ def _loads_lenient(raw: str) -> dict:
 
 @functools.lru_cache(maxsize=8)
 def get_llm(backend: str | None = None, model: str | None = None) -> Any:
-    backend = backend or os.getenv("RAG_LLM_BACKEND", "openrouter")
+    """Resolve an alias, a `backend:model` pair, or a bare id into a client.
+
+    Cached per (backend, model) so switching generators mid-session costs one
+    construction, not one per request.
+    """
+    from app.rag import config
+
+    if model or backend is None:
+        resolved_backend, resolved_model = config.resolve_generator(model)
+        backend = backend or resolved_backend
+        model = resolved_model
     if backend == "openrouter":
         return OpenRouterLLM(model or DEFAULT_OPENROUTER)
     if backend == "gemini":

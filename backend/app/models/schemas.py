@@ -117,6 +117,10 @@ class HistoryMessage(BaseModel):
 class QueryRequest(BaseModel):
     question: str
     history: list[HistoryMessage] = Field(default_factory=list)
+    # Optional per-request generator: an alias from GET /api/models, a
+    # "backend:model" pair, or a bare model id. Omitted uses the server default.
+    model: str | None = None
+    refine: bool | None = None      # override the query-refiner flag
 
 
 class AssistantMessage(BaseModel):

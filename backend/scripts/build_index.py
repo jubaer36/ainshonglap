@@ -51,7 +51,7 @@ def load_chunks(granularity: str = "both") -> list[dict]:
     section hit and citations still point at the section.
     """
     out: list[dict] = []
-    for a in config.ACTS:
+    for a in config.acts():
         p = config.CHUNKS_DIR / f"{a}.json"
         if p.exists():
             out.extend(json.loads(p.read_text(encoding="utf-8")))

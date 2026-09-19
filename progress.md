@@ -18,7 +18,7 @@
 ## LLM-only baseline (step 4)
 - Dedicated `ainshonglap` conda env; scripts for a local model (Qwen2.5-VL-3B on GPU) and a hosted one (Gemini 2.5 Flash), each with batch and REPL modes.
 - Same 5 legal questions to both: Qwen hallucinated section content or citations on 3 of 5; Gemini got all 5 right with accurate citations.
-- Conclusion: the generator is not the weak link — retrieval will be. Matches `findings.md`, which puts the embedder ahead of the generator for legal RAG.
+- Conclusion: the generator is not the weak link — retrieval will be.
 
 ## PDF parsing (step 2)
 - Evaluated 8 parsers by running each against the actual PDFs, not on reputation. Docling loses text; LandingAI ADE is capable but its elements straddle section boundaries; `bluebell` is an authoring format, not a parser. Full comparison in `parsing-plan.md`.
@@ -30,7 +30,7 @@
 
 ## Verification (step 3)
 - Found `Ashik2380/bdlaws` on HF — an independently scraped copy of all 1,467 Bangladesh acts. Used strictly as an oracle, never as a source: complete text, zero hierarchy.
-- `backend/scripts/verify_parsed.py` runs 7 checks, all by re-reading the PDF rather than trusting the parser's own stats. Method and results in `verification.md`.
+- `backend/scripts/verify/verify_parsed.py` runs 7 checks, all by re-reading the PDF rather than trusting the parser's own stats. Method and results in `verification.md`.
 - Results: **zero phantom sections in any act**, zero real numbering gaps, 100% line-level text recovery on Penal and Evidence (99.99% CrPC). Evidence Act matches its oracle exactly, 182 for 182, and passes every check.
 - The suite earned its keep immediately — contents pages leaking into the body, gloss notes silently dropped when they matched no section, and two bugs in the checker itself. All invisible in the parser's own summary stats.
 - It also showed the limit of coverage checking: s.565's 24 pages of endnotes counted as *recovered* because they landed somewhere. Coverage catches deletion; only size and shape checks catch misfiling.
@@ -50,7 +50,7 @@
 - Full log with hypotheses, configs and decisions in `experiments.md`.
 
 ## Making it servable (step 9)
-- Both best results existed only inside eval scripts: reranking lived in `scripts/rerank.py`, and dual-granularity indexing was written but the index had never been rebuilt with it. The logged 41.9% described a pipeline nothing could execute.
+- Both best results existed only inside eval scripts: reranking lived in `experiments/rerank.py`, and dual-granularity indexing was written but the index had never been rebuilt with it. The logged 41.9% described a pipeline nothing could execute.
 - Extracted `backend/app/rag/` so the API and the eval scripts call one `retrieve()`. Rebuilt the index dual-granularity: 2,320 vectors (1,321 section + 999 subsection).
 - Measured the two together for the first time (E7): **they do not stack.** Reranked R@1 is 41.8% with dual granularity against 41.9% without — the reranker was already promoting the sections dual granularity pulls in. Kept anyway: it costs nothing at query time and lifts R@20 to 71.4%, the ceiling query rewriting has to work inside.
 - Served numbers: R@1 41.8%, R@5 59.0%, R@20 71.4%, MRR 0.498, Act accuracy 87.5%.
