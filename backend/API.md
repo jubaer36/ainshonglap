@@ -15,6 +15,7 @@ RAG_WARMUP=0 uvicorn app.main:app --reload   # skip model load (corpus endpoints
 |---|---|---|
 | POST | `/api/query` | question → cited answer, or a refusal |
 | GET | `/api/plan` | what the planner decided, without answering |
+| POST | `/api/transcribe` | voice input → transcript (deliberately not an answer) |
 | GET | `/api/retrieve` | raw retrieval, no generation — inspection and debugging |
 | GET | `/api/acts` | indexed acts + section counts |
 | GET | `/api/sections` | browse/filter sections (`act`, `q`, `limit`, `offset`) |
@@ -100,6 +101,40 @@ chapter returns nothing rather than the nearest real one.
 
 Set `RAG_PLAN=0` to fall back to the older pattern router in `app/rag/refine.py`.
 
+### POST `/api/transcribe`
+
+Multipart upload of a recording; returns what was heard. **It does not answer
+the question.**
+
+```bash
+curl -X POST http://localhost:8000/api/transcribe \
+  -F "audio=@question.webm;type=audio/webm"
+```
+
+```json
+{"transcript": "what does section 379 of the penal code say",
+ "confidence": 0.98, "duration": 4.2, "language": "en"}
+```
+
+The separation is a safety property, not an API convenience. A misheard section
+number produces a **perfectly grounded answer about the wrong offence**: the
+planner names coordinates that exist, the catalog fetches them, the verbatim
+quote checks out against the section that was fetched. Every gate passes,
+because no gate knows what was actually said. The reader seeing the transcript
+before sending it is the only check on this path, so the API refuses to skip it.
+
+`503` means no `DEEPGRAM_API_KEY` — voice is unconfigured, the rest of the
+assistant is unaffected, and typing still works. `413` is audio over 10 MB.
+
+Keyterm prompting boosts statutory vocabulary ("cognizable", "bailable", the
+Act names) built from the catalog, because a general speech model turns those
+into commoner words rather than failing visibly.
+
+**Bengali is `bn`, nova-3 only, and is not in Deepgram's `multi`
+code-switching set** (en, es, fr, de, hi, ru, pt, ja, it, nl). Mixed
+Bangla-English has no single-model answer; `RAG_STT_LANGUAGE` picks one, and
+`scripts/deepgram_stt.py --compare` measures what the choice costs.
+
 ### GET `/api/retrieve?q=...&k=5&rerank=true`
 
 The retrieval half alone, with dense and reranker scores per hit. `rerank=false`
@@ -121,6 +156,8 @@ keys are optional fallbacks.
 | `RAG_PLAN` | `1` | `0` falls back to the old pattern router |
 | `RAG_ROUTER_MODEL` | `lfm` | old router's model, used only when `RAG_PLAN=0` |
 | `RAG_DENSE_K` / `RAG_FINAL_K` | `20` / `5` | candidates reranked / sections returned |
+| `RAG_STT_MODEL` | `nova-3` | Deepgram model; Bengali needs nova-3 |
+| `RAG_STT_LANGUAGE` | `en` | `en`, `bn`, or `multi` (no Bengali in `multi`) |
 | `RAG_WARMUP` | `1` | `0` skips model loading at startup |
 | `CORS_ORIGINS` | `http://localhost:3000` | comma-separated |
 
@@ -150,6 +187,7 @@ app/rag/
   library.py    browsable corpus (older in-memory view; catalog.py supersedes
                 it for structural queries)
   refine.py     the pattern router, used only when RAG_PLAN=0
+  speech.py     Deepgram STT — audio -> transcript, never an answer
   present.py    Answer -> AssistantMessage
 ```
 

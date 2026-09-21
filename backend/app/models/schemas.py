@@ -133,6 +133,22 @@ class QueryRequest(BaseModel):
         description="Override the query-refiner flag. Omit for the server default.")
 
 
+class Transcription(BaseModel):
+    """What was heard, from POST /api/transcribe. Never an answer.
+
+    `confidence` is Deepgram's, for the whole utterance. It is shown to the
+    reader rather than acted on: a low score is a reason to look at the words
+    before sending, not a threshold the server should silently enforce.
+    """
+
+    transcript: str
+    confidence: float | None = None
+    duration: float | None = None
+    model: str | None = None
+    language: str | None = None
+    request_id: str | None = None
+
+
 class AssistantMessage(BaseModel):
     id: str
     role: Literal["assistant"] = "assistant"

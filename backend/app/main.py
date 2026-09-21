@@ -2,6 +2,7 @@
 
   POST /api/query          question -> cited answer, or a refusal
   GET  /api/plan           what the planner decided, without answering
+  POST /api/transcribe     voice input -> transcript (never an answer)
   GET  /api/retrieve       raw retrieval, no generation (inspection/debugging)
   GET  /api/models         selectable generators
   GET  /api/acts           indexed acts
@@ -25,6 +26,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes.citations import router as citations_router
 from app.api.routes.models import router as models_router
 from app.api.routes.query import router as query_router
+from app.api.routes.speech import router as speech_router
 from app.api.routes.retrieve import router as retrieve_router
 
 log = logging.getLogger(__name__)
@@ -93,6 +95,16 @@ app.include_router(query_router)
 app.include_router(citations_router)
 app.include_router(retrieve_router)
 app.include_router(models_router)
+app.include_router(speech_router)
+
+
+def _speech_state() -> dict:
+    """Whether voice input is configured. Reported so a missing key shows up
+    here rather than as a 503 the first time someone taps the microphone."""
+    from app.rag import speech
+
+    return {"available": speech.available(), "model": speech.MODEL,
+            "language": speech.LANGUAGE}
 
 
 @app.get("/health", tags=["ops"])
@@ -107,6 +119,7 @@ async def health() -> dict:
         "reranker": config.RERANK_MODEL,
         "planner": {"model": config.PLANNER_MODEL,
                     "enabled": config.PLAN_QUERIES},
+        "speech": _speech_state(),
         "generator": dict(zip(("backend", "model"),
                               config.resolve_generator(None))) |
                      {"alias": config.DEFAULT_GENERATOR,

@@ -175,3 +175,16 @@ export interface QueryPlan {
   notes: string[];
   error: string | null;
 }
+
+/** What was heard, from POST /api/transcribe. Never an answer — the transcript
+ *  goes back to the reader to confirm or correct before it is asked. */
+export interface Transcription {
+  transcript: string;
+  /** Deepgram's whole-utterance confidence. Shown, not enforced: a low score is
+   *  a reason to check the words, not a threshold to block on. */
+  confidence: number | null;
+  duration: number | null;
+  model: string | null;
+  language: string | null;
+  requestId: string | null;
+}

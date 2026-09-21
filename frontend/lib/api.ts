@@ -11,6 +11,7 @@ import type {
   SectionDetail,
   SectionPage,
   SectionSummary,
+  Transcription,
 } from "./types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -22,6 +23,8 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
  */
 const QUERY_TIMEOUT_MS = 180_000;
 const BROWSE_TIMEOUT_MS = 15_000;
+// Transcription is roughly realtime; a 60s clip should never take this long.
+const TRANSCRIBE_TIMEOUT_MS = 60_000;
 
 /** Distinguishes "the API said no" from "the API wasn't there", which need
  * different messages to the reader. */
@@ -178,6 +181,57 @@ export async function fetchPlan(question: string, model?: string): Promise<Query
     notes: (raw.notes as string[]) ?? [],
     error: (raw.error as string) ?? null,
   };
+}
+
+/**
+ * Send a recording for transcription. Returns what was heard — it does NOT ask
+ * the question.
+ *
+ * That split is a safety property rather than an API convenience. A misheard
+ * section number yields a perfectly grounded answer about the wrong offence:
+ * the planner names coordinates that exist, the catalog fetches them, the quote
+ * verifies against the section fetched. Every check passes. Nothing downstream
+ * knows what was actually said, so the reader is the only check there is, and
+ * they get the words before anything is sent.
+ */
+export async function transcribeAudio(
+  blob: Blob,
+  language?: string,
+): Promise<Transcription> {
+  const form = new FormData();
+  // A filename is required for FastAPI to treat this as an UploadFile; the
+  // extension is what carries the container type through.
+  form.append("audio", blob, "recording.webm");
+  const query = language ? `?language=${encodeURIComponent(language)}` : "";
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TRANSCRIBE_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/transcribe${query}`, {
+      method: "POST",
+      body: form,
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw new ApiError(
+        response.status,
+        response.status === 503
+          ? "Voice input is not configured on the server."
+          : `Transcription failed with status ${response.status}`,
+      );
+    }
+    const raw = (await response.json()) as Record<string, unknown>;
+    return {
+      transcript: (raw.transcript as string) ?? "",
+      confidence: (raw.confidence as number) ?? null,
+      duration: (raw.duration as number) ?? null,
+      model: (raw.model as string) ?? null,
+      language: (raw.language as string) ?? null,
+      requestId: (raw.request_id as string) ?? null,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function normalizeSectionSummary(raw: Record<string, unknown>): SectionSummary {

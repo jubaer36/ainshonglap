@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { Disclaimer } from "./Disclaimer";
+import { MicButton } from "./MicButton";
 import { ModelPicker } from "./ModelPicker";
 
 interface InputDockProps {
@@ -29,7 +30,7 @@ export function InputDock({
 
   function flashStatus(text: string, thenSet?: string) {
     setStatus(text);
-    setTimeout(() => setStatus(thenSet ?? DEFAULT_STATUS), 2000);
+    setTimeout(() => setStatus(thenSet ?? DEFAULT_STATUS), 3500);
   }
 
   function handleSubmit() {
@@ -59,6 +60,17 @@ export function InputDock({
           <div className="flex items-center justify-between px-3 pb-2.5 pt-1">
             <div className="flex items-center gap-1 text-slate-500">
               <ModelPicker value={model} onChange={onModelChange} disabled={disabled} />
+              <MicButton
+                disabled={disabled}
+                onStatus={(text) => flashStatus(text, DEFAULT_STATUS)}
+                // Placed in the box, never submitted. A misheard section number
+                // would otherwise become a confidently grounded answer about a
+                // different offence, and nothing downstream can catch that.
+                onTranscript={(text) => {
+                  onChange(value ? `${value.trim()} ${text}` : text);
+                  textareaRef.current?.focus();
+                }}
+              />
               <span className="font-mono text-[11px] text-slate-400 hidden md:inline ml-1.5">
                 {status}
               </span>
