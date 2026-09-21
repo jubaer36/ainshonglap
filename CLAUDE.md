@@ -79,6 +79,7 @@ python scripts/experiments/experiment_retrieval.py --what all   # A/B prefix, ch
 python scripts/experiments/experiment_granularity.py            # retrieval unit (E5)
 python scripts/experiments/experiment_abstention.py --n 20      # over-answering (E8)
 python scripts/groq_chat.py --json                              # Groq schema probe (E11)
+python scripts/inception_chat.py --json                         # Mercury schema probe (E14)
 ```
 
 Two read models, two jobs. **FAISS** answers "which provisions resemble this

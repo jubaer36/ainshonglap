@@ -24,6 +24,7 @@ DEFAULT_GEMINI = os.getenv("RAG_GEMINI_MODEL", "gemini-3.5-flash-lite")
 DEFAULT_GROQ = os.getenv("RAG_GROQ_MODEL", "qwen/qwen3.8-27b")
 DEFAULT_OPENROUTER = os.getenv("RAG_OPENROUTER_MODEL",
                                "liquid/lfm-2.5-2.6b:free")
+DEFAULT_INCEPTION = os.getenv("RAG_INCEPTION_MODEL", "mercury-2.5")
 ENV_FILE = pathlib.Path(__file__).resolve().parents[2] / ".env.local"
 
 
@@ -64,18 +65,26 @@ class GeminiLLM:
 
 
 class GroqLLM:
-    """Groq's OpenAI-compatible endpoint with strict structured output."""
+    """Groq's OpenAI-compatible endpoint with strict structured output.
+
+    The three class attributes below are the whole of what makes this Groq
+    rather than any other OpenAI-compatible provider, so a sibling only has to
+    override them — see InceptionLLM.
+    """
 
     API = "https://api.groq.com/openai/v1/chat/completions"
+    KEY_ENV = "GROQ_API_KEY"
+    LABEL = "groq"
 
     def __init__(self, model: str = DEFAULT_GROQ, temperature: float = 0.0,
                  max_tokens: int = 4096, timeout: int = 120):
         from dotenv import load_dotenv
 
         load_dotenv(ENV_FILE, override=True)
-        key = os.environ.get("GROQ_API_KEY")
+        key = os.environ.get(self.KEY_ENV)
         if not key:
-            raise RuntimeError("GROQ_API_KEY not set (expected in backend/.env.local)")
+            raise RuntimeError(
+                f"{self.KEY_ENV} not set (expected in backend/.env.local)")
         self.name = model
         self.temperature = temperature
         self.max_tokens = max_tokens
@@ -127,10 +136,11 @@ class GroqLLM:
         }
         response = self._post(body)
         if response.status_code != 200:
-            raise RuntimeError(f"groq {response.status_code}: {response.text[:300]}")
+            raise RuntimeError(
+                f"{self.LABEL} {response.status_code}: {response.text[:300]}")
         data = response.json()
         if data.get("error"):
-            raise RuntimeError(f"groq: {json.dumps(data['error'])[:300]}")
+            raise RuntimeError(f"{self.LABEL}: {json.dumps(data['error'])[:300]}")
         choice = (data.get("choices") or [{}])[0]
         content = (choice.get("message") or {}).get("content")
         if not (content or "").strip():
@@ -138,6 +148,27 @@ class GroqLLM:
                 f"empty content from {self.name} "
                 f"(finish_reason={choice.get('finish_reason')})")
         return json.loads(content)
+
+
+class InceptionLLM(GroqLLM):
+    """Inception's Mercury models — OpenAI-compatible, so the Groq client fits.
+
+    Mercury is a diffusion language model rather than an autoregressive one.
+    Measured here at 469 output tok/s on the schema probe against Groq Qwen's
+    ~1.3s total, which is worth something on this pipeline specifically: the
+    planner runs before anything else on every question, so its latency is paid
+    even by questions that end in a refusal.
+
+    Only the endpoint and the key differ, so everything else — strict schema,
+    429 backoff, the finish_reason in the empty-response error — is inherited.
+    """
+
+    API = "https://api.inceptionlabs.ai/v1/chat/completions"
+    KEY_ENV = "INCEPTION_API_KEY"
+    LABEL = "inception"
+
+    def __init__(self, model: str = DEFAULT_INCEPTION, **kw):
+        super().__init__(model, **kw)
 
 
 class OpenRouterLLM:
@@ -264,5 +295,8 @@ def get_llm(backend: str | None = None, model: str | None = None) -> Any:
         return OpenRouterLLM(model or DEFAULT_OPENROUTER)
     if backend == "gemini":
         return GeminiLLM(model or DEFAULT_GEMINI)
+    if backend == "inception":
+        return InceptionLLM(model or DEFAULT_INCEPTION)
     raise ValueError(
-        f"unknown LLM backend {backend!r} (expected groq, openrouter or gemini)")
+        f"unknown LLM backend {backend!r} "
+        "(expected groq, openrouter, gemini or inception)")

@@ -58,6 +58,11 @@ GENERATORS: dict[str, dict] = {
                   "enforces_schema": True,  "note": "2.6B, ~2s/call"},
     "super":     {"backend": "openrouter", "model": "nvidia/nemotron-3-super-120b-a12b:free",
                   "enforces_schema": True,  "note": "120B MoE"},
+    "mercury":   {"backend": "inception",  "model": "mercury-2.5",
+                  "enforces_schema": True,
+                  "note": "diffusion LLM, 260K ctx; 469 tok/s on the schema probe"},
+    "mercury-2": {"backend": "inception",  "model": "mercury-2",
+                  "enforces_schema": True,  "note": "previous generation, 128K ctx"},
     "gemini":    {"backend": "gemini",     "model": "gemini-3.5-flash-lite",
                   "enforces_schema": True,
                   "note": "E1 scored 5/5, but on gemini-2.5-flash"},
@@ -93,7 +98,8 @@ def resolve_generator(name: str | None) -> tuple[str, str]:
     if name in GENERATORS:
         g = GENERATORS[name]
         return g["backend"], g["model"]
-    if ":" in name and name.split(":", 1)[0] in {"groq", "openrouter", "gemini"}:
+    if ":" in name and name.split(":", 1)[0] in {"groq", "openrouter", "gemini",
+                                                 "inception"}:
         backend, model = name.split(":", 1)
         return backend, model
     return os.getenv("RAG_LLM_BACKEND", "groq"), name

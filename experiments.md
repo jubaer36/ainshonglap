@@ -587,7 +587,53 @@ them still needs the relevance threshold (phase 4) to abstain.
 
 ---
 
-## What E2-E13 together establish
+## E14 — Inception Mercury as a generator/planner option
+
+**Objective.** Mercury is a diffusion language model rather than an
+autoregressive one, and the claim is a large speed advantage at comparable
+quality. Latency matters on this pipeline specifically: the planner runs before
+anything else on every question, so its cost is paid even by questions that end
+in a refusal.
+
+**Config.** `scripts/inception_chat.py`, same shape as `groq_chat.py`.
+OpenAI-compatible endpoint at `api.inceptionlabs.ai/v1`, temperature 0.
+`mercury-2.5` (260K ctx) and `mercury-2` (128K). Strict-schema probe, then the
+full pipeline in both roles.
+
+**Result — schema.** Both routes **PASS** the strict probe, which is the gate
+that decides whether a route can be a generator at all. `mercury-2.5` returned
+the closed schema in 3.34s at **469 output tok/s**.
+
+**Result — latency, which contradicts the reason for trying it.** On the planner
+role, three questions each:
+
+| planner | median | runs |
+|---|---|---|
+| qwen (Groq) | **0.51s** | 0.71, 0.49, 0.51 |
+| mercury-2 | 1.02s | 2.54, 1.01, 1.02 |
+| mercury-2.5 | 2.16s | 2.85, 1.26, 2.16 |
+
+Groq Qwen is 4x faster wall-clock despite a far lower token rate. A planner call
+emits ~50 tokens, so per-request overhead dominates and throughput is close to
+irrelevant. The advantage a diffusion model offers is in long generations, which
+is not what the latency-critical path here does.
+
+**Result — quality, n=1 and therefore not a result.** On "is a confession to a
+police officer admissible?" through the full pipeline, Mercury cited Evidence
+s.25 **and s.27**, catching the discovery-of-fact exception that Qwen's answer
+omitted. Ungrounded, `mercury-2.5` also placed ss.25-26 in the Evidence Act
+correctly, where E11 recorded Qwen placing them in the CrPC. Suggestive, no
+more: one question is not a measurement, and the citation gates passed both.
+
+**Decision.** Adopt as a selectable option (`mercury`, `mercury-2`), not as a
+default. It enforces the schema, so it is safe to offer; it is slower than the
+incumbent on the calls this system actually makes, so there is no case for
+switching. Nothing moved on the 608-question set, and nothing here claims it
+did.
+
+---
+
+## What E2-E14 together establish
 
 Both chunk-formatting knobs are flat — retrieval on this corpus is not limited
 by how chunks are labelled or sized. Ranking is where the gains were, exactly as

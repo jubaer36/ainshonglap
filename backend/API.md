@@ -115,7 +115,8 @@ keys are optional fallbacks.
 |---|---|---|
 | `RAG_GENERATOR` | `qwen` | alias returned by `GET /api/models` |
 | `RAG_GROQ_MODEL` | `qwen/qwen3.8-27b` | direct Groq model id |
-| `RAG_LLM_BACKEND` | `groq` | `groq`, `openrouter`, `gemini` |
+| `RAG_LLM_BACKEND` | `groq` | `groq`, `openrouter`, `gemini`, `inception` |
+| `RAG_INCEPTION_MODEL` | `mercury-2.5` | Inception Mercury default |
 | `RAG_PLANNER_MODEL` | `qwen` | the planner — decides category and coordinates |
 | `RAG_PLAN` | `1` | `0` falls back to the old pattern router |
 | `RAG_ROUTER_MODEL` | `lfm` | old router's model, used only when `RAG_PLAN=0` |

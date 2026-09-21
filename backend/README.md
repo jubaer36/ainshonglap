@@ -128,6 +128,7 @@ python scripts/experiments/plan_cases.py            # planner, graded (E13)
 python scripts/groq_chat.py                         # default Qwen REPL
 python scripts/groq_chat.py --json                  # strict-schema probe
 python scripts/openrouter_chat.py --model lfm       # router/fallback probe
+python scripts/inception_chat.py --json             # Mercury schema probe (E14)
 python scripts/gemini_chat.py                       # optional Gemini fallback
 ```
 
