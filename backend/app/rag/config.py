@@ -54,6 +54,11 @@ EMBED_MODEL = os.getenv("RAG_EMBED_MODEL", "BAAI/bge-m3")
 GENERATORS: dict[str, dict] = {
     "qwen":      {"backend": "groq",       "model": "qwen/qwen3.8-27b",
                   "enforces_schema": True,  "note": "Groq free tier; fast, strict JSON schema"},
+    "oss":       {"backend": "groq",       "model": "openai/gpt-oss-20b",
+                  "enforces_schema": True,
+                  "note": "Groq; separate daily token budget from qwen"},
+    "oss120":    {"backend": "groq",       "model": "openai/gpt-oss-120b",
+                  "enforces_schema": None,  "note": "Groq; larger, unprobed"},
     "lfm":       {"backend": "openrouter", "model": "liquid/lfm-2.5-2.6b:free",
                   "enforces_schema": True,  "note": "2.6B, ~2s/call"},
     "super":     {"backend": "openrouter", "model": "nvidia/nemotron-3-super-120b-a12b:free",
@@ -69,6 +74,13 @@ GENERATORS: dict[str, dict] = {
 }
 
 DEFAULT_GENERATOR = os.getenv("RAG_GENERATOR", "qwen")
+
+# Used when the chosen generator is out of quota. Wants a different PROVIDER
+# from the default, not just a different model: Groq's daily cap is per model,
+# but an outage or a key problem is not, and a fallback on the same provider
+# would fail with it. Mercury is Inception, enforces the schema, and has its
+# own budget.
+FALLBACK_GENERATOR = os.getenv("RAG_FALLBACK_GENERATOR", "mercury")
 
 # The router runs on every question and only classifies and rewrites, so it
 # wants a small fast model, not the one that writes the answer. lfm measured

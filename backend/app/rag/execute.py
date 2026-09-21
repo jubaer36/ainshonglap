@@ -280,9 +280,12 @@ def semantic_answer(plan: Plan, *, backend: str | None = None,
 
     shown = hits[:MAX_CONTEXT_SECTIONS]
     llm = get_llm(backend, model)
+    # `plan.asked` is the standalone form: identical to the question unless this
+    # was a follow-up, in which case it is the rewrite that carries the earlier
+    # facts. The generator must never see "what if he had survived" alone.
     raw = llm.generate_json(
         SYSTEM, f"Sections:\n\n{build_context(shown)}\n\n---\n\n"
-                f"Question: {plan.question}", SCHEMA)
+                f"Question: {plan.asked}", SCHEMA)
 
     if not raw.get("sufficient"):
         return Answer(plan.question, refused=True, plan=plan,
@@ -329,7 +332,7 @@ def execute(plan: Plan, *, backend: str | None = None, model: str | None = None,
     if plan.category == "out_of_scope":
         return out_of_scope_answer(plan)
     if plan.category == "general":
-        a = general_answer(plan.question, None, backend=backend, model=model)
+        a = general_answer(plan.asked, None, backend=backend, model=model)
         a.plan = plan
         return a
     if plan.category == "structural":
@@ -339,11 +342,17 @@ def execute(plan: Plan, *, backend: str | None = None, model: str | None = None,
 
 def answer_question(question: str, *, backend: str | None = None,
                     model: str | None = None, planner: str | None = None,
-                    **kw) -> Answer:
+                    memory=None, **kw) -> Answer:
     """Plan, then execute. The whole path, for a caller that has a question.
 
     `planner` is separate from `model` on purpose: planning is a small job that
     runs on every question, and the answering model may be slower and dearer.
+
+    `memory` is the rolling conversation summary (`app/rag/memory.py`). It
+    reaches only the planner: if the question turns out to be a follow-up, the
+    planner rewrites it to stand alone and every executor downstream sees an
+    ordinary self-contained question. Nothing below this line knows there is a
+    conversation.
     """
-    plan = make_plan(question, model=planner)
+    plan = make_plan(question, model=planner, memory=memory)
     return execute(plan, backend=backend, model=model, **kw)

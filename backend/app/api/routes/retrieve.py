@@ -38,7 +38,7 @@ class RetrieveResponse(BaseModel):
 
 
 @router.get("/api/retrieve", response_model=RetrieveResponse)
-async def retrieve_sections(
+def retrieve_sections(
     q: str = Query(..., min_length=1, description="the question"),
     k: int = Query(config.FINAL_K, ge=1, le=50),
     rerank: bool = Query(True, description="false gives the dense-only ordering"),

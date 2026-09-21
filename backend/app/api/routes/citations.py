@@ -49,13 +49,13 @@ class SectionPage(BaseModel):
 
 
 @router.get("/acts", response_model=list[ActSummary])
-async def list_acts() -> list[ActSummary]:
+def list_acts() -> list[ActSummary]:
     """The indexed acts and how many sections of each are in the index."""
     return [ActSummary(**a) for a in library.acts()]
 
 
 @router.get("/sections", response_model=SectionPage)
-async def list_sections(
+def list_sections(
     act: str | None = Query(None, description="act slug: crpc, penal, evidence"),
     q: str | None = Query(None, description="substring of section number or title"),
     limit: int = Query(50, ge=1, le=200),
@@ -67,7 +67,7 @@ async def list_sections(
 
 
 @router.get("/sections/{key}", response_model=SectionDetail)
-async def get_section(key: str) -> SectionDetail:
+def get_section(key: str) -> SectionDetail:
     """One section by citation key, e.g. `penal-s379`.
 
     This is what a citation in an answer links to, so the text shown here is the

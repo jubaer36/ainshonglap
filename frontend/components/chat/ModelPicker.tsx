@@ -15,22 +15,57 @@ interface ModelPickerProps {
  * comes from GET /api/models rather than being duplicated here — the two would
  * otherwise disagree about what "lfm" means.
  *
- * Routes that cannot honour the JSON schema are shown but disabled. They are
- * not merely lower quality: the pipeline requires a verbatim quote per claim,
- * and a route that answers in prose gets parsed as "no claims", which the
- * backend reports as "the Acts do not cover this". A silently wrong refusal is
- * worse than an unavailable option, so the reason is stated rather than hidden.
+ * Two different things make a route unselectable, and they are shown
+ * differently because they mean different things:
+ *
+ *   no JSON schema   permanent, about correctness. The pipeline requires a
+ *                    verbatim quote per claim; a route that answers in prose
+ *                    parses as "no claims" and surfaces as "the Acts do not
+ *                    cover this" — a silently wrong refusal.
+ *   out of quota     temporary, about budget. Groq's daily cap is per model,
+ *                    so one route running dry says nothing about the others.
+ *
+ * When the selected model runs out mid-conversation the picker moves to the
+ * fallback rather than leaving a dead choice selected, because the alternative
+ * is every subsequent question failing with a 502.
  */
 export function ModelPicker({ value, onChange, disabled }: ModelPickerProps) {
   const [models, setModels] = useState<GeneratorInfo[]>([]);
+  const [failed, setFailed] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
-    fetchModels()
-      .then(setModels)
-      .catch(() => setModels([])); // picker just stays empty; the server default still applies
-  }, []);
+    let cancelled = false;
+    function load() {
+      fetchModels()
+        .then((list) => {
+          if (cancelled) return;
+          setModels(list);
+          setFailed(null);
+        })
+        .catch((error: unknown) => {
+          if (cancelled) return;
+          // Kept and shown. "models unavailable" with no cause is the same
+          // dead end as the box silently disappearing was.
+          console.error("GET /api/models failed", error);
+          setModels([]);
+          setFailed(
+            error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+          );
+        });
+    }
+    load();
+    // Quota frees up on the provider's clock, not ours, so the list is
+    // re-read periodically — otherwise a model stays greyed out until reload
+    // long after its budget reset.
+    const timer = setInterval(load, 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [reloadKey]);
 
   useEffect(() => {
     if (!open) return;
@@ -43,9 +78,39 @@ export function ModelPicker({ value, onChange, disabled }: ModelPickerProps) {
 
   const serverDefault = models.find((m) => m.default);
   const active = models.find((m) => m.alias === value) ?? serverDefault ?? null;
-  const usable = (m: GeneratorInfo) => m.enforcesSchema !== false;
+  const usable = (m: GeneratorInfo) => m.enforcesSchema !== false && m.available;
 
-  if (models.length === 0) return null;
+  // If the chosen model has run out, move to the fallback. Done here rather
+  // than server-side alone so the picker stops showing a selection that no
+  // longer applies — the backend substitutes anyway, and the two would disagree.
+  useEffect(() => {
+    if (models.length === 0) return;
+    const chosen = models.find((m) => m.alias === value);
+    if (!chosen || usable(chosen)) return;
+    const replacement =
+      models.find((m) => m.fallback && usable(m)) ?? models.find(usable);
+    if (replacement) onChange(replacement.alias);
+  }, [models, value, onChange]);
+
+  // Never disappear silently. The old version returned null whenever the list
+  // was empty, so a backend that 500s on /api/models looked identical to a
+  // feature that was never there — which is exactly how this got reported as
+  // "the box is gone". Say what happened instead, and offer a retry.
+  if (models.length === 0) {
+    if (!failed) return null;             // still loading on first paint
+    return (
+      <button
+        type="button"
+        onClick={() => setReloadKey((k) => k + 1)}
+        title={`Could not load the model list: ${failed}. Click to retry.`}
+        className="flex items-center gap-1.5 px-2 py-1 rounded-md border border-rose-200 bg-rose-50 text-[11px] text-rose-700 hover:bg-rose-100"
+      >
+        <span className="material-symbols-outlined text-[14px]">error</span>
+        <span className="font-medium">models unavailable</span>
+        <span className="material-symbols-outlined text-[13px]">refresh</span>
+      </button>
+    );
+  }
 
   return (
     <div ref={rootRef} className="relative">
@@ -94,10 +159,26 @@ export function ModelPicker({ value, onChange, disabled }: ModelPickerProps) {
                     {m.enforcesSchema === null && (
                       <span className="text-[10px] text-amber-600">unverified</span>
                     )}
+                    {!m.available && (
+                      <span className="text-[10px] text-rose-600">
+                        {m.secondsRemaining && m.secondsRemaining > 60
+                          ? `out of quota · ${Math.ceil(m.secondsRemaining / 60)}m`
+                          : "out of quota"}
+                      </span>
+                    )}
+                    {m.fallback && m.available && (
+                      <span className="text-[10px] text-emerald-600">fallback</span>
+                    )}
                   </span>
                 </div>
                 <div className="text-[11px] text-slate-500 truncate">{m.model}</div>
-                {m.note && <div className="text-[10px] text-slate-400 truncate">{m.note}</div>}
+                {!m.available && m.unavailableReason ? (
+                  <div className="text-[10px] text-rose-500 truncate">
+                    {m.unavailableReason}
+                  </div>
+                ) : (
+                  m.note && <div className="text-[10px] text-slate-400 truncate">{m.note}</div>
+                )}
               </button>
             );
           })}

@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi.concurrency import run_in_threadpool
 
 from app.models.schemas import Transcription
 from app.rag.speech import SpeechUnavailable, transcribe
@@ -42,8 +43,13 @@ async def transcribe_audio(
         raise HTTPException(413, f"audio larger than {MAX_BYTES // (1024*1024)} MB")
 
     try:
-        result = transcribe(raw, audio.content_type or "audio/webm",
-                            language=language)
+        # `transcribe` is a synchronous HTTPS call and would block the event
+        # loop for the length of the upload plus Deepgram's processing. This
+        # handler has to stay `async` because it awaits the upload, so the
+        # blocking part is pushed to a worker thread explicitly.
+        result = await run_in_threadpool(
+            transcribe, raw, audio.content_type or "audio/webm",
+            language=language)
     except SpeechUnavailable as exc:
         # 503, not 500: the rest of the assistant is fine and typing still works.
         log.warning("transcription unavailable: %s", exc)

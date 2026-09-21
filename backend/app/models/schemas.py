@@ -114,6 +114,24 @@ class HistoryMessage(BaseModel):
     text: str | None = None
 
 
+class ConversationMemory(BaseModel):
+    """Rolling conversation summary, held by the client and echoed each turn.
+
+    Deliberately not stored server-side. These are personal legal questions, and
+    keeping nothing is a privacy property rather than a shortcut — it also means
+    no session store, no expiry, and nothing to lose on a restart.
+
+    `sections` is written by code from the answer's own citations, never by the
+    summariser, so a section number cannot be reworded out of existence by a
+    paraphrase.
+    """
+
+    summary: str = ""
+    sections: list[str] = Field(default_factory=list)
+    turns: int = 0
+    error: str | None = None
+
+
 class QueryRequest(BaseModel):
     question: str = Field(examples=["What is the punishment for theft?"])
     history: list[HistoryMessage] = Field(default_factory=list)
@@ -131,6 +149,10 @@ class QueryRequest(BaseModel):
     refine: bool | None = Field(
         default=None, examples=[None],
         description="Override the query-refiner flag. Omit for the server default.")
+    memory: ConversationMemory | None = Field(
+        default=None, examples=[None],
+        description="The memory returned by the previous answer. Omit to start "
+                    "a fresh conversation.")
 
 
 class Transcription(BaseModel):
@@ -165,3 +187,14 @@ class AssistantMessage(BaseModel):
     citations: dict[str, Citation] = Field(default_factory=dict)
     references: list[Reference] = Field(default_factory=list)
     quick_actions: list[QuickAction] = Field(default_factory=list)
+    # Send this back with the next question to continue the conversation.
+    memory: ConversationMemory | None = None
+    # Which model actually answered, and — when it is not the one that was
+    # asked for — the alias it replaced because that one was out of quota. A
+    # substitution the reader cannot see is a silent change of behaviour.
+    generator: str | None = None
+    generator_substituted: str | None = None
+    # Set only when this question was answered as a follow-up: the standalone
+    # rewrite that was actually executed. Shown to the reader, because a wrong
+    # rewrite is otherwise a confident answer to a question nobody asked.
+    resolved_question: str | None = None

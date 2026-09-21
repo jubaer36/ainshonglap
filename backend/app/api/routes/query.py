@@ -6,7 +6,7 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Query
 
-from app.models.schemas import AssistantMessage, QueryRequest
+from app.models.schemas import AssistantMessage, ConversationMemory, QueryRequest
 from app.rag import config
 from app.rag.present import to_message
 
@@ -14,8 +14,20 @@ log = logging.getLogger(__name__)
 router = APIRouter(tags=["assistant"])
 
 
+# Deliberately a plain `def`, not `async def`.
+#
+# FastAPI runs an `async def` handler ON the event loop, so any blocking call
+# inside it freezes the whole server for its duration. This handler blocks for
+# seconds at a time — cross-encoder inference on the GPU, then a synchronous
+# HTTPS call to the generator — and while it did, every other request was
+# stuck behind it. The visible symptom was the model picker reporting
+# "unavailable": its 15s fetch timeout expired waiting for an event loop that
+# was busy answering someone's question.
+#
+# A plain `def` is handed to a threadpool instead, so slow work no longer
+# starves fast requests.
 @router.post("/api/query", response_model=AssistantMessage)
-async def query(payload: QueryRequest) -> AssistantMessage:
+def query(payload: QueryRequest) -> AssistantMessage:
     """Plan, execute, verify citations, present.
 
     Two paths, chosen by `RAG_PLAN`:
@@ -36,11 +48,46 @@ async def query(payload: QueryRequest) -> AssistantMessage:
     if not q:
         raise HTTPException(422, "question is empty")
     model = (payload.model or "").strip() or None
+
+    # A model known to be out of quota is swapped before the call rather than
+    # after a failed one: the caller gets an answer instead of a 502, and the
+    # response says which route actually produced it. Silently substituting
+    # without saying so would be worse than failing.
+    model, substituted = _usable(model)
+
     try:
         if config.PLAN_QUERIES:
+            from app.rag import memory as mem
             from app.rag.execute import answer_question
 
-            return to_message(answer_question(q, model=model))
+            before = mem.Memory.from_dict(
+                payload.memory.model_dump() if payload.memory else None)
+            try:
+                result = answer_question(q, model=model, memory=before)
+            except Exception as exc:
+                # The FIRST request to hit a model's daily cap discovers it the
+                # hard way: nothing was known to be blocked, so the call went
+                # out and failed. By now `quota` has recorded it, so retrying
+                # once on the fallback turns that request into an answer rather
+                # than making one unlucky user eat the 502.
+                retry, replaced = _after_failure(exc, model)
+                if not retry:
+                    raise
+                log.info("retrying on %s after quota failure on %s", retry, replaced)
+                result = answer_question(q, model=retry, memory=before)
+                substituted = replaced
+            message = to_message(result)
+
+            # Summarise AFTER answering, never before: a summariser outage must
+            # cost the conversation its memory, not cost the user their answer.
+            after = mem.update(before, q, result)
+            message.memory = ConversationMemory(**after.to_dict())
+            plan = result.plan
+            if plan is not None and getattr(plan, "follow_up", False):
+                message.resolved_question = plan.resolved_question
+            message.generator = result.model or None
+            message.generator_substituted = substituted
+            return message
 
         from app.rag.answer import answer
 
@@ -61,6 +108,45 @@ async def query(payload: QueryRequest) -> AssistantMessage:
         raise HTTPException(502, f"generator unavailable: {type(exc).__name__}") from exc
 
 
+def _usable(alias: str | None) -> tuple[str | None, str | None]:
+    """(model to use, the alias it replaced).
+
+    Returns the request's own choice untouched when it is available, or when
+    nothing is configured to fall back to.
+    """
+    from app.rag import quota
+
+    wanted = alias or config.DEFAULT_GENERATOR
+    _, model_id = config.resolve_generator(wanted)
+    if quota.available(model_id):
+        return alias, None
+
+    fallback = config.FALLBACK_GENERATOR
+    if not fallback or fallback == wanted:
+        return alias, None
+    _, fallback_id = config.resolve_generator(fallback)
+    if not quota.available(fallback_id):
+        return alias, None            # both out: let the real error surface
+    log.info("generator %s out of quota; using %s", wanted, fallback)
+    return fallback, wanted
+
+
+def _after_failure(exc: Exception, model: str | None) -> tuple[str | None, str | None]:
+    """(fallback alias, the alias it replaces) when a call died on quota."""
+    from app.rag import quota
+
+    if not quota.looks_like_quota(str(exc)):
+        return None, None
+    wanted = model or config.DEFAULT_GENERATOR
+    fallback = config.FALLBACK_GENERATOR
+    if not fallback or fallback == wanted:
+        return None, None
+    _, fallback_id = config.resolve_generator(fallback)
+    if not quota.available(fallback_id):
+        return None, None
+    return fallback, wanted
+
+
 def _unknown_model(exc: Exception) -> bool:
     """Did the provider reject the model id itself?
 
@@ -74,7 +160,7 @@ def _unknown_model(exc: Exception) -> bool:
 
 
 @router.get("/api/plan", tags=["assistant"])
-async def plan_only(q: str = Query(..., min_length=1),
+def plan_only(q: str = Query(..., min_length=1),
                     model: str | None = None) -> dict:
     """What the planner decided, without answering.
 

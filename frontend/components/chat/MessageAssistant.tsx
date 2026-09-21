@@ -29,6 +29,34 @@ export function MessageAssistant({
           </span>
         </div>
 
+        {message.generatorSubstituted && (
+          // The requested model was out of quota and another answered. Stated,
+          // because "which model wrote this" changes how much to trust it and
+          // a silent swap hides that.
+          <div className="flex items-start gap-1.5 rounded-lg bg-amber-50 border border-amber-200/70 px-2.5 py-1.5 text-[11px] text-amber-900">
+            <span className="material-symbols-outlined text-[14px] mt-px">swap_horiz</span>
+            <span>
+              <span className="font-medium">{message.generatorSubstituted}</span> is out of
+              quota — answered by <span className="font-medium">{message.generator}</span>.
+            </span>
+          </div>
+        )}
+
+        {message.resolvedQuestion && (
+          // A follow-up was resolved against the conversation summary, and the
+          // rewrite is what was actually answered. Shown because the pipeline
+          // cannot detect a correctly-executed WRONG question: a bad rewrite
+          // produces a fully grounded, fully cited answer to something the
+          // reader never asked. Seeing it is the only check there is.
+          <div className="flex items-start gap-1.5 rounded-lg bg-sky-50 border border-sky-200/70 px-2.5 py-1.5 text-[11px] text-sky-900">
+            <span className="material-symbols-outlined text-[14px] mt-px">history</span>
+            <span>
+              <span className="font-medium">Answered using earlier context: </span>
+              {message.resolvedQuestion}
+            </span>
+          </div>
+        )}
+
         {message.unsupported ? (
           <UnsupportedAnswer message={message} onActivateCitation={onActivateCitation} />
         ) : (

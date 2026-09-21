@@ -83,6 +83,17 @@ export type AnswerKind =
   | "clarify"
   | "refused";
 
+/** Rolling conversation summary. Held by the client and echoed back with each
+ *  question — the server stores nothing, which is deliberate for questions this
+ *  personal. `sections` is written server-side from the answer's own citations,
+ *  never by the summariser, so a section number cannot be paraphrased away. */
+export interface ConversationMemory {
+  summary: string;
+  sections: string[];
+  turns: number;
+  error: string | null;
+}
+
 export interface AssistantMessage {
   id: string;
   role: "assistant";
@@ -90,6 +101,16 @@ export interface AssistantMessage {
   subheading: string;
   kind: AnswerKind;
   unsupported: boolean;
+  /** Send back with the next question to continue the conversation. */
+  memory: ConversationMemory | null;
+  /** Set only when this was answered as a follow-up: the standalone rewrite
+   *  that was actually executed. Shown, because a wrong rewrite is otherwise a
+   *  confident answer to a question nobody asked. */
+  resolvedQuestion: string | null;
+  /** Which model actually answered. */
+  generator: string | null;
+  /** The alias this replaced, when the requested one was out of quota. */
+  generatorSubstituted: string | null;
   blocks: ContentBlock[];
   citations: Record<string, Citation>;
   references: Reference[];
@@ -148,6 +169,14 @@ export interface GeneratorInfo {
   enforcesSchema: boolean | null;
   note: string | null;
   default: boolean;
+  /** False when this route is out of quota. Distinct from `enforcesSchema`:
+   *  that is permanent and about correctness, this is temporary and about
+   *  budget. Both make a model unselectable, for different reasons. */
+  available: boolean;
+  unavailableReason: string | null;
+  secondsRemaining: number | null;
+  /** The route that answers when the chosen one is out of quota. */
+  fallback: boolean;
 }
 
 /**

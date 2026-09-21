@@ -34,47 +34,65 @@ log = logging.getLogger(__name__)
 # Set once at startup so /health can report why the API is degraded instead of
 # failing per request with the same error.
 STATE: dict[str, object] = {"ready": False, "error": None, "index": None,
-                            "catalog": None}
+                            "catalog": None, "warming": False}
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Load the index and both retrieval models before serving.
+    """Start serving immediately; load the retrieval models in the background.
 
-    Cold-loading BGE-M3 and the cross-encoder inside a request costs ~30s, and a
-    missing index should surface at boot rather than as a 500 mid-query. Warmup
-    failure is recorded rather than raised: the corpus endpoints still work
-    without a generator, and /health says what is wrong.
+    Cold-loading BGE-M3 and the cross-encoder costs ~30s. Doing that *before*
+    yielding meant the socket was bound but nothing was answered for half a
+    minute, so a browser that loaded the page in 368ms asked for the model list
+    and timed out — the failure looked like a broken backend rather than one
+    that was still waking up.
+
+    Warmup now runs in a worker thread. Requests that need the index block only
+    until it is ready (`load_store` and the encoders are cached, so they wait on
+    the same load rather than starting a second one), while everything that does
+    not — the model list, the catalog, the statute browser, /health — answers at
+    once. `/health` reports `warming` until it finishes, so "not ready yet" is
+    visible rather than inferred from a hang.
     """
+    # The catalog is SQLite and opens in milliseconds, so it is checked here:
+    # a missing catalog should surface at boot, and /health can report the
+    # corpus before the retrieval models have finished loading.
+    try:
+        from app.rag import catalog
+
+        STATE["catalog"] = catalog.manifest()
+    except Exception as exc:                       # noqa: BLE001 - reported
+        STATE["catalog"] = None
+        log.warning("catalog unavailable: %s", exc)
+
     if os.getenv("RAG_WARMUP", "1") != "0":
-        try:
-            from app.rag.pipeline import warmup
-            from app.rag.store import load_store
+        import asyncio
 
-            warmup()
-            # The catalog is checked at boot for the same reason the index is:
-            # a missing catalog should surface here, not as a 500 on the first
-            # structural question.
-            try:
-                from app.rag import catalog
-
-                STATE["catalog"] = catalog.manifest()
-            except Exception as exc:               # noqa: BLE001 - reported
-                STATE["catalog"] = None
-                log.warning("catalog unavailable: %s", exc)
-
-            index, chunks, meta = load_store()
-            STATE.update(ready=True, index={
-                "vectors": int(index.ntotal),
-                "sections": meta.get("sections"),
-                "children": meta.get("children"),
-                "granularity": meta.get("granularity"),
-                "embedder": meta.get("model"),
-            })
-        except Exception as exc:               # noqa: BLE001 - reported, not raised
-            log.exception("warmup failed")
-            STATE.update(ready=False, error=f"{type(exc).__name__}: {exc}")
+        STATE["warming"] = True
+        asyncio.get_running_loop().run_in_executor(None, _warmup)
     yield
+
+
+def _warmup() -> None:
+    """Load the index and both retrieval models. Runs off the event loop."""
+    try:
+        from app.rag.pipeline import warmup
+        from app.rag.store import load_store
+
+        warmup()
+        index, chunks, meta = load_store()
+        STATE.update(ready=True, index={
+            "vectors": int(index.ntotal),
+            "sections": meta.get("sections"),
+            "children": meta.get("children"),
+            "granularity": meta.get("granularity"),
+            "embedder": meta.get("model"),
+        })
+    except Exception as exc:                       # noqa: BLE001 - reported, not raised
+        log.exception("warmup failed")
+        STATE.update(ready=False, error=f"{type(exc).__name__}: {exc}")
+    finally:
+        STATE["warming"] = False
 
 
 app = FastAPI(
@@ -84,9 +102,17 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# `localhost` and `127.0.0.1` are DIFFERENT origins to the browser, even though
+# they are the same machine. Allowing only one means opening the app at the
+# other address makes every request fail CORS — which surfaces as "the backend
+# is down" with a 200 sitting in the network tab, because the response is
+# blocked after it arrives.
+DEFAULT_ORIGINS = "http://localhost:3000,http://127.0.0.1:3000"
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:3000").split(","),
+    allow_origins=[o.strip() for o in
+                   os.getenv("CORS_ORIGINS", DEFAULT_ORIGINS).split(",") if o.strip()],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -96,6 +122,13 @@ app.include_router(citations_router)
 app.include_router(retrieve_router)
 app.include_router(models_router)
 app.include_router(speech_router)
+
+
+def _quota_state() -> dict:
+    """Models currently out of budget. Empty is the normal case."""
+    from app.rag import quota
+
+    return quota.snapshot()
 
 
 def _speech_state() -> dict:
@@ -112,7 +145,8 @@ async def health() -> dict:
     from app.rag import config
 
     return {
-        "status": "ok" if STATE["ready"] else "degraded",
+        "status": ("ok" if STATE["ready"]
+                   else "warming" if STATE["warming"] else "degraded"),
         "error": STATE["error"],
         "index": STATE["index"],
         "catalog": STATE["catalog"],
@@ -120,6 +154,7 @@ async def health() -> dict:
         "planner": {"model": config.PLANNER_MODEL,
                     "enabled": config.PLAN_QUERIES},
         "speech": _speech_state(),
+        "quota_blocked": _quota_state(),
         "generator": dict(zip(("backend", "model"),
                               config.resolve_generator(None))) |
                      {"alias": config.DEFAULT_GENERATOR,

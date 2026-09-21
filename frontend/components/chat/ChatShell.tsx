@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { ApiError, fetchSection, sendQuery } from "@/lib/api";
-import type { AssistantMessage, ChatMessage, Citation, UserMessage } from "@/lib/types";
+import type { AssistantMessage, ChatMessage, Citation, UserMessage, ConversationMemory } from "@/lib/types";
 import { Header } from "../layout/Header";
 import { ReferencesDrawer } from "../layout/ReferencesDrawer";
 import { Sidebar } from "../layout/Sidebar";
@@ -57,6 +57,10 @@ function errorAssistantMessage(error: unknown): AssistantMessage {
     // nothing for the reader to disambiguate).
     kind: "refused",
     unsupported: true,
+    memory: null,
+    resolvedQuestion: null,
+    generator: null,
+    generatorSubstituted: null,
     blocks: [{ type: "paragraph", segments: [{ type: "text", text }] }],
     citations: {},
     references: [],
@@ -66,6 +70,11 @@ function errorAssistantMessage(error: unknown): AssistantMessage {
 
 export function ChatShell() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  // The rolling conversation summary. Lives here rather than on the server:
+  // these are personal legal questions, and keeping nothing server-side is a
+  // privacy property. Cleared by "New chat", which is what makes that button
+  // actually start a new conversation rather than just empty the screen.
+  const [memory, setMemory] = useState<ConversationMemory | null>(null);
   const [inputValue, setInputValue] = useState("");
   const [loading, setLoading] = useState(false);
   const [noticeDismissed, setNoticeDismissed] = useState(false);
@@ -133,8 +142,12 @@ export function ChatShell() {
     try {
       const assistantMessage = await sendQuery(trimmed, historyForRequest, {
         model: model ?? undefined,
+        memory,
       });
       setMessages((current) => [...current, assistantMessage]);
+      // Carry the updated summary into the next turn. Left untouched on error,
+      // so a failed request does not erase the conversation's memory.
+      if (assistantMessage.memory) setMemory(assistantMessage.memory);
       setCitationLibrary((current) => ({ ...current, ...assistantMessage.citations }));
     } catch (error) {
       setMessages((current) => [...current, errorAssistantMessage(error)]);
@@ -145,6 +158,7 @@ export function ChatShell() {
 
   function handleNewChat() {
     setMessages([]);
+    setMemory(null);
     setInputValue("");
     setActiveCitationKey(null);
     if (window.matchMedia("(max-width: 1023px)").matches) {
@@ -226,6 +240,9 @@ export function ChatShell() {
             disabled={loading}
             model={model}
             onModelChange={setModel}
+            memory={memory}
+            onForgetMemory={() => setMemory(null)}
+            onActivateCitation={handleActivateCitation}
           />
         </main>
         <ReferencesDrawer

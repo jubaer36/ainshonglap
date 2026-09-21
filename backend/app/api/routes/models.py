@@ -17,6 +17,13 @@ class GeneratorInfo(BaseModel):
     enforces_schema: bool | None = None
     note: str | None = None
     default: bool = False
+    # False when this route is out of quota. The picker greys it out rather
+    # than offering a choice that is known to fail.
+    available: bool = True
+    unavailable_reason: str | None = None
+    seconds_remaining: int | None = None
+    # True for the route that answers when the chosen one is unavailable.
+    fallback: bool = False
 
 
 @router.get("/models", response_model=list[GeneratorInfo])
@@ -28,7 +35,18 @@ async def list_models() -> list[GeneratorInfo]:
     ignores the schema returns prose, which surfaces as a false refusal. false =
     measured as not enforcing; null = advertised but unverified.
     """
-    return [
-        GeneratorInfo(alias=a, default=(a == config.DEFAULT_GENERATOR), **g)
-        for a, g in config.GENERATORS.items()
-    ]
+    from app.rag import quota
+
+    out: list[GeneratorInfo] = []
+    for alias, spec in config.GENERATORS.items():
+        blocked = quota.status(spec["model"])
+        out.append(GeneratorInfo(
+            alias=alias,
+            default=(alias == config.DEFAULT_GENERATOR),
+            fallback=(alias == config.FALLBACK_GENERATOR),
+            available=blocked is None,
+            unavailable_reason=blocked["reason"] if blocked else None,
+            seconds_remaining=blocked["seconds_remaining"] if blocked else None,
+            **spec,
+        ))
+    return out

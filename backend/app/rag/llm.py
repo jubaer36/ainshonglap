@@ -20,6 +20,8 @@ import pathlib
 import time
 from typing import Any, Protocol
 
+from app.rag import quota
+
 DEFAULT_GEMINI = os.getenv("RAG_GEMINI_MODEL", "gemini-3.5-flash-lite")
 DEFAULT_GROQ = os.getenv("RAG_GROQ_MODEL", "qwen/qwen3.8-27b")
 DEFAULT_OPENROUTER = os.getenv("RAG_OPENROUTER_MODEL",
@@ -35,15 +37,22 @@ class LLM(Protocol):
 
 
 class GeminiLLM:
-    def __init__(self, model: str = DEFAULT_GEMINI, temperature: float = 0.0):
+    # Overridable so a second deployment key can drive a separate workload
+    # without competing for the first one's quota — see rag/memory.py, which
+    # runs a summarisation call on every turn.
+    KEY_ENV = "GEMINI_API_KEY"
+
+    def __init__(self, model: str = DEFAULT_GEMINI, temperature: float = 0.0,
+                 key_env: str | None = None):
         from dotenv import load_dotenv
         from google import genai
 
         # .env.local sits next to app/, and the API may be started from anywhere
         load_dotenv(ENV_FILE, override=True)
-        key = os.environ.get("GEMINI_API_KEY")
+        env = key_env or self.KEY_ENV
+        key = os.environ.get(env)
         if not key:
-            raise RuntimeError("GEMINI_API_KEY not set (expected in backend/.env.local)")
+            raise RuntimeError(f"{env} not set (expected in backend/.env.local)")
         self.name = model
         self.temperature = temperature
         self._client = genai.Client(api_key=key)
@@ -136,8 +145,14 @@ class GroqLLM:
         }
         response = self._post(body)
         if response.status_code != 200:
-            raise RuntimeError(
-                f"{self.LABEL} {response.status_code}: {response.text[:300]}")
+            detail = f"{self.LABEL} {response.status_code}: {response.text[:300]}"
+            # A 429 that survived the backoff is a budget, not a blip. Record it
+            # so the model picker can grey this route out and /api/query can
+            # fall back instead of handing the caller a 502.
+            if response.status_code == 429 or quota.looks_like_quota(detail):
+                quota.mark_exhausted(self.name, detail)
+            raise RuntimeError(detail)
+        quota.clear(self.name)
         data = response.json()
         if data.get("error"):
             raise RuntimeError(f"{self.LABEL}: {json.dumps(data['error'])[:300]}")

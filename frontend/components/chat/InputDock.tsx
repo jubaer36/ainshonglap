@@ -1,7 +1,9 @@
 "use client";
 
 import { useRef, useState } from "react";
+import type { ConversationMemory } from "@/lib/types";
 import { Disclaimer } from "./Disclaimer";
+import { MemoryPanel } from "./MemoryPanel";
 import { MicButton } from "./MicButton";
 import { ModelPicker } from "./ModelPicker";
 
@@ -13,6 +15,10 @@ interface InputDockProps {
   /** null = whatever the server has configured as default. */
   model: string | null;
   onModelChange: (alias: string | null) => void;
+  /** The rolling conversation summary the next question will be read against. */
+  memory: ConversationMemory | null;
+  onForgetMemory: () => void;
+  onActivateCitation?: (key: string) => void;
 }
 
 const DEFAULT_STATUS = "Bangladeshi Codex Active";
@@ -24,6 +30,9 @@ export function InputDock({
   disabled,
   model,
   onModelChange,
+  memory,
+  onForgetMemory,
+  onActivateCitation,
 }: InputDockProps) {
   const [status, setStatus] = useState(DEFAULT_STATUS);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -46,20 +55,32 @@ export function InputDock({
           <textarea
             ref={textareaRef}
             className="w-full bg-transparent px-4 pt-3.5 pb-2 text-sm text-slate-900 placeholder:text-slate-400 resize-none focus:outline-none leading-relaxed font-sans"
-            placeholder="Ask a question about Bangladeshi laws, criminal procedure, bail, or civil remedies..."
+            placeholder="Ask a question about Bangladeshi laws, criminal procedure, bail, or civil remedies…  (Enter to send, Shift+Enter for a new line)"
             rows={2}
             value={value}
             onChange={(event) => onChange(event.target.value)}
             onKeyDown={(event) => {
-              if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-                event.preventDefault();
-                handleSubmit();
-              }
+              if (event.key !== "Enter") return;
+              // Shift+Enter inserts a newline; plain Enter sends. Cmd/Ctrl+Enter
+              // keeps working because that is what the placeholder used to
+              // imply and muscle memory is cheap to honour.
+              if (event.shiftKey) return;
+              // A composition (IME) Enter commits the candidate text rather
+              // than the message — sending there would cut a word in half for
+              // anyone typing Bangla or any other composed script.
+              if (event.nativeEvent.isComposing) return;
+              event.preventDefault();
+              handleSubmit();
             }}
           />
           <div className="flex items-center justify-between px-3 pb-2.5 pt-1">
             <div className="flex items-center gap-1 text-slate-500">
               <ModelPicker value={model} onChange={onModelChange} disabled={disabled} />
+              <MemoryPanel
+                memory={memory}
+                onForget={onForgetMemory}
+                onActivateCitation={onActivateCitation}
+              />
               <MicButton
                 disabled={disabled}
                 onStatus={(text) => flashStatus(text, DEFAULT_STATUS)}

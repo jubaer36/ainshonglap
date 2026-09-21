@@ -3,6 +3,7 @@ import type {
   AnswerKind,
   AssistantMessage,
   ChatMessage,
+  ConversationMemory,
   GeneratorInfo,
   IconColorToken,
   QueryPlan,
@@ -116,6 +117,12 @@ export async function fetchModels(): Promise<GeneratorInfo[]> {
     enforcesSchema: (m.enforces_schema as boolean | null) ?? null,
     note: (m.note as string) ?? null,
     default: Boolean(m.default),
+    // Older backends do not send these; treat a missing flag as available
+    // rather than hiding every model.
+    available: m.available === undefined ? true : Boolean(m.available),
+    unavailableReason: (m.unavailable_reason as string) ?? null,
+    secondsRemaining: (m.seconds_remaining as number) ?? null,
+    fallback: Boolean(m.fallback),
   }));
 }
 
@@ -126,7 +133,7 @@ export async function fetchModels(): Promise<GeneratorInfo[]> {
 export async function sendQuery(
   question: string,
   history: ChatMessage[],
-  options: { model?: string; refine?: boolean } = {},
+  options: { model?: string; refine?: boolean; memory?: ConversationMemory | null } = {},
 ): Promise<AssistantMessage> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), QUERY_TIMEOUT_MS);
@@ -144,6 +151,8 @@ export async function sendQuery(
         })),
         model: options.model,
         refine: options.refine,
+        // The memory the previous answer returned. Omitted on the first turn.
+        memory: options.memory ?? null,
       }),
     });
 
@@ -259,6 +268,10 @@ function normalizeAssistantMessage(raw: Record<string, unknown>): AssistantMessa
     kind: ((raw.kind as AnswerKind) ??
       (raw.unsupported ? "refused" : "legal")) as AnswerKind,
     unsupported: Boolean(raw.unsupported),
+    memory: (raw.memory as ConversationMemory) ?? null,
+    resolvedQuestion: (raw.resolved_question as string) ?? null,
+    generator: (raw.generator as string) ?? null,
+    generatorSubstituted: (raw.generator_substituted as string) ?? null,
     blocks: raw.blocks as AssistantMessage["blocks"],
     citations: raw.citations as AssistantMessage["citations"],
     references: ((raw.references as Record<string, unknown>[]) ?? []).map(normalizeReference),

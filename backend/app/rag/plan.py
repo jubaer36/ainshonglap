@@ -109,11 +109,29 @@ SYSTEM = (
     "section number in it. Empty for every other category.\n"
     "terms — for 'semantic' only: 2-6 further statutory phrases a relevant "
     "section would contain. Empty otherwise.\n\n"
+    "follow_up — true ONLY when the question cannot stand on its own and "
+    "refers back to the conversation: 'that section', 'what if he had survived "
+    "instead', 'and for a minor?', 'the next chapter'. A question that makes "
+    "complete sense by itself is NOT a follow-up, even on the same topic. When "
+    "in doubt, false — inheriting the wrong context answers a question the user "
+    "did not ask.\n"
+    "resolved_question — when follow_up is true, the question rewritten to "
+    "stand alone, using the conversation summary. 'what if he had survived' "
+    "with a summary about men who beat a man to death becomes 'what offence is "
+    "committed if a group beats a man who survives with injuries'. Carry the "
+    "facts over; change only what the new question changes. Empty when "
+    "follow_up is false.\n"
+    "IMPORTANT: when follow_up is true, fill in every other field from your "
+    "resolved_question, NOT from the words the user typed. 'the section before "
+    "it', with a summary about section 302, resolves to section 301 — so "
+    "sections must be ['301'], not empty. A rewrite whose coordinates still "
+    "describe the original wording gets executed as the wrong request.\n\n"
     "needs_clarification — true when the request cannot be executed as asked: a "
     "subjective selection ('the most important laws' — importance depends on "
-    "purpose), or a reference to something earlier that is not in this question "
-    "('show me that section'). Put the question to ask in 'clarification'. "
-    "Otherwise false and ''.\n"
+    "purpose), or a reference to something earlier that the conversation "
+    "summary does not contain. If the summary DOES let you resolve it, set "
+    "follow_up instead and leave this false. Put the question to ask in "
+    "'clarification'. Otherwise false and ''.\n"
     "Do NOT set it merely because a question is broad; breadth is what "
     "'semantic' handles."
 )
@@ -132,10 +150,13 @@ SCHEMA = {
         "terms": {"type": "array", "items": {"type": "string"}},
         "needs_clarification": {"type": "boolean"},
         "clarification": {"type": "string"},
+        "follow_up": {"type": "boolean"},
+        "resolved_question": {"type": "string"},
     },
     "required": ["category", "operation", "act", "chapter", "sections",
                  "section_from", "section_to", "search_query", "terms",
-                 "needs_clarification", "clarification"],
+                 "needs_clarification", "clarification",
+                 "follow_up", "resolved_question"],
 }
 
 
@@ -155,6 +176,12 @@ class Plan:
     terms: list[str] = field(default_factory=list)
     needs_clarification: bool = False
     clarification: str = ""
+    # Conversation memory. `follow_up` is the planner's explicit judgement that
+    # the question leans on earlier turns; `resolved_question` is it rewritten
+    # to stand alone. Everything downstream consumes the resolved form, so no
+    # executor needs to know a conversation happened.
+    follow_up: bool = False
+    resolved_question: str = ""
     by: str = "llm"                       # "llm" | "fallback"
     error: str | None = None
     notes: list[str] = field(default_factory=list)   # what validation changed
@@ -167,10 +194,22 @@ class Plan:
         replaced: a rewrite that drops a distinguishing detail would otherwise
         lose a provision the plain question would have found.
         """
+        base = self.asked
         if self.category != "semantic" or not self.search_query:
-            return self.question
-        return "\n".join(
-            [self.question, self.search_query, " ".join(self.terms)]).strip()
+            return base
+        return "\n".join([base, self.search_query, " ".join(self.terms)]).strip()
+
+    @property
+    def asked(self) -> str:
+        """The question to actually execute.
+
+        A follow-up is executed as its standalone rewrite; everything else is
+        executed as typed. `question` always stays what the user really said,
+        so the answer can be shown against their words rather than ours.
+        """
+        if self.follow_up and self.resolved_question:
+            return self.resolved_question
+        return self.question
 
     @property
     def has_scope(self) -> bool:
@@ -358,7 +397,7 @@ def _looks_like_citation(text: str) -> bool:
 
 
 def make_plan(question: str, *, backend: str | None = None,
-              model: str | None = None) -> Plan:
+              model: str | None = None, memory=None) -> Plan:
     """Plan one question. Never raises.
 
     A planner outage degrades to semantic retrieval on the raw question — the
@@ -371,9 +410,18 @@ def make_plan(question: str, *, backend: str | None = None,
     if not q:
         return Plan(question=q, category="meta", by="fallback")
 
+    # The conversation summary, when there is one. Placed before the question
+    # so the model reads the history first and the question in its light.
+    context = memory.as_prompt() if memory is not None else ""
+    payload = "\n\n".join(filter(None, [
+        _manifest_prompt(),
+        f"[conversation so far]\n{context}" if context else "",
+        f"Question: {q}",
+    ]))
+
     try:
         raw = get_llm(backend, model or config.PLANNER_MODEL).generate_json(
-            SYSTEM, f"{_manifest_prompt()}\n\nQuestion: {q}", SCHEMA)
+            SYSTEM, payload, SCHEMA)
     except Exception as exc:
         return Plan(question=q, category="semantic", by="fallback",
                     error=f"{type(exc).__name__}: {exc}"[:200])
@@ -391,7 +439,36 @@ def make_plan(question: str, *, backend: str | None = None,
         terms=[_clean(t) for t in (raw.get("terms") or []) if _clean(t)],
         needs_clarification=bool(raw.get("needs_clarification")),
         clarification=_clean(raw.get("clarification")),
+        follow_up=bool(raw.get("follow_up")),
+        resolved_question=_clean(raw.get("resolved_question")),
     )
+    # A follow-up with nothing to follow is a hallucinated referent: the model
+    # inventing context it was never given. Demote it rather than executing a
+    # rewrite built out of nothing.
+    if plan.follow_up and (memory is None or memory.empty):
+        plan.notes.append("follow_up claimed with no conversation memory")
+        plan.follow_up, plan.resolved_question = False, ""
+    elif plan.follow_up and not plan.resolved_question:
+        plan.notes.append("follow_up with no rewrite; executing as asked")
+        plan.follow_up = False
+    elif plan.follow_up:
+        plan.notes.append(f"resolved: {plan.resolved_question}")
+        # The model sometimes rewrites the question correctly and then leaves
+        # the coordinates describing the ORIGINAL wording — "the section before
+        # it" resolves to section 301 but `sections` comes back empty, and a
+        # structural plan with no scope enumerates the whole Act instead of
+        # fetching one provision. Re-plan the rewrite on its own when that
+        # happens: one extra call, only in the case that is otherwise wrong.
+        if plan.category == "structural" and not plan.has_scope:
+            plan.notes.append("no scope from the rewrite; re-planning it alone")
+            again = make_plan(plan.resolved_question, backend=backend,
+                              model=model, memory=None)
+            if again.has_scope or again.category != "structural":
+                again.question = plan.question
+                again.follow_up = True
+                again.resolved_question = plan.resolved_question
+                again.notes = plan.notes + again.notes
+                return again
     # A restatement identical to the question is the model declining to rewrite.
     if plan.search_query.lower() == q.lower():
         plan.search_query = ""
