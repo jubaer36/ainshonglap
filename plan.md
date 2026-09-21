@@ -78,6 +78,9 @@ not hold, from memory, is the failure E1 recorded.
   chapter is described by subject rather than numbered.
 - 42/42 category and 25/27 → 27/27 scope on 41 pinned cases, of which the first
   27 are those previously pinned against the regex router.
+- **Those numbers were measured on Groq Qwen.** The planner now runs on Gemini
+  3.5 Flash Lite (E16, 1.3-1.8s against 43.3s), and `plan_cases.py` has not been
+  re-run since. Re-measuring is the first item in phase 7.
 
 ### Phase 3 — validated executors — **done**
 
@@ -182,7 +185,34 @@ Remaining here:
 - Add related-section groups, total counts and load-more behavior to the frontend.
 - Keep exact citation previews backed by corpus keys.
 
+### Phase 6b — accounts and session storage — **done**
+
+Optional Supabase auth, with the storage choice made explicitly on the way in.
+
+- **Guest stores nothing, anywhere.** Not on the server and not in the browser;
+  the conversation lives in React state and dies with the tab. Enforced by the
+  absence of a token, not by a client-side flag.
+- **Signed in** stores everything needed to reload a session as it happened: the
+  question and the whole answer as sent, the memory snapshot each answer was
+  produced against, which model answered, what the planner decided, and page
+  images with their transcriptions.
+- The service-role key bypasses RLS, so `app/db/conversations.py` is the
+  isolation boundary. Verified with two real users: one cannot list, read or
+  delete the other's conversation while holding its exact uuid. Forged, expired,
+  wrong-audience and `alg=none` tokens are all rejected.
+- Works with Supabase absent, and with the session-fidelity migration
+  unapplied — a missing column is detected and the turn is stored without its
+  per-message snapshot rather than not stored at all.
+
+Open here: retention. The current choice is to keep conversations indefinitely,
+which is a decision rather than a default and should be revisited before this is
+used by anyone but its author.
+
 ### Phase 7 — evaluation and rollout — **the standing gap**
+
+Everything since phase 3 is built but unmeasured, and one published number has
+gone stale: the planner's 42/42 describes Groq, while Gemini now does the
+planning. Re-running `plan_cases.py` is cheap and comes first.
 
 Everything since phase 3 is built but unmeasured. `plan_cases.py` covers
 planning only (42/42 category, 27/27 scope); the executors, memory, voice input

@@ -1,3 +1,4 @@
+import { accessToken } from "./supabase";
 import type {
   Act,
   AnswerKind,
@@ -17,6 +18,18 @@ import type {
 } from "./types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
+/**
+ * Authorization header for the current session, or nothing.
+ *
+ * Absent for anonymous use, which is the default: the API answers questions
+ * without a token and only refuses the conversation endpoints, which have
+ * nothing to return for someone who is not signed in.
+ */
+async function authHeaders(): Promise<Record<string, string>> {
+  const token = await accessToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
 
 /**
  * Generation can be slow: the default generator is a reasoning model that
@@ -42,10 +55,18 @@ export class ApiError extends Error {
 }
 
 async function getJson<T>(path: string, timeoutMs = BROWSE_TIMEOUT_MS): Promise<T> {
+  // Resolved BEFORE the timer starts. `authHeaders()` asks Supabase for the
+  // current session, which can go to the network to refresh a token — awaited
+  // inside the window it spent the whole timeout, and the AbortError then
+  // pointed at the fetch, which had not even been issued.
+  const headers = await authHeaders();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(`${API_BASE_URL}${path}`, { signal: controller.signal });
+    const response = await fetch(`${API_BASE_URL}${path}`, {
+      signal: controller.signal,
+      headers,
+    });
     if (!response.ok) {
       throw new ApiError(response.status, `${path} failed with status ${response.status}`);
     }
@@ -136,14 +157,20 @@ export async function fetchModels(): Promise<GeneratorInfo[]> {
 export async function sendQuery(
   question: string,
   history: ChatMessage[],
-  options: { model?: string; refine?: boolean; memory?: ConversationMemory | null } = {},
+  options: {
+    model?: string;
+    refine?: boolean;
+    memory?: ConversationMemory | null;
+    conversationId?: string | null;
+  } = {},
 ): Promise<AssistantMessage> {
+  const headers = { "Content-Type": "application/json", ...(await authHeaders()) };
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), QUERY_TIMEOUT_MS);
   try {
     const response = await fetch(`${API_BASE_URL}/api/query`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       signal: controller.signal,
       body: JSON.stringify({
         question,
@@ -156,6 +183,9 @@ export async function sendQuery(
         refine: options.refine,
         // The memory the previous answer returned. Omitted on the first turn.
         memory: options.memory ?? null,
+        // Where to append, for a signed-in user. Ignored for a guest, whose
+        // turns are never stored.
+        conversation_id: options.conversationId ?? null,
       }),
     });
 
@@ -221,6 +251,7 @@ export async function transcribeAudio(
     form,
     TRANSCRIBE_TIMEOUT_MS,
     onPhase,
+    await authHeaders(),
   );
   return {
     transcript: (raw.transcript as string) ?? "",
@@ -246,10 +277,14 @@ function postFormWithPhases<T>(
   form: FormData,
   timeoutMs: number,
   onPhase?: (phase: "uploading" | "processing", percent?: number) => void,
+  headers: Record<string, string> = {},
 ): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("POST", `${API_BASE_URL}${path}`);
+    for (const [name, value] of Object.entries(headers)) {
+      xhr.setRequestHeader(name, value);
+    }
     xhr.timeout = timeoutMs;
     xhr.responseType = "text";
 
@@ -303,19 +338,27 @@ export const IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 export async function readImage(
   file: File,
   onPhase?: (phase: "uploading" | "processing", percent?: number) => void,
+  conversationId?: string | null,
 ): Promise<ImageReading> {
   const form = new FormData();
   form.append("image", file, file.name);
+  // The conversation the page belongs to, so a signed-in session can show the
+  // image again when it is reopened. Ignored for a guest, whose page is read
+  // and discarded.
+  const query = conversationId ? `?conversation_id=${encodeURIComponent(conversationId)}` : "";
   const raw = await postFormWithPhases<Record<string, unknown>>(
-    "/api/read-image",
+    `/api/read-image${query}`,
     form,
     IMAGE_TIMEOUT_MS,
     onPhase,
+    await authHeaders(),
   );
   return {
     text: (raw.text as string) ?? "",
     model: (raw.model as string) ?? null,
     chars: (raw.chars as number) ?? 0,
+    uploadId: (raw.upload_id as string) ?? null,
+    url: (raw.url as string) ?? null,
   };
 }
 
@@ -349,6 +392,7 @@ function normalizeAssistantMessage(raw: Record<string, unknown>): AssistantMessa
     generator: (raw.generator as string) ?? null,
     generatorSubstituted: (raw.generator_substituted as string) ?? null,
     retryQuestion: null,
+    conversationId: (raw.conversation_id as string) ?? null,
     notice: (raw.notice as string) ?? null,
     suggestedModel: (raw.suggested_model as string) ?? null,
     blocks: raw.blocks as AssistantMessage["blocks"],

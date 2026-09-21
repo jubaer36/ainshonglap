@@ -300,6 +300,7 @@ def get_llm(backend: str | None = None, model: str | None = None) -> Any:
     """
     from app.rag import config
 
+    key_env = config.generator_key_env(model)
     if model or backend is None:
         resolved_backend, resolved_model = config.resolve_generator(model)
         backend = backend or resolved_backend
@@ -309,7 +310,7 @@ def get_llm(backend: str | None = None, model: str | None = None) -> Any:
     if backend == "openrouter":
         return OpenRouterLLM(model or DEFAULT_OPENROUTER)
     if backend == "gemini":
-        return GeminiLLM(model or DEFAULT_GEMINI)
+        return GeminiLLM(model or DEFAULT_GEMINI, key_env=key_env)
     if backend == "inception":
         return InceptionLLM(model or DEFAULT_INCEPTION)
     raise ValueError(

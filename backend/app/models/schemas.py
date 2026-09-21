@@ -153,6 +153,10 @@ class QueryRequest(BaseModel):
         default=None, examples=[None],
         description="The memory returned by the previous answer. Omit to start "
                     "a fresh conversation.")
+    conversation_id: str | None = Field(
+        default=None, examples=[None],
+        description="Append to this stored conversation. Signed-in users only; "
+                    "omitted starts a new one.")
 
 
 class Transcription(BaseModel):
@@ -182,6 +186,38 @@ class ImageReading(BaseModel):
     text: str
     model: str | None = None
     chars: int = 0
+    # Set for a signed-in user: where the page itself was filed, so the reading
+    # can be checked against it later. Absent for a guest.
+    upload_id: str | None = None
+    url: str | None = None
+
+
+class ConversationSummary(BaseModel):
+    """A row in the sidebar list."""
+
+    id: str
+    title: str
+    memory: dict | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class ConversationDetail(ConversationSummary):
+    """A conversation with its messages, as they were sent."""
+
+    messages: list[dict] = Field(default_factory=list)
+
+
+class ImportedConversation(BaseModel):
+    title: str = ""
+    memory: dict | None = None
+    messages: list[dict] = Field(default_factory=list)
+
+
+class ImportRequest(BaseModel):
+    """Conversations built before signing in, handed over on sign-in."""
+
+    conversations: list[ImportedConversation] = Field(default_factory=list)
 
 
 class AssistantMessage(BaseModel):
@@ -207,6 +243,9 @@ class AssistantMessage(BaseModel):
     # substitution the reader cannot see is a silent change of behaviour.
     generator: str | None = None
     generator_substituted: str | None = None
+    # Where this exchange was stored, for a signed-in user. None for a guest,
+    # whose questions are never written down.
+    conversation_id: str | None = None
     # Set only when this question was answered as a follow-up: the standalone
     # rewrite that was actually executed. Shown to the reader, because a wrong
     # rewrite is otherwise a confident answer to a question nobody asked.

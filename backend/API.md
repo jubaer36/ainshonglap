@@ -20,6 +20,11 @@ RAG_WARMUP=0 uvicorn app.main:app --reload   # skip model load (corpus endpoints
 | GET | `/api/acts` | indexed acts + section counts |
 | GET | `/api/sections` | browse/filter sections (`act`, `q`, `limit`, `offset`) |
 | GET | `/api/sections/{key}` | one section by citation key, e.g. `penal-s379` |
+| POST | `/api/read-image` | one page image → text (never an answer) |
+| GET | `/api/conversations` | saved conversations (signed in) |
+| GET | `/api/conversations/{id}` | one conversation, with per-turn context and images |
+| DELETE | `/api/conversations/{id}` | delete one |
+| POST | `/api/conversations/import` | adopt conversations made before signing in |
 | GET | `/health` | liveness, index stats, configured models |
 
 ### POST `/api/query`
@@ -126,6 +131,17 @@ chapter returns nothing rather than the nearest real one.
 
 Set `RAG_PLAN=0` to fall back to the older pattern router in `app/rag/refine.py`.
 
+**The planner runs on Gemini 3.5 Flash Lite** (`gemini2`, on `GEMINI_API_KEY_2`
+so it does not share a quota with anything else), with Groq Qwen as an automatic
+fallback. A different *provider*, not just a different model: Groq's per-minute
+and daily limits are per-account, so a second Groq route waits behind the same
+wall. Measured 1.3-1.8s against 43s on a rate-limited Groq.
+
+This matters more than it looks. The planner is the first step, so its failures
+do not present as planner failures — a failed plan degrades the question to
+plain semantic retrieval, and "who are you" then goes to the statute index and
+comes back with sections scoring -3.90 and a refusal.
+
 ### POST `/api/transcribe`
 
 Multipart upload of a recording; returns what was heard. **It does not answer
@@ -159,6 +175,56 @@ into commoner words rather than failing visibly.
 code-switching set** (en, es, fr, de, hi, ru, pt, ja, it, nl). Mixed
 Bangla-English has no single-model answer; `RAG_STT_LANGUAGE` picks one, and
 `scripts/deepgram_stt.py --compare` measures what the choice costs.
+
+## Accounts and storage
+
+Signing in is **optional**, and the two modes differ in exactly one way:
+
+| | guest | signed in |
+|---|---|---|
+| answers | identical | identical |
+| stored on the server | **nothing** | conversations, per-turn context, page images |
+| stored in the browser | **nothing** | a session token |
+
+A guest sends no `Authorization` header, so `_persist` has no verified user and
+returns before touching the database. That absence *is* the enforcement — there
+is no client-side flag to get wrong.
+
+Supabase Auth issues the token; the API verifies it locally by reading the
+token's own `alg` header (`RS256`/`ES256` against the project's JWKS endpoint,
+`HS256` against `SUPABASE_JWT_SECRET`). Verification covers signature, expiry
+and audience: decoding without it would let anyone claim any `sub` and read
+another user's conversations.
+
+**The service-role key bypasses Row Level Security.** The policies in
+`db/schema.sql` are therefore not what isolates users —
+`app/db/conversations.py` filters every statement by `user_id`, including the
+ones already scoped by `conversation_id`, because a conversation id is a uuid
+and not a capability. The policies remain for anything that ever connects with
+an anon key.
+
+Another user's conversation returns **404, not 403**: a 403 would confirm the id
+exists.
+
+### What a stored session contains
+
+Everything needed to reload it as it happened:
+
+```text
+conversations   title, latest memory, timestamps
+messages        the question and the whole answer as sent, plus — per turn —
+                the memory snapshot it was answered against, which model
+                answered, and what the planner decided
+uploads         the page image, its transcription, and the turn it fed
+```
+
+The memory snapshot is per message rather than per conversation on purpose. An
+answer at turn 3 was produced against the summary as it stood at turn 3;
+replaying it beside turn 7's summary explains the wrong thing.
+
+Page images are private, served through one-hour signed URLs. The transcription
+that reaches the pipeline is a vision model's *reading* of the page — keeping
+the page beside it is the only way to check that reading later.
 
 ### GET `/api/models`
 
@@ -205,7 +271,9 @@ conversation summariser, on its own key so it never competes for quota),
 | `RAG_GROQ_MODEL` | `qwen/qwen3.8-27b` | direct Groq model id |
 | `RAG_LLM_BACKEND` | `groq` | `groq`, `openrouter`, `gemini`, `inception` |
 | `RAG_INCEPTION_MODEL` | `mercury-2.5` | Inception Mercury default |
-| `RAG_PLANNER_MODEL` | `qwen` | the planner — decides category and coordinates |
+| `RAG_PLANNER_MODEL` | `gemini2` | the planner — decides category and coordinates |
+| `RAG_PLANNER_FALLBACK` | `qwen` | tried when the planner's own model fails |
+| `RAG_TRACE` | `1` | one concise log line per pipeline step; `0` silences |
 | `RAG_PLAN` | `1` | `0` falls back to the old pattern router |
 | `RAG_ROUTER_MODEL` | `lfm` | old router's model, used only when `RAG_PLAN=0` |
 | `RAG_DENSE_K` / `RAG_FINAL_K` | `20` / `5` | candidates reranked / sections returned |
@@ -216,6 +284,10 @@ conversation summariser, on its own key so it never competes for quota),
 | `RAG_STT_LANGUAGE` | `en` | `en`, `bn`, or `multi` (no Bengali in `multi`) |
 | `RAG_WARMUP` | `1` | `0` skips model loading at startup |
 | `CORS_ORIGINS` | `http://localhost:3000` | comma-separated |
+| `SUPABASE_URL` | — | project URL; storage and auth are off without it |
+| `SUPABASE_SERVICE_ROLE_KEY` | — | **server only**; bypasses RLS |
+| `SUPABASE_JWT_SECRET` | — | only for older projects with a shared HS256 secret |
+| `SUPABASE_BUCKET` | `page-images` | private bucket for page images |
 
 Generator routes must enforce JSON schema. The default Groq Qwen route passed
 the strict-schema probe in `scripts/groq_chat.py --json`. OpenRouter fallbacks

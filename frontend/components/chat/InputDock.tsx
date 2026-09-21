@@ -18,6 +18,8 @@ interface InputDockProps {
   onModelChange: (alias: string | null) => void;
   /** The rolling conversation summary the next question will be read against. */
   memory: ConversationMemory | null;
+  /** Stored conversation id, so an uploaded page is filed with this session. */
+  conversationId?: string | null;
   onForgetMemory: () => void;
   onActivateCitation?: (key: string) => void;
 }
@@ -30,6 +32,7 @@ export function InputDock({
   model,
   onModelChange,
   memory,
+  conversationId,
   onForgetMemory,
   onActivateCitation,
 }: InputDockProps) {
@@ -114,6 +117,7 @@ export function InputDock({
             <div className="flex items-center gap-1.5 flex-shrink-0">
               <ImageButton
                 disabled={disabled}
+                conversationId={conversationId}
                 onStatus={showStatus}
                 // Read text goes in the box, never straight to the pipeline: a
                 // vision model fails plausibly ("302A" -> "302") and nothing

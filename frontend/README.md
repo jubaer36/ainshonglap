@@ -33,9 +33,13 @@ read instead of permanently under the input box.
   summariser failed, and a Forget button
 - the model picker greys out routes that are out of quota, with a countdown,
   and moves a dead selection to the fallback
-- conversations saved in `localStorage` and listed in the sidebar; each record
-  carries its memory and citations, so reopening one restores the context a
-  follow-up needs
+- a welcome screen that makes the storage choice explicit before anything is
+  typed: guest (nothing saved anywhere) or an account (conversations stored)
+- Supabase sign-in on its own page at `/signin`, with the account and a sign-out
+  at the foot of the sidebar, and a guest prompt in the same place
+- conversations listed in the sidebar for signed-in users, loaded from the API;
+  reopening one restores the messages, the context each answer was produced
+  against, and any page images
 - Enter sends, Shift+Enter inserts a newline, and Enter is ignored while an IME
   is composing (typing Bangla would otherwise fire mid-word)
 
@@ -79,7 +83,12 @@ components/layout/StatuteBrowser.tsx corpus navigation
 components/layout/ReferencesDrawer.tsx citation/source preview
 components/chat/ModelPicker.tsx      generator selection
 lib/api.ts                           all backend calls and normalization
-lib/conversations.ts                 saved conversations in localStorage
+lib/conversations.ts                 saved conversations, via the API
+lib/supabase.ts                      Supabase client — authentication only
+app/signin/page.tsx                  sign in / create account
+components/auth/AuthProvider.tsx     session state
+components/auth/WelcomeGate.tsx      guest or account, before anything else
+components/layout/SidebarAccount.tsx account and sign-out, bottom left
 components/chat/AnswerKindBadge.tsx  how an answer was produced, in three words
 components/chat/MemoryPanel.tsx      the running summary the next question is read against
 components/chat/MicButton.tsx        record, transcribe, place in the box — never send

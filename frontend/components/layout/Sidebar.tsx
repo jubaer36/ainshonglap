@@ -1,5 +1,6 @@
 import type { SavedConversation } from "@/lib/conversations";
 import { ConversationList } from "./ConversationList";
+import { SidebarAccount } from "./SidebarAccount";
 import { StatuteBrowser } from "./StatuteBrowser";
 
 interface SidebarProps {
@@ -65,6 +66,7 @@ export function Sidebar({
         </div>
       </div>
 
+      <SidebarAccount />
     </aside>
   );
 }

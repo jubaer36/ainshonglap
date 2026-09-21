@@ -7,9 +7,10 @@ import {
   getConversation,
   listConversations,
   newConversationId,
-  saveConversation,
   type SavedConversation,
 } from "@/lib/conversations";
+import { useAuth } from "@/components/auth/AuthProvider";
+import { WelcomeGate } from "@/components/auth/WelcomeGate";
 import type { AssistantMessage, ChatMessage, Citation, UserMessage, ConversationMemory } from "@/lib/types";
 import { Header } from "../layout/Header";
 import { ReferencesDrawer } from "../layout/ReferencesDrawer";
@@ -70,6 +71,7 @@ function errorAssistantMessage(error: unknown, question?: string): AssistantMess
     generator: null,
     generatorSubstituted: null,
     retryQuestion: question ?? null,
+    conversationId: null,
     notice: null,
     suggestedModel: null,
     blocks: [{ type: "paragraph", segments: [{ type: "text", text }] }],
@@ -79,7 +81,12 @@ function errorAssistantMessage(error: unknown, question?: string): AssistantMess
   };
 }
 
+/** Remembers only that the welcome screen was answered — never any content. */
+const GUEST_CHOICE_KEY = "ainshonglap.guest";
+
 export function ChatShell() {
+  const { user, ready: authReady, configured: authConfigured } = useAuth();
+  const [guest, setGuest] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   // The rolling conversation summary. Lives here rather than on the server:
   // these are personal legal questions, and keeping nothing server-side is a
@@ -92,6 +99,9 @@ export function ChatShell() {
   // lands in a record rather than creating one retroactively.
   const [conversations, setConversations] = useState<SavedConversation[]>([]);
   const [conversationId, setConversationId] = useState<string>(() => newConversationId());
+  // The server's id for this conversation, once it has stored one. Distinct
+  // from `conversationId`, which is a local key that also exists for guests.
+  const [storedId, setStoredId] = useState<string | null>(null);
   const [inputValue, setInputValue] = useState("");
   const [loading, setLoading] = useState(false);
   const [noticeDismissed, setNoticeDismissed] = useState(false);
@@ -135,8 +145,34 @@ export function ChatShell() {
   }, [activeCitationKey, citationLibrary]);
 
   useEffect(() => {
-    setConversations(listConversations());
+    // The guest choice survives a reload so the gate does not reappear every
+    // time. It is a single boolean — no questions, no answers, nothing about
+    // what was asked.
+    try {
+      const chosen =
+        window.sessionStorage.getItem(GUEST_CHOICE_KEY) === "1" ||
+        new URLSearchParams(window.location.search).get("guest") === "1";
+      if (chosen) {
+        setGuest(true);
+        window.sessionStorage.setItem(GUEST_CHOICE_KEY, "1");
+      }
+    } catch {
+      /* storage blocked: the gate simply shows again */
+    }
   }, []);
+
+  useEffect(() => {
+    // Signed in: read history from the API. Guest: there is nothing to read.
+    if (!user) {
+      setConversations([]);
+      return;
+    }
+    let cancelled = false;
+    listConversations().then((list) => !cancelled && setConversations(list));
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
 
   useEffect(() => {
     // Below lg, sidebar/drawer are fixed overlays (see Sidebar/ReferencesDrawer)
@@ -179,6 +215,8 @@ export function ChatShell() {
       const assistantMessage = await sendQuery(trimmed, historyForRequest, {
         model: withModel ?? model ?? undefined,
         memory,
+        // Null on the first turn; the server returns the id it stored under.
+        conversationId: user ? storedId : null,
       });
       const nextMessages = [...historyForRequest, assistantMessage];
       setMessages(nextMessages);
@@ -186,10 +224,11 @@ export function ChatShell() {
       // so a failed request does not erase the conversation's memory.
       const nextMemory = assistantMessage.memory ?? memory;
       if (assistantMessage.memory) setMemory(assistantMessage.memory);
-      // Saved with the memory, not just the messages: reopening a conversation
-      // has to restore what the assistant remembered, or the next follow-up
-      // silently loses its context.
-      setConversations(saveConversation(conversationId, nextMessages, nextMemory));
+      // Storage happens server-side inside /api/query for a signed-in user, so
+      // nothing is written here. Refresh the list so a new conversation appears
+      // in the sidebar as soon as it has a title.
+      if (assistantMessage.conversationId) setStoredId(assistantMessage.conversationId);
+      if (user) void listConversations().then(setConversations);
       setCitationLibrary((current) => ({ ...current, ...assistantMessage.citations }));
     } catch (error) {
       // A transport failure never reaches the summariser, so memory is
@@ -213,14 +252,8 @@ export function ChatShell() {
   }
 
   function handleNewChat() {
-    // Save before clearing. Conversations are normally persisted as each answer
-    // arrives, but a turn that ended in a transport error never reached that
-    // path — without this, starting a new conversation would drop the question
-    // that failed, which is exactly the one worth keeping.
-    if (messages.length > 0) {
-      setConversations(saveConversation(conversationId, messages, memory));
-    }
     setConversationId(newConversationId());
+    setStoredId(null);
     setMessages([]);
     setMemory(null);
     setInputValue("");
@@ -230,10 +263,11 @@ export function ChatShell() {
     }
   }
 
-  function handleOpenConversation(id: string) {
-    const saved = getConversation(id);
+  async function handleOpenConversation(id: string) {
+    const saved = await getConversation(id);
     if (!saved) return;
     setConversationId(saved.id);
+    setStoredId(saved.id);
     setMessages(saved.messages);
     setMemory(saved.memory);
     setInputValue("");
@@ -248,8 +282,8 @@ export function ChatShell() {
     if (window.matchMedia("(max-width: 1023px)").matches) setSidebarOpen(false);
   }
 
-  function handleDeleteConversation(id: string) {
-    setConversations(deleteConversation(id));
+  async function handleDeleteConversation(id: string) {
+    setConversations(await deleteConversation(id));
     // Deleting the conversation on screen leaves it open but detached; start a
     // fresh one so the view matches what is stored.
     if (id === conversationId) handleNewChat();
@@ -271,6 +305,24 @@ export function ChatShell() {
   const firstUserMessage = messages.find(
     (message): message is UserMessage => message.role === "user",
   );
+
+  // The gate stands in front of everything until the visitor has chosen. It is
+  // skipped entirely when Supabase is not configured, so a deployment without
+  // auth behaves as it always did.
+  if (authConfigured && authReady && !user && !guest) {
+    return (
+      <WelcomeGate
+        onContinueAsGuest={() => {
+          setGuest(true);
+          try {
+            window.sessionStorage.setItem(GUEST_CHOICE_KEY, "1");
+          } catch {
+            /* nothing to remember; the gate reappears next visit */
+          }
+        }}
+      />
+    );
+  }
 
   return (
     <div className="flex-1 flex flex-col h-full min-h-0">
@@ -337,6 +389,7 @@ export function ChatShell() {
             model={model}
             onModelChange={setModel}
             memory={memory}
+            conversationId={storedId}
             onForgetMemory={() => setMemory(null)}
             onActivateCitation={handleActivateCitation}
           />

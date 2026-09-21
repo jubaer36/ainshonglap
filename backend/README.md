@@ -73,9 +73,10 @@ the schema-constrained router handles the remainder. Direct coordinates are
 validated against the corpus, and ambiguous section numbers require an Act.
 
 **This has been replaced and is now the served path.** `app/rag/plan.py`
-collapses the six intents into five categories — `meta`, `structural`
-(lookup/browse/summarize, differing by operation), `semantic`, `out_of_scope`,
-`general` — with a strict-JSON call returning coordinates only.
+collapses the six intents into six categories — `meta`, `structural`
+(lookup/browse/summarize, differing by operation), `semantic`, `document`,
+`out_of_scope`, `general` — with a strict-JSON call returning coordinates only.
+The planner runs on Gemini 3.5 Flash Lite with a Groq fallback (E16).
 `app/rag/catalog.py` executes them against `Laws/main/catalog.sqlite` with
 parameterized SQL, and `app/rag/execute.py` holds one executor per category.
 The old pattern router survives behind `RAG_PLAN=0` as an outage switch.

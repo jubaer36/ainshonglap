@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, File, Header, HTTPException, Query, UploadFile
 from fastapi.concurrency import run_in_threadpool
 
 from app.models.schemas import ImageReading, Transcription
@@ -65,6 +65,8 @@ async def transcribe_audio(
 @router.post("/read-image", response_model=ImageReading)
 async def read_image_endpoint(
     image: UploadFile = File(..., description="ONE page as PNG, JPEG or WebP"),
+    conversation_id: str | None = Query(None),
+    authorization: str | None = Header(None),
 ) -> ImageReading:
     """Read the text off **one page image**. This does not answer anything.
 
@@ -96,4 +98,34 @@ async def read_image_endpoint(
         log.exception("image reading failed")
         raise HTTPException(502, f"image reading failed: {type(exc).__name__}") from exc
 
+    # Keep the page with the session that used it — but only for a signed-in
+    # user. A guest's image is read and discarded with the rest of their
+    # session, which is what they chose on the way in.
+    stored = await run_in_threadpool(
+        _store_image, authorization, raw, image.content_type,
+        conversation_id, result.get("text"))
+    if stored:
+        result["upload_id"] = stored.get("id")
+        result["url"] = stored.get("url")
     return ImageReading(**result)
+
+
+def _store_image(authorization: str | None, data: bytes, content_type: str | None,
+                 conversation_id: str | None, transcript: str | None) -> dict | None:
+    """File the image, when there is a verified user to file it for."""
+    from app.db import supabase
+
+    if not supabase.configured():
+        return None
+    token = ""
+    if authorization and authorization.lower().startswith("bearer "):
+        token = authorization.split(" ", 1)[1]
+    user = supabase.user_id(token)
+    if not user:
+        return None
+
+    from app.db import uploads
+    from app.rag.vision import _sniff
+
+    return uploads.store(user, data, _sniff(data) or content_type or "image/png",
+                         conversation_id=conversation_id, transcript=transcript)

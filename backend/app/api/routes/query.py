@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Header, HTTPException, Query
 
 from app.models.schemas import AssistantMessage, ConversationMemory, QueryRequest
-from app.rag import config
+from app.rag import config, trace
 from app.rag.present import to_message
 
 log = logging.getLogger(__name__)
@@ -27,7 +27,8 @@ router = APIRouter(tags=["assistant"])
 # A plain `def` is handed to a threadpool instead, so slow work no longer
 # starves fast requests.
 @router.post("/api/query", response_model=AssistantMessage)
-def query(payload: QueryRequest) -> AssistantMessage:
+def query(payload: QueryRequest,
+          authorization: str | None = Header(None)) -> AssistantMessage:
     """Plan, execute, verify citations, present.
 
     Two paths, chosen by `RAG_PLAN`:
@@ -48,6 +49,7 @@ def query(payload: QueryRequest) -> AssistantMessage:
     if not q:
         raise HTTPException(422, "question is empty")
     model = (payload.model or "").strip() or None
+    trace.question(q, user=bool(authorization))
 
     # A model known to be out of quota is swapped before the call rather than
     # after a failed one: the caller gets an answer instead of a 502, and the
@@ -101,6 +103,12 @@ def query(payload: QueryRequest) -> AssistantMessage:
                         f"It was answered with {message.generator or 'the default model'}, "
                         f"which is tuned for short questions. A larger model such as "
                         f"{bigger} handles long passages better — you can ask again with it.")
+
+            # Persist only for a signed-in user. A guest's questions are never
+            # written anywhere — that is what they chose on the way in, and the
+            # absence of a token is the whole enforcement.
+            message.conversation_id = _persist(
+                authorization, payload.conversation_id, q, message, after)
             return message
 
         from app.rag.answer import answer
@@ -120,6 +128,40 @@ def query(payload: QueryRequest) -> AssistantMessage:
                      f"omit the field for the server default") from exc
         log.exception("generation failed")
         raise HTTPException(502, f"generator unavailable: {type(exc).__name__}") from exc
+
+
+def _persist(authorization: str | None, conversation_id: str | None,
+             question: str, message: AssistantMessage, memory) -> str | None:
+    """Store one exchange, when there is a verified user to store it for.
+
+    Never raises: storage is a convenience, and losing it must not cost someone
+    the answer they already have. A failure is logged and the response goes out
+    without a conversation id.
+    """
+    from app.db import supabase
+
+    if not supabase.configured():
+        return None
+    token = ""
+    if authorization and authorization.lower().startswith("bearer "):
+        token = authorization.split(" ", 1)[1]
+    user = supabase.user_id(token)
+    if not user:
+        return None                     # guest: nothing is written, by design
+
+    try:
+        from app.db import conversations as store
+
+        saved = store.save_turn(
+            user, conversation_id,
+            {"id": f"q-{message.id}", "role": "user", "text": question},
+            message.model_dump(mode="json"),
+            memory.to_dict() if memory else None)
+        trace.step("saved", str(saved)[:8])
+        return saved
+    except Exception:                               # pragma: no cover - defensive
+        log.exception("saving the conversation failed")
+        return None
 
 
 def _usable(alias: str | None) -> tuple[str | None, str | None]:

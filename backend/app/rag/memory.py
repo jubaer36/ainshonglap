@@ -206,14 +206,22 @@ def update(memory: Memory | None, question: str, answer) -> Memory:
          "the assistant failed, declined or could not answer.)"),
     ]))
 
+    from app.rag import trace
+
+    trace.sent("memory", f"turn {prev.turns + 1}: prev {len(prev.summary)} chars "
+                         f"+ Q«{question.strip()}» + A«{said[:40]}»")
+    elapsed = trace.timer()
     try:
         raw = _llm().generate_json(SYSTEM, payload, SCHEMA)
         summary = (raw.get("summary") or "").strip()[:MAX_SUMMARY_CHARS]
     except Exception as exc:
+        trace.step("memory", f"FAILED, kept stale  {type(exc).__name__}", elapsed())
         return Memory(summary=prev.summary, sections=keys, turns=prev.turns + 1,
                       error=f"{type(exc).__name__}: {exc}"[:160])
 
     if not summary:
+        trace.step("memory", "summariser returned nothing", elapsed())
         return Memory(summary=prev.summary, sections=keys, turns=prev.turns + 1,
                       error="summariser returned nothing")
+    trace.recv("memory", f"«{summary}»", elapsed())
     return Memory(summary=summary, sections=keys, turns=prev.turns + 1)

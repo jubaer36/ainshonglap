@@ -9,6 +9,7 @@
   GET  /api/acts           indexed acts
   GET  /api/sections       browse sections
   GET  /api/sections/{key} one section, by citation key
+  GET  /api/conversations  saved conversations (signed in)
   GET  /health             liveness + what is loaded
 
 Retrieval is measured (see retrieval-baseline.md / experiments.md); generation
@@ -25,12 +26,25 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes.citations import router as citations_router
+from app.api.routes.conversations import router as conversations_router
 from app.api.routes.models import router as models_router
 from app.api.routes.query import router as query_router
 from app.api.routes.speech import router as speech_router
 from app.api.routes.retrieve import router as retrieve_router
 
 log = logging.getLogger(__name__)
+
+# uvicorn configures its own handlers and leaves other loggers at WARNING, so the
+# per-step trace would be silently dropped. Attach one handler to the trace
+# logger explicitly, and keep it off the root so nothing else is reformatted.
+_trace_log = logging.getLogger("ainshonglap")
+if not _trace_log.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(message)s"))
+    _trace_log.addHandler(_handler)
+    _trace_log.propagate = False
+_trace_log.setLevel(logging.INFO if os.getenv("RAG_TRACE", "1") == "1"
+                    else logging.WARNING)
 
 # Set once at startup so /health can report why the API is degraded instead of
 # failing per request with the same error.
@@ -123,6 +137,7 @@ app.include_router(citations_router)
 app.include_router(retrieve_router)
 app.include_router(models_router)
 app.include_router(speech_router)
+app.include_router(conversations_router)
 
 
 def _quota_state() -> dict:
@@ -139,6 +154,14 @@ def _speech_state() -> dict:
 
     return {"available": speech.available(), "model": speech.MODEL,
             "language": speech.LANGUAGE}
+
+
+def _database_state() -> dict:
+    """Whether Supabase is wired up. Unconfigured is a supported state: the
+    assistant runs anonymously and history stays in the browser."""
+    from app.db import supabase
+
+    return supabase.state()
 
 
 def _vision_state() -> dict:
@@ -165,6 +188,7 @@ async def health() -> dict:
                     "enabled": config.PLAN_QUERIES},
         "speech": _speech_state(),
         "vision": _vision_state(),
+        "database": _database_state(),
         "quota_blocked": _quota_state(),
         "generator": dict(zip(("backend", "model"),
                               config.resolve_generator(None))) |

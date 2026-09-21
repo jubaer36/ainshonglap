@@ -10,6 +10,8 @@ interface ImageButtonProps {
   onText: (text: string) => void;
   onStatus?: (state: InputStatusState | null) => void;
   disabled?: boolean;
+  /** The stored conversation this page belongs to, when signed in. */
+  conversationId?: string | null;
 }
 
 /**
@@ -28,7 +30,12 @@ interface ImageButtonProps {
  * produces is cited either; an answer about this text is still retrieved from
  * the indexed Acts and verified against them.
  */
-export function ImageButton({ onText, onStatus, disabled }: ImageButtonProps) {
+export function ImageButton({
+  onText,
+  onStatus,
+  disabled,
+  conversationId,
+}: ImageButtonProps) {
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -65,7 +72,7 @@ export function ImageButton({ onText, onStatus, disabled }: ImageButtonProps) {
                 busy: true,
               },
         );
-      });
+      }, conversationId);
       if (!result.text) {
         onStatus?.({ text: "No text found in that image", tone: "error" });
         return;

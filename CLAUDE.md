@@ -48,10 +48,18 @@ cd backend
 uvicorn app.main:app --reload            # API on :8000
 ```
 
-Secrets live in `backend/.env.local` (gitignored): `GROQ_API_KEY` (default
-generator and planner), `INCEPTION_API_KEY` (Mercury, the quota fallback),
-`GEMINI_API_KEY_2` (conversation summariser, on its own key), `DEEPGRAM_API_KEY`
-(voice input), plus optional `GEMINI_API_KEY` and `OPENROUTER_API_KEY`.
+Secrets live in `backend/.env.local` (gitignored): `GEMINI_API_KEY_2` (the
+planner and the conversation summariser, on their own key), `GROQ_API_KEY`
+(default generator, planner fallback), `INCEPTION_API_KEY` (Mercury, the quota
+fallback), `DEEPGRAM_API_KEY` (voice), `OPENROUTER_API_KEY` (vision, OpenRouter
+routes), `SUPABASE_*` (accounts and storage), plus optional `GEMINI_API_KEY`.
+
+Every request logs one line per step — planner in and out, retrieval hits,
+generator claims kept and dropped, memory, Supabase writes. `RAG_TRACE=0`
+silences it. Read that before guessing which stage produced a surprising
+answer; a refusal can mean retrieval fetched the wrong sections, the generator
+declined on the right ones, or the citation gates killed every claim, and those
+look identical from outside.
 
 **Free-tier budgets are a real constraint.** Groq's daily token cap is per model
 and has been exhausted once by verification runs. Prefer offline checks —
@@ -116,6 +124,17 @@ Generator routes must enforce JSON schema. Check the default with
 `python scripts/groq_chat.py --json`; check an OpenRouter fallback with
 `python scripts/openrouter_chat.py --json --model <alias>`. A route that ignores
 the schema returns prose, which the pipeline would surface as a false refusal.
+
+## Accounts and storage
+
+Optional Supabase auth. Guests store nothing anywhere; signed-in sessions store
+conversations, per-turn context and page images. Schema in `backend/db/`, applied
+by hand in the Supabase SQL editor (`schema.sql`, then `migrations/`).
+
+**The service-role key bypasses Row Level Security**, so `app/db/conversations.py`
+is the isolation boundary, not the policies. Every statement filters by
+`user_id`, including ones already scoped by `conversation_id`. `user_id` always
+comes from a verified token, never from a request body.
 
 ## Conventions
 

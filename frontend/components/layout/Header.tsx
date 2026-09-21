@@ -8,6 +8,8 @@ interface HeaderProps {
   onToggleDrawer: () => void;
 }
 
+import { AuthButton } from "../auth/AuthButton";
+
 export function Header({
   activeTopic,
   drawerOpen,
@@ -69,6 +71,7 @@ export function Header({
         )}
       </div>
       <div className="flex items-center gap-2">
+        <AuthButton />
         <button
           type="button"
           className="p-2 rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors"

@@ -701,7 +701,61 @@ strongest argument yet for phase 4 (facets + threshold).
 
 ---
 
-## What E2-E15 together establish
+## E16 — the planner moves to Gemini, and one schema that every provider accepts
+
+**Objective.** The planner runs before everything else on every question, so its
+latency is the floor for the whole system and its failures are the most
+expensive kind. On Groq it had become both slow and unreliable.
+
+**What was measured.**
+
+| planner | time | outcome |
+|---|---|---|
+| Groq Qwen, rate-limited | **43.3s** | correct, unusable |
+| Groq Qwen, retries exhausted | 15.0s | `RuntimeError` -> semantic fallback |
+| Gemini 3.5 Flash Lite (`gemini2`) | **1.3-1.8s** | correct |
+
+**A failed plan does not look like a failed plan.** When the planner errored,
+the question degraded to plain semantic retrieval — so "who are you" went to the
+statute index, came back with `penal-s10` at **-3.90**, and was refused. From
+outside that reads as the assistant failing to understand a trivial question.
+The per-step trace is what made the real cause visible in one line
+(`plan FAILED -> semantic RuntimeError 15.0s`).
+
+**A cross-provider schema incompatibility, found by moving.** The first Gemini
+attempts failed in 0.7s with:
+
+```
+response_schema.properties[operation].enum[3]: cannot be empty
+```
+
+The planner schema declared `"enum": [*OPERATIONS, ""]` — an empty string as an
+enum member for "not applicable". **Groq and OpenAI accept that; Gemini rejects
+it outright.** Every Gemini call 400'd, fell through to rate-limited Groq, and
+took 43s — so the symptom was slowness and the cause was a schema validation
+error on a provider that never got to run. Fixed by spelling the absent case
+`"none"` and normalising it back after parsing.
+
+Worth generalising: **a strict schema is only as portable as its least
+permissive consumer.** `enforces_schema` was treated as a yes/no property of a
+route; this is a case where a route enforces the schema correctly and rejects a
+schema the others tolerate.
+
+**Decision.** `PLANNER_MODEL=gemini2` (Gemini 3.5 Flash Lite on
+`GEMINI_API_KEY_2`, its own quota), `PLANNER_FALLBACK=qwen`. The fallback is a
+different *provider* deliberately: Groq's per-minute and daily limits are
+per-account, so a second Groq route waits behind the same wall. `get_llm` now
+honours a per-alias `key_env`, which is what lets one model run on two keys with
+separate budgets.
+
+**Not measured.** Whether Gemini plans as *accurately* as Groq Qwen did. E13's
+42/42 category and 27/27 scope were measured on Groq, and `plan_cases.py` has
+not been re-run on Gemini — the numbers in E13 describe a planner that is no
+longer the default. That is a real gap, and the suite exists to close it.
+
+---
+
+## What E2-E16 together establish
 
 Both chunk-formatting knobs are flat — retrieval on this corpus is not limited
 by how chunks are labelled or sized. Ranking is where the gains were, exactly as

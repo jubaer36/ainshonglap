@@ -16,7 +16,7 @@ source PDFs
   -> catalog.sqlite                   (what these provisions ARE)
 
 question
-  -> Groq Qwen planner   (strict JSON: coordinates only, never text or SQL)
+  -> Gemini Flash Lite planner  (strict JSON: coordinates only, never text or SQL)
   -> validated against the catalog
   -> structural: exact SQL fetch   |   semantic: retrieval + reranking
   -> Groq Qwen structured generation
@@ -25,17 +25,21 @@ question
 ```
 
 A planner decides what the question is and names **where** to look; code owns
-every fact. Five categories: `meta` (about the assistant), `structural` (a named
+every fact. Six categories: `meta` (about the assistant), `structural` (a named
 section, range, chapter or Act — fetched exactly, in statutory order),
-`semantic` (provisions that must be found), `out_of_scope` (a legal question
-about law outside these three Acts — answered with a refusal, never from
-memory), `general` (not a legal question; answered plainly, no citations). A coordinate the catalog does not have returns nothing rather than
+`semantic` (provisions that must be found), `document` (a pasted case brief or
+transcribed page — its cited sections are fetched by number rather than hoped
+for), `out_of_scope` (a legal question about law outside these three Acts —
+refused, never answered from memory), `general` (not a legal question, including
+ordinary conversation; answered plainly, no citations). A coordinate the catalog does not have returns nothing rather than
 the nearest match, so a wrong chapter fails visibly instead of quietly returning
 different law. Measured at 42/42 category and 27/27 scope on a pinned 41-case
 set (`experiments.md` E13).
 
-Groq-hosted `qwen/qwen3.8-27b` is both the planner and the answer generator;
-schema-capable OpenRouter and Gemini models remain available as fallbacks.
+Gemini 3.5 Flash Lite plans (1.3-1.8s) with Groq Qwen as an automatic fallback;
+Groq Qwen writes the answers, with Mercury, OpenRouter and Gemini routes
+selectable per request. Every request logs one line per step, so which stage
+produced a given answer is readable rather than guessed.
 Generator output is never trusted as a citation: every claim must cite a
 retrieved section and include a quote found verbatim in it.
 
@@ -50,10 +54,12 @@ Generators are selectable per request and quota-aware: exhaustion is tracked per
 model, an exhausted route is greyed out in the picker, and `/api/query`
 substitutes a different provider and says so.
 
-Conversations are saved in the browser and listed in the sidebar. Nothing about
-a conversation — the questions, the memory, the history — is stored on the
-server; for questions like "my employer has not paid me", a server that never
-receives them cannot mishandle them.
+Accounts are optional, and the first screen makes the choice explicit. As a
+**guest** nothing is written anywhere — not to the server, not to the browser —
+and the conversation disappears with the tab. **Signed in** (Supabase Auth),
+conversations are stored with everything needed to reload them as they happened:
+each question and answer, the context each answer was produced against, the
+model that produced it, and any page images with their transcriptions.
 
 The required disclaimer is appended server-side from a constant to every answer,
 including refusals, so it travels with the answer rather than sitting as chrome.

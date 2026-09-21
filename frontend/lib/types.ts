@@ -113,6 +113,8 @@ export interface AssistantMessage {
   generatorSubstituted: string | null;
   /** Set on client-side transport failures, so a retry knows what to re-ask. */
   retryQuestion?: string | null;
+  /** Where this exchange was stored. Null for a guest — nothing is written. */
+  conversationId: string | null;
   /** A suggestion for the reader, not something already done — e.g. a pasted
    *  document answered on a small model. */
   notice: string | null;
@@ -231,4 +233,8 @@ export interface ImageReading {
   text: string;
   model: string | null;
   chars: number;
+  /** Set for a signed-in user: where the page itself was filed, so the reading
+   *  can be checked against it later. Null for a guest. */
+  uploadId: string | null;
+  url: string | null;
 }

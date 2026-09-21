@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import re
 
-from app.rag import catalog, config
+from app.rag import catalog, config, trace
 from app.rag.answer import (
     SCHEMA, SYSTEM, Answer, build_context, general_answer, outline_answer,
 )
@@ -48,6 +48,11 @@ BROWSE_LIMIT = 60
 # relevance on purpose: relevance decides what is related, this decides what
 # fits in a prompt. When it binds, the answer says so.
 MAX_CONTEXT_SECTIONS = 10
+
+
+def _short(model: str) -> str:
+    """`qwen/qwen3.8-27b` -> `qwen3.8-2`, so the log column stays aligned."""
+    return (model or "llm").split("/")[-1][:9]
 
 
 def _as_retrieved(rec: dict, rank: int = 1) -> Retrieved:
@@ -172,8 +177,10 @@ def structural_answer(plan: Plan, *, backend: str | None = None,
         number_to=plan.section_to, limit=limit)
 
     if not total:
+        trace.step("fetch", "0 sections — coordinates matched nothing")
         return Answer(plan.question, refused=True, kind="structural", plan=plan,
                       reason=_nothing_found(plan))
+    trace.step("fetch", f"{total} section(s) from the catalog")
 
     # One section, asked for by name: quote it in full. This is the path where
     # the text is correct by construction — it came from the catalog and no
@@ -270,7 +277,10 @@ def semantic_answer(plan: Plan, *, backend: str | None = None,
     multi-issue scenario the planner names one Act and the answer needs two.
     """
     k = k or config.FINAL_K
-    hits = hits if hits is not None else retrieve(plan.query, k=k)
+    if hits is None:
+        elapsed = trace.timer()
+        hits = retrieve(plan.query, k=k)
+        trace.step("retrieve", trace.hits(hits), elapsed())
     if not hits:
         return Answer(plan.question, refused=True, plan=plan,
                       reason="nothing retrieved")
@@ -282,6 +292,9 @@ def semantic_answer(plan: Plan, *, backend: str | None = None,
 
     shown = hits[:MAX_CONTEXT_SECTIONS]
     llm = get_llm(backend, model)
+    trace.sent(_short(llm.name),
+               f"{len(shown)} sections [{' '.join(h.key for h in shown[:5])}]  «{plan.asked}»")
+    generating = trace.timer()
     # `plan.asked` is the standalone form: identical to the question unless this
     # was a follow-up, in which case it is the rewrite that carries the earlier
     # facts. The generator must never see "what if he had survived" alone.
@@ -290,6 +303,8 @@ def semantic_answer(plan: Plan, *, backend: str | None = None,
                 f"Question: {plan.asked}", SCHEMA)
 
     if not raw.get("sufficient"):
+        trace.recv(_short(llm.name), "sufficient=false — declined", generating())
+        trace.step("refused", "the retrieved sections do not cover this")
         return Answer(plan.question, refused=True, plan=plan,
                       reason="the retrieved sections do not cover this question",
                       ambiguous=bool(raw.get("ambiguous")),
@@ -304,8 +319,13 @@ def semantic_answer(plan: Plan, *, backend: str | None = None,
     kept = [{"text": c.text, "section": c.resolved_section, "quote": c.quote}
             for c in checked.claims if c.ok]
     dropped = [f"s.{c.section}: {c.failure}" for c in checked.failures]
+    trace.recv(_short(llm.name),
+               f"{len(checked.claims)} claims -> {len(kept)} kept, {len(dropped)} dropped"
+               + (f"  [{'; '.join(dropped[:2])}]" if dropped else ""),
+               generating())
 
     if not kept:
+        trace.step("refused", "no claim survived the citation gates")
         return Answer(plan.question, refused=True, plan=plan, dropped=dropped,
                       reason="no claim survived citation verification",
                       sources=shown, verification=checked, model=llm.name)
@@ -328,12 +348,16 @@ def execute(plan: Plan, *, backend: str | None = None, model: str | None = None,
             **kw) -> Answer:
     """Run a validated plan. One branch per category, no re-deciding."""
     if plan.needs_clarification:
+        trace.step("clarify", plan.clarification)
         return clarify_answer(plan)
     if plan.category == "meta":
+        trace.step("meta", "capability answer from the catalog")
         return meta_answer(plan)
     if plan.category == "out_of_scope":
+        trace.step("scope", "legal, but outside the indexed Acts")
         return out_of_scope_answer(plan)
     if plan.category == "general":
+        trace.step("general", "answered without citations")
         a = general_answer(plan.asked, None, backend=backend, model=model)
         a.plan = plan
         return a
@@ -474,6 +498,8 @@ def document_answer(plan: Plan, *, backend: str | None = None,
     Cited sections come first and are never displaced by ranked ones.
     """
     cited = cited_sections(plan.question, plan.act)
+    if cited:
+        trace.step("cited", " ".join(r["key"] for r in cited[:5]))
     hits = [_as_retrieved(rec, i) for i, rec in enumerate(cited, 1)]
 
     room = MAX_CONTEXT_SECTIONS - len(hits)

@@ -47,7 +47,7 @@ from __future__ import annotations
 import functools
 from dataclasses import dataclass, field
 
-from app.rag import catalog
+from app.rag import catalog, config, trace
 from app.rag.llm import get_llm
 
 CATEGORIES = ("meta", "structural", "semantic", "document", "out_of_scope",
@@ -56,102 +56,59 @@ CATEGORIES = ("meta", "structural", "semantic", "document", "out_of_scope",
 # What a structural request wants done with the coordinates it named.
 OPERATIONS = ("fetch", "enumerate", "overview")
 
-SYSTEM = (
-    "You plan how a Bangladesh criminal law assistant should answer a question. "
-    "You never answer it, never quote law, and never write SQL.\n\n"
-    "The assistant covers exactly three Acts: the Code of Criminal Procedure "
-    "1898 (crpc), the Penal Code 1860 (penal), and the Evidence Act 1872 "
-    "(evidence).\n\n"
-    "category:\n"
-    "  'meta'       about the assistant itself, or a greeting. 'Who are you?', "
-    "'what can you do', 'hello', 'where do your answers come from'\n"
-    "  'structural' the user names a PART of a statute and wants it returned: a "
-    "section number, a range, a chapter (by number OR by subject), or a whole "
-    "Act. 'What does section 302 say', 'list Chapter XVI', 'show me the "
-    "sections about documentary evidence', 'summarise the Evidence Act', "
-    "'state the penal code laws'\n"
-    "  'semantic'   a situation or legal question where the relevant provisions "
-    "must be FOUND, because the user has not named them. 'What is the "
-    "punishment for theft?', 'Someone broke into my shop at night', 'Can police "
-    "arrest without a warrant?'. Use this for ANY legal scenario the three Acts "
-    "above could plausibly govern — crimes, police procedure, evidence, "
-    "trials — even when the user names no section and the facts are messy.\n"
-    "  'document'   the user has PASTED A DOCUMENT rather than asked a question: "
-    "a case brief, a law-report extract, a judgment summary, a transcribed page "
-    "from a book or screen. Recognise it by shape — headings like 'Facts:', "
-    "'Argument:', 'Held:', 'Order:', party names, a law-report citation such as "
-    "'55 DLR (2003) 363' — or simply by being a long passage of legal prose with "
-    "a short question tacked on. The work is reading the passage and explaining "
-    "the provisions it refers to.\n"
-    "  'out_of_scope' a LEGAL question, but about law those three Acts do not "
-    "contain: another statute (the Dowry Prohibition Act, the Digital Security "
-    "Act, labour law, family law, tax, constitutional law), another country's "
-    "law, or legal advice needing a lawyer. 'What does the Dowry Prohibition "
-    "Act say?', 'My employer has not paid me for three months'\n"
-    "  'general'    NOT a legal question at all. 'What is the capital of "
-    "France?', 'explain vector databases', 'what is 17 times 23'\n\n"
-    "The line between 'semantic', 'out_of_scope' and 'general' matters more than "
-    "any other choice you make. Answering a question about a statute we do not "
-    "have, from memory, is the worst thing this system can do. If it is legal "
-    "but not plainly inside those three Acts, choose 'out_of_scope'.\n\n"
-    "operation — for 'structural' only:\n"
-    "  'fetch'     specific sections were named ('section 302', 'sections 378 "
-    "to 382')\n"
-    "  'enumerate' list the sections of a chapter or an Act\n"
-    "  'overview'  describe what a whole Act covers\n"
-    "  Use '' for any other category.\n\n"
-    "act — 'crpc', 'penal', 'evidence', or '' if the question names none.\n"
-    "chapter — EITHER the chapter number the user gave ('XVI', '16'), OR, when "
-    "they described a chapter by its subject instead of numbering it, those "
-    "subject words copied from the question ('the murder chapter' -> 'murder'; "
-    "'sections about documentary evidence' -> 'documentary evidence'). Use '' "
-    "when the request is not chapter-scoped. Never invent a chapter number.\n"
-    "sections — section numbers explicitly named, e.g. ['302','379']. Empty "
-    "otherwise. NEVER guess a number: if the user did not say it, leave this "
-    "empty and let retrieval find it. This matters MOST for 'document': a "
-    "pasted case brief names the provisions it is about ('Section 54 of the "
-    "CrPC', 'Sections 54 and 167'), and every one of those numbers belongs "
-    "here. Read the whole passage for them.\n"
-    "section_from / section_to — both set only for a range like '378 to 382'.\n\n"
-    "search_query — for 'semantic' only: the question restated in statutory "
-    "vocabulary so a search over statutory text finds it. 'broke into a house' "
-    "-> 'house-breaking', 'lied under oath' -> 'giving false evidence'. Keep the "
-    "substance exactly; add no element the question did not contain. Never put a "
-    "section number in it. Empty for every other category.\n"
-    "terms — for 'semantic' only: 2-6 further statutory phrases a relevant "
-    "section would contain. Empty otherwise.\n\n"
-    "follow_up — true ONLY when the question cannot stand on its own and "
-    "refers back to the conversation: 'that section', 'what if he had survived "
-    "instead', 'and for a minor?', 'the next chapter'. A question that makes "
-    "complete sense by itself is NOT a follow-up, even on the same topic. When "
-    "in doubt, false — inheriting the wrong context answers a question the user "
-    "did not ask.\n"
-    "resolved_question — when follow_up is true, the question rewritten to "
-    "stand alone, using the conversation summary. 'what if he had survived' "
-    "with a summary about men who beat a man to death becomes 'what offence is "
-    "committed if a group beats a man who survives with injuries'. Carry the "
-    "facts over; change only what the new question changes. Empty when "
-    "follow_up is false.\n"
-    "IMPORTANT: when follow_up is true, fill in every other field from your "
-    "resolved_question, NOT from the words the user typed. 'the section before "
-    "it', with a summary about section 302, resolves to section 301 — so "
-    "sections must be ['301'], not empty. A rewrite whose coordinates still "
-    "describe the original wording gets executed as the wrong request.\n\n"
-    "needs_clarification — true when the request cannot be executed as asked: a "
-    "subjective selection ('the most important laws' — importance depends on "
-    "purpose), or a reference to something earlier that the conversation "
-    "summary does not contain. If the summary DOES let you resolve it, set "
-    "follow_up instead and leave this false. Put the question to ask in "
-    "'clarification'. Otherwise false and ''.\n"
-    "Do NOT set it merely because a question is broad; breadth is what "
-    "'semantic' handles."
-)
+SYSTEM = """\
+You plan how a Bangladesh criminal law assistant should answer a question. You never answer it, never quote law, and never write SQL.
+
+Scope: exactly three Acts - the Code of Criminal Procedure 1898 (crpc), the Penal Code 1860 (penal), the Evidence Act 1872 (evidence).
+
+## category
+- meta: asks what this assistant is or can do. "Who are you?", "what can you do", "what are your sources", "where do your answers come from", "demonstrate your capabilities".
+- structural: names a PART of a statute to return - a section, a range, a chapter (by number OR by subject), or a whole Act. "What does section 302 say", "list Chapter XVI", "show me the sections about documentary evidence", "summarise the Evidence Act", "state the penal code laws".
+- semantic: a legal question or situation where the relevant provisions must be FOUND because the user has not named them. "What is the punishment for theft?", "Someone broke into my shop at night", "Can police arrest without a warrant?". Use for ANY scenario the three Acts could plausibly govern - crimes, police procedure, evidence, trials - even when no section is named and the facts are messy.
+- document: the user PASTED a document rather than asked a question - a case brief, law-report extract, judgment summary, or transcribed page from a book or screen. Signs: headings like "Facts:", "Argument:", "Held:", "Order:"; party names; a citation like "55 DLR (2003) 363"; or simply a long passage of legal prose with a short question tacked on. The work is reading the passage and explaining the provisions it refers to.
+- out_of_scope: a LEGAL question about law the three Acts do not contain - another statute (Dowry Prohibition Act, Digital Security Act, labour, family, tax, constitutional law), another country's law, or legal advice needing a lawyer. "What does the Dowry Prohibition Act say?", "My employer has not paid me for three months".
+- general: NOT a legal question. Two kinds:
+  - factual: "What is the capital of France?", "explain vector databases", "what is 17 times 23"
+  - conversation: openers, small talk, thanks, anything addressed to you as a person rather than as a search over statutes - "I need to talk to you about something, are you up for it?", "can I ask you something?", "thanks, that helped", "good morning", "how are you". These want a short natural reply. A message with no question in it is almost always this.
+  Contrast with meta: "what can you do" is meta; "are you up for a question?" is general.
+
+The semantic / out_of_scope / general line matters more than any other choice. Answering about a statute we do not have, from memory, is the worst thing this system can do. If it is legal but not plainly inside the three Acts, choose out_of_scope.
+
+## Fields
+operation (structural only; "" otherwise):
+- fetch: specific sections named ("section 302", "sections 378 to 382")
+- enumerate: list the sections of a chapter or Act
+- overview: describe what a whole Act covers
+
+act: "crpc", "penal", "evidence", or "" if none is named.
+
+chapter: the chapter number given ("XVI", "16"), or, if the chapter was described by subject, those subject words copied from the question ("the murder chapter" -> "murder"; "sections about documentary evidence" -> "documentary evidence"). "" if not chapter-scoped. Never invent a chapter number.
+
+sections: section numbers explicitly named, e.g. ["302","379"]; empty otherwise. NEVER guess - leave it empty and let retrieval find it. This matters MOST for document: a pasted brief names its provisions ("Section 54 of the CrPC", "Sections 54 and 167"); read the whole passage and put every one here.
+
+section_from / section_to: both set only for a range like "378 to 382".
+
+search_query (semantic only; "" otherwise): the question restated in statutory vocabulary so a search over statutory text finds it. "broke into a house" -> "house-breaking"; "lied under oath" -> "giving false evidence". Keep the substance exactly, add no element the question did not contain, never include a section number.
+
+terms (semantic only; empty otherwise): 2-6 further statutory phrases a relevant section would contain.
+
+follow_up: true ONLY when the question cannot stand alone and refers back to the conversation: "that section", "what if he had survived instead", "and for a minor?", "the next chapter". A self-contained question is NOT a follow-up, even on the same topic. When in doubt, false - inheriting the wrong context answers a question the user did not ask.
+
+resolved_question (only when follow_up is true; "" otherwise): the question rewritten to stand alone using the conversation summary. Carry the facts over; change only what the new question changes. E.g. "what if he had survived", with a summary about men who beat a man to death -> "what offence is committed if a group beats a man who survives with injuries".
+IMPORTANT: when follow_up is true, fill every other field from resolved_question, NOT from the words the user typed. "the section before it", with a summary about section 302, resolves to section 301 -> sections ["301"], not empty. Coordinates still describing the original wording get executed as the wrong request.
+
+needs_clarification: true when the request cannot be executed as asked - a subjective selection ("the most important laws": importance depends on purpose), or a reference to something earlier that the conversation summary does not contain. If the summary DOES resolve it, set follow_up instead and leave this false. Put the question to ask in clarification. Otherwise false and "". Do NOT set it merely because a question is broad; breadth is what semantic handles.
+"""
 
 SCHEMA = {
     "type": "object",
     "properties": {
         "category": {"type": "string", "enum": list(CATEGORIES)},
-        "operation": {"type": "string", "enum": [*OPERATIONS, ""]},
+        # "none" rather than "": Gemini rejects an empty string as an enum
+        # member outright ("enum[3]: cannot be empty"), while Groq and OpenAI
+        # accept it. One schema has to satisfy every provider, so the absent
+        # case is spelled.
+        "operation": {"type": "string", "enum": [*OPERATIONS, "none"]},
         "act": {"type": "string"},
         "chapter": {"type": "string"},
         "sections": {"type": "array", "items": {"type": "string"}},
@@ -407,6 +364,28 @@ def _looks_like_citation(text: str) -> bool:
     return bool(re.search(r"\b(?:s\.?|sec\.?|section)\s*\d", text, re.I))
 
 
+def _ask_planner(backend: str | None, model: str | None,
+                 payload: str) -> tuple[dict, str]:
+    """Plan on the configured model, or the fallback. Returns (raw, alias used).
+
+    A second PROVIDER rather than a second model: Groq's per-minute and daily
+    limits are per-account, so retrying there waits behind the same wall. The
+    planner runs before everything else on every question, so a stall here is a
+    stall for the whole system — and a planner *failure* is worse than slow,
+    because the question degrades to plain semantic retrieval and "who are you"
+    goes to the statute index.
+    """
+    primary = model or config.PLANNER_MODEL
+    try:
+        return get_llm(backend, primary).generate_json(SYSTEM, payload, SCHEMA), primary
+    except Exception as exc:
+        fallback = config.PLANNER_FALLBACK
+        if not fallback or fallback == primary:
+            raise
+        trace.step("planner", f"{primary} failed ({type(exc).__name__}) -> {fallback}")
+        return get_llm(None, fallback).generate_json(SYSTEM, payload, SCHEMA), fallback
+
+
 def make_plan(question: str, *, backend: str | None = None,
               model: str | None = None, memory=None) -> Plan:
     """Plan one question. Never raises.
@@ -430,17 +409,32 @@ def make_plan(question: str, *, backend: str | None = None,
         f"Question: {q}",
     ]))
 
+    trace.sent("planner", f"{q}"
+               + (f"   [+memory {len(context)} chars]" if context else ""))
+    elapsed = trace.timer()
     try:
-        raw = get_llm(backend, model or config.PLANNER_MODEL).generate_json(
-            SYSTEM, payload, SCHEMA)
+        raw, used = _ask_planner(backend, model, payload)
+        if used != (model or config.PLANNER_MODEL):
+            trace.step("planner", f"fell back to {used}")
     except Exception as exc:
+        # The message, not just the class. "RuntimeError" says nothing; the
+        # provider's own text says whether this was a quota wall, a bad model
+        # id, or a timeout — and those need different fixes.
+        trace.recv("planner", f"FAILED -> semantic fallback: {exc}", elapsed())
         return Plan(question=q, category="semantic", by="fallback",
                     error=f"{type(exc).__name__}: {exc}"[:200])
+
+    trace.recv("planner", " ".join(
+        f"{k}={v}" for k, v in raw.items()
+        if v not in ("", [], None, False)), elapsed())
 
     plan = Plan(
         question=q,
         category=_clean(raw.get("category")).lower() or "semantic",
-        operation=_clean(raw.get("operation")).lower(),
+        # "none" is the schema's way of saying "not applicable"; downstream
+        # code checks for an empty operation.
+        operation=("" if _clean(raw.get("operation")).lower() in ("none", "")
+                   else _clean(raw.get("operation")).lower()),
         act=_clean(raw.get("act")).lower() or None,
         chapter=_clean(raw.get("chapter")).upper() or None,
         sections=[_clean(s).upper() for s in (raw.get("sections") or []) if _clean(s)][:20],
@@ -495,4 +489,20 @@ def make_plan(question: str, *, backend: str | None = None,
             f"{how}: {described!r} -> "
             f"{plan.chapter or 'no match'}{' in ' + plan.act if plan.act else ''}")
 
-    return validate(plan)
+    plan = validate(plan)
+    bits = [plan.category]
+    if plan.operation:
+        bits.append(plan.operation)
+    for key in ("act", "chapter"):
+        if getattr(plan, key, None):
+            bits.append(f"{key}={getattr(plan, key)}")
+    if plan.sections:
+        bits.append(f"s={','.join(plan.sections[:4])}")
+    if plan.follow_up:
+        bits.append("follow-up")
+    if plan.needs_clarification:
+        bits.append("needs-clarification")
+    if plan.notes:
+        trace.step("validated", "; ".join(plan.notes))
+    trace.step("plan", " ".join(bits))
+    return plan

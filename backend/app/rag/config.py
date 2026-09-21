@@ -68,6 +68,9 @@ GENERATORS: dict[str, dict] = {
                   "note": "diffusion LLM, 260K ctx; 469 tok/s on the schema probe"},
     "mercury-2": {"backend": "inception",  "model": "mercury-2",
                   "enforces_schema": True,  "note": "previous generation, 128K ctx"},
+    "gemini2":   {"backend": "gemini",     "model": "gemini-3.5-flash-lite",
+                  "key_env": "GEMINI_API_KEY_2", "enforces_schema": True,
+                  "note": "second Gemini key; planner fallback, own quota"},
     "gemini":    {"backend": "gemini",     "model": "gemini-3.5-flash-lite",
                   "enforces_schema": True,
                   "note": "E1 scored 5/5, but on gemini-2.5-flash"},
@@ -126,10 +129,30 @@ DEFAULT_ROUTER = os.getenv("RAG_ROUTER_MODEL", "lfm")
 # unstable on exactly this job, labelling identical phrasings differently
 # between two prompt revisions. Groq Qwen enforces the strict schema the
 # validator depends on.
-PLANNER_MODEL = os.getenv("RAG_PLANNER_MODEL", "qwen")
+PLANNER_MODEL = os.getenv("RAG_PLANNER_MODEL", "gemini2")
+
+# Tried when the planner's own model fails or is rate-limited. A different
+# PROVIDER, not just a different model: Groq's daily cap and its per-minute
+# limits are both per-account, so a second Groq route shares the wall.
+#
+# The planner runs before anything else on every question, so its latency is the
+# floor for the whole system — and when it fails the question degrades to plain
+# semantic retrieval, which sent "who are you" to the statute index and returned
+# sections scoring -3.90.
+PLANNER_FALLBACK = os.getenv("RAG_PLANNER_FALLBACK", "qwen")
 
 # Planning replaces pattern routing. Off falls back to refine.classify_pattern.
 PLAN_QUERIES = os.getenv("RAG_PLAN", "1") == "1"
+
+
+def generator_key_env(name: str | None) -> str | None:
+    """Which API key an alias uses, when it is not the provider's default.
+
+    `gemini2` is the same model as `gemini` on a different key. Without this the
+    two would share one quota, which defeats the point of having a fallback.
+    """
+    spec = GENERATORS.get((name or "").strip())
+    return spec.get("key_env") if spec else None
 
 
 def resolve_generator(name: str | None) -> tuple[str, str]:

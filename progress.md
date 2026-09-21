@@ -301,6 +301,85 @@
   `/api/models` looked identical to a feature that did not exist. It now shows
   the error with a retry.
 
+## Accounts, storage and sessions (Supabase)
+- Signing in is **optional**, and the welcome screen makes the difference the
+  first thing a visitor decides: continue as a guest, where nothing is written
+  anywhere, or sign in, where conversations are stored on the server.
+- **Guest is genuinely ephemeral.** It previously wrote to `localStorage`; it now
+  writes nothing at all — the conversation lives in React state and dies with the
+  tab. Only a single boolean in `sessionStorage` records that the gate was
+  answered. Someone asking "my employer has not paid me" on a borrowed machine
+  can close the tab and leave nothing behind, and "not saved" quietly meaning
+  "saved locally" would have been a lie in the one place it matters.
+- Auth is Supabase; the browser holds only a session and never queries tables.
+  Every read and write goes through FastAPI, so isolation lives in one place
+  rather than being split between a server filter and a client policy that has
+  to agree with it.
+- Tokens are verified locally, by reading the token's own `alg` header —
+  `RS256`/`ES256` against the project's JWKS endpoint, `HS256` against a legacy
+  shared secret. Signature, expiry and audience are all checked.
+- **The service-role key bypasses RLS**, so `app/db/conversations.py` is the
+  actual boundary: every statement filters by `user_id`, including ones already
+  scoped by `conversation_id`, because a conversation id is a uuid and not a
+  capability. Verified with two real users — one cannot list, read or delete the
+  other's conversation while holding its exact uuid. Forged, expired,
+  wrong-audience and `alg=none` tokens are all rejected.
+- A stored session holds everything needed to reload it **as it happened**: the
+  question and the whole answer as sent, the memory snapshot each answer was
+  produced against, which model answered, what the planner decided, and the page
+  images with their transcriptions. The memory snapshot is per message rather
+  than per conversation because an answer at turn 3 was produced against turn
+  3's context, and replaying it beside turn 7's explains the wrong thing.
+- Page images are private, served through one-hour signed URLs. The
+  transcription reaching the pipeline is a vision model's *reading* of the page;
+  keeping the page beside it is the only way to check that reading later. An
+  image that uploads but fails to record is removed rather than orphaned.
+- The API works with Supabase absent or the session-fidelity migration
+  unapplied: it detects Postgres `42703` and stores the turn without the
+  per-message snapshot rather than refusing to store it.
+
+## Observability
+- Every request logs one concise line per step: what went to the planner and
+  what came back, retrieval hits with scores, the sections sent to the generator
+  and how many claims survived the gates, the memory exchange, and each Supabase
+  write. `→` is what was sent, `←` what returned.
+- It exists because a question crosses five machines and a refusal can mean
+  retrieval fetched the wrong sections, the generator declined on the right
+  ones, or the citation gates killed every claim. Those are three different bugs
+  that look identical from outside.
+- It earned itself immediately: `plan FAILED -> semantic RuntimeError 15.0s`
+  identified a planner outage that had been presenting as the assistant failing
+  to understand "who are you".
+- Never prints statutory text, prompts or full answers; `RAG_TRACE=0` silences it.
+
+## Planner on Gemini (E16)
+- `PLANNER_MODEL=gemini2` — Gemini 3.5 Flash Lite on `GEMINI_API_KEY_2`, its own
+  quota — with Groq Qwen as an automatic fallback. **1.3-1.8s against 43.3s** on
+  a rate-limited Groq.
+- The fallback is a different *provider* on purpose: Groq's per-minute and daily
+  limits are per-account, so a second Groq route waits behind the same wall.
+- Moving surfaced a cross-provider schema bug. The planner schema used an empty
+  string as an enum member for "not applicable"; Groq and OpenAI accept that,
+  **Gemini rejects it** (`enum[3]: cannot be empty`). Every Gemini call 400'd in
+  0.7s and fell through to the slow path, so the symptom was latency and the
+  cause was a validation error on a provider that never ran. The absent case is
+  now spelled `"none"`.
+- `get_llm` honours a per-alias `key_env`, which is what lets one model run on
+  two keys without sharing a budget.
+- **E13's 42/42 category and 27/27 scope were measured on Groq**, not on Gemini.
+  `plan_cases.py` has not been re-run since the switch, so the published planner
+  numbers describe a planner that is no longer the default.
+
+## Conversation, not just questions
+- `general` previously listed only factual examples ("capital of France", "17
+  times 23"), so an opener with no question in it — "I need to talk to you about
+  something, are you up for it?" — matched nothing and drifted to `semantic`,
+  where it was answered with statute sections. It now covers conversation
+  explicitly, and the general answerer is told to reply as a person would:
+  "Yes, go ahead" is a complete answer.
+- `meta` was tightened to match: "what can you do" is meta, "are you up for a
+  question?" is conversation.
+
 ## Documentation
 - Root, backend and frontend READMEs now describe the real pipeline, Groq Qwen
   default, request modes, setup, metrics and known limitations.
