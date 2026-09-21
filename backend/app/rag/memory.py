@@ -143,9 +143,17 @@ def answer_text(answer) -> str:
         sec = claim.get("section")
         text = claim.get("text", "")
         bits.append(f"[s.{sec}] {text}" if sec else text)
-    if getattr(answer, "refused", False) and getattr(answer, "reason", None):
-        bits.append(f"(declined: {answer.reason})")
     return "\n".join(b for b in bits if b)[:4000]
+
+
+def failed(answer) -> bool:
+    """Did this turn produce no answer?
+
+    A refusal, a clarification and an out-of-scope reply are all "the question
+    was not answered". Their *reasons* are worth showing the reader once, and
+    worth nothing afterwards.
+    """
+    return bool(getattr(answer, "refused", False))
 
 
 def update(memory: Memory | None, question: str, answer) -> Memory:
@@ -157,24 +165,45 @@ def update(memory: Memory | None, question: str, answer) -> Memory:
     """
     prev = memory or Memory()
 
-    # Section keys are copied here, by code, from the answer's own sources. This
-    # is the part of the memory that is not allowed to be a paraphrase.
+    # Section keys are copied here, by code, from the answer's own sources — the
+    # part of the memory that is not allowed to be a paraphrase.
+    #
+    # Not on a failed turn, though. A refusal still carries `sources`: they are
+    # the candidates that were considered and REJECTED. Folding those into a
+    # list labelled "sections cited so far" made the memory assert the opposite
+    # of what happened, and a later turn would inherit provisions the assistant
+    # had explicitly declined to rely on.
     keys = list(prev.sections)
-    for src in (getattr(answer, "sources", None) or []):
-        key = getattr(src, "key", None)
-        if key and key not in keys:
-            keys.append(key)
+    if not failed(answer):
+        for src in (getattr(answer, "sources", None) or []):
+            key = getattr(src, "key", None)
+            if key and key not in keys:
+                keys.append(key)
     keys = keys[-MAX_SECTIONS:]
 
     said = answer_text(answer)
     if not said and not question.strip():
         return Memory(summary=prev.summary, sections=keys, turns=prev.turns)
 
+    # On a failed turn the QUESTION is still recorded and the failure is not.
+    #
+    # Dropping the turn entirely would be wrong in a way that is easy to miss:
+    # the facts a follow-up needs live in the question, not the answer. "Three
+    # men beat a man and he died" was refused, and it is precisely that refused
+    # turn which makes "what if he had survived?" resolvable one turn later.
+    #
+    # What is thrown away is the assistant's narration of its own failure.
+    # Recorded, it crowds out the facts — three turns produced a summary that
+    # was mostly "the assistant declined to answer" — and it steers later turns
+    # toward declining again.
     payload = "\n\n".join(filter(None, [
         f"Previous summary:\n{prev.summary}" if prev.summary else
         "Previous summary:\n(none — this is the first turn)",
         f"New question:\n{question.strip()}",
-        f"Assistant's answer:\n{said}",
+        (f"Assistant's answer:\n{said}" if said else
+         "Assistant's answer:\n(none — the question was asked but not answered. "
+         "Record what the user asked and any facts they gave. Do NOT record that "
+         "the assistant failed, declined or could not answer.)"),
     ]))
 
     try:

@@ -87,6 +87,20 @@ def query(payload: QueryRequest) -> AssistantMessage:
                 message.resolved_question = plan.resolved_question
             message.generator = result.model or None
             message.generator_substituted = substituted
+
+            # A pasted document answered on a smaller model: say so and offer a
+            # bigger one. Suggested rather than applied, because the reader
+            # chose the model and an answer that silently came from a different
+            # one is the problem the substitution banner exists to avoid.
+            if plan is not None and getattr(plan, "category", "") == "document":
+                bigger = config.suggests_larger_model(model)
+                if bigger:
+                    message.suggested_model = bigger
+                    message.notice = (
+                        f"That looks like a pasted document ({len(q):,} characters). "
+                        f"It was answered with {message.generator or 'the default model'}, "
+                        f"which is tuned for short questions. A larger model such as "
+                        f"{bigger} handles long passages better — you can ask again with it.")
             return message
 
         from app.rag.answer import answer

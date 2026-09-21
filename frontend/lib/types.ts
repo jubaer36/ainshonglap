@@ -111,6 +111,12 @@ export interface AssistantMessage {
   generator: string | null;
   /** The alias this replaced, when the requested one was out of quota. */
   generatorSubstituted: string | null;
+  /** Set on client-side transport failures, so a retry knows what to re-ask. */
+  retryQuestion?: string | null;
+  /** A suggestion for the reader, not something already done — e.g. a pasted
+   *  document answered on a small model. */
+  notice: string | null;
+  suggestedModel: string | null;
   blocks: ContentBlock[];
   citations: Record<string, Citation>;
   references: Reference[];
@@ -216,4 +222,13 @@ export interface Transcription {
   model: string | null;
   language: string | null;
   requestId: string | null;
+}
+
+/** Text read off one page image, from POST /api/read-image. A draft of a
+ *  question, never a source — a vision model fails plausibly, so nothing it
+ *  produces is ever cited. */
+export interface ImageReading {
+  text: string;
+  model: string | null;
+  chars: number;
 }

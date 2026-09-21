@@ -2,6 +2,8 @@
 
 import { useRef, useState } from "react";
 import type { ConversationMemory } from "@/lib/types";
+import { ImageButton } from "./ImageButton";
+import { InputStatus, type InputStatusState } from "./InputStatus";
 import { MemoryPanel } from "./MemoryPanel";
 import { MicButton } from "./MicButton";
 import { ModelPicker } from "./ModelPicker";
@@ -20,10 +22,6 @@ interface InputDockProps {
   onActivateCitation?: (key: string) => void;
 }
 
-// Empty by default: the status line carries only real events — microphone
-// state, transcription results, memory errors — and renders nothing otherwise.
-const DEFAULT_STATUS = "";
-
 export function InputDock({
   value,
   onChange,
@@ -35,12 +33,24 @@ export function InputDock({
   onForgetMemory,
   onActivateCitation,
 }: InputDockProps) {
-  const [status, setStatus] = useState(DEFAULT_STATUS);
+  const [status, setStatus] = useState<InputStatusState | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const clearRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Roughly where a question stops being a question. Matches the backend's
+  // document threshold so the hint and the response agree.
+  const longDraft = value.trim().length > 700;
 
-  function flashStatus(text: string, thenSet?: string) {
-    setStatus(text);
-    setTimeout(() => setStatus(thenSet ?? DEFAULT_STATUS), 3500);
+  /**
+   * A busy state persists until it is replaced — reading a dense page can take
+   * tens of seconds, and a message that vanished mid-wait is worse than none.
+   * A finished one lingers long enough to be read, then clears itself.
+   */
+  function showStatus(next: InputStatusState | null) {
+    if (clearRef.current) clearTimeout(clearRef.current);
+    setStatus(next);
+    if (next && !next.busy) {
+      clearRef.current = setTimeout(() => setStatus(null), 6000);
+    }
   }
 
   function handleSubmit() {
@@ -73,6 +83,25 @@ export function InputDock({
               handleSubmit();
             }}
           />
+          {!status && longDraft && (
+            // Shown before sending, so the choice can be made without spending
+            // a call first. Advisory only — nothing is blocked or switched.
+            <div className="px-3 pt-1">
+              <div className="flex items-start gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[11px] text-slate-600">
+                <span className="material-symbols-outlined text-[14px] mt-px">info</span>
+                <span>
+                  That is a long passage ({value.trim().length.toLocaleString()}{" "}
+                  characters). A larger model handles pasted documents better —
+                  pick one from the model list if the answer looks thin.
+                </span>
+              </div>
+            </div>
+          )}
+          {status && (
+            <div className="px-3 pt-1">
+              <InputStatus state={status} />
+            </div>
+          )}
           <div className="flex items-center justify-between px-3 pb-2.5 pt-1">
             <div className="flex items-center gap-1 text-slate-500 min-w-0">
               <ModelPicker value={model} onChange={onModelChange} disabled={disabled} />
@@ -81,16 +110,22 @@ export function InputDock({
                 onForget={onForgetMemory}
                 onActivateCitation={onActivateCitation}
               />
-              {status && (
-                <span className="font-mono text-[11px] text-slate-400 hidden md:inline ml-1.5 truncate">
-                  {status}
-                </span>
-              )}
             </div>
             <div className="flex items-center gap-1.5 flex-shrink-0">
+              <ImageButton
+                disabled={disabled}
+                onStatus={showStatus}
+                // Read text goes in the box, never straight to the pipeline: a
+                // vision model fails plausibly ("302A" -> "302") and nothing
+                // downstream can catch a correctly-executed wrong question.
+                onText={(text) => {
+                  onChange(value ? `${value.trim()}\n\n${text}` : text);
+                  textareaRef.current?.focus();
+                }}
+              />
               <MicButton
                 disabled={disabled}
-                onStatus={(text) => flashStatus(text, DEFAULT_STATUS)}
+                onStatus={showStatus}
                 // The transcript is placed in the box, never submitted. A
                 // misheard section number would otherwise become a confidently
                 // grounded answer about a different offence, and nothing

@@ -171,6 +171,19 @@ class Transcription(BaseModel):
     request_id: str | None = None
 
 
+class ImageReading(BaseModel):
+    """Text read off one page image, from POST /api/read-image.
+
+    A draft of a question, never a source. The reader confirms it before it is
+    asked, and nothing in it is ever cited — a vision model fails plausibly, and
+    statutory text that has been quietly tidied still reads like statute.
+    """
+
+    text: str
+    model: str | None = None
+    chars: int = 0
+
+
 class AssistantMessage(BaseModel):
     id: str
     role: Literal["assistant"] = "assistant"
@@ -198,3 +211,8 @@ class AssistantMessage(BaseModel):
     # rewrite that was actually executed. Shown to the reader, because a wrong
     # rewrite is otherwise a confident answer to a question nobody asked.
     resolved_question: str | None = None
+    # A suggestion the reader can act on, not something already done to them.
+    # Set when a pasted document was answered on a smaller model: the answer is
+    # produced either way, and this offers a larger one for a better reading.
+    notice: str | None = None
+    suggested_model: str | None = None

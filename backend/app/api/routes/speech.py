@@ -1,4 +1,4 @@
-"""Voice input: audio in, a transcript out — deliberately not an answer."""
+"""Voice and image input: media in, text out — deliberately never an answer."""
 
 from __future__ import annotations
 
@@ -7,8 +7,9 @@ import logging
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from fastapi.concurrency import run_in_threadpool
 
-from app.models.schemas import Transcription
+from app.models.schemas import ImageReading, Transcription
 from app.rag.speech import SpeechUnavailable, transcribe
+from app.rag.vision import UnsupportedImage, VisionUnavailable, read_image
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["assistant"])
@@ -59,3 +60,40 @@ async def transcribe_audio(
         raise HTTPException(502, f"transcription failed: {type(exc).__name__}") from exc
 
     return Transcription(**result)
+
+
+@router.post("/read-image", response_model=ImageReading)
+async def read_image_endpoint(
+    image: UploadFile = File(..., description="ONE page as PNG, JPEG or WebP"),
+) -> ImageReading:
+    """Read the text off **one page image**. This does not answer anything.
+
+    Accepts a single PNG, JPEG or WebP, up to 5 MB. **PDFs and documents are
+    refused**, not converted: a PDF carries a text layer that
+    `scripts/parse_law_pdf.py` reads with page numbers, fonts and column
+    positions, and routing it through a vision model would swap verified
+    extraction for a generative guess. The honest use of this endpoint is the
+    case with no text layer at all — a photo of a page, or a scan.
+
+    The transcription comes back for the reader to check and send. A vision
+    model is not OCR: it fails plausibly rather than visibly, quietly turning
+    `302A` into `302`, and nothing downstream could detect that. Nothing it
+    produces is ever cited — an answer about this text is still retrieved from
+    the indexed Acts and verified against them.
+    """
+    raw = await image.read()
+    try:
+        result = await run_in_threadpool(
+            read_image, raw, image.content_type, image.filename)
+    except UnsupportedImage as exc:
+        # 415, not 400: the request was well-formed, the media type is the
+        # problem, and the message says exactly what to send instead.
+        raise HTTPException(415, str(exc)) from exc
+    except VisionUnavailable as exc:
+        log.warning("image reading unavailable: %s", exc)
+        raise HTTPException(503, f"image reading unavailable: {exc}") from exc
+    except Exception as exc:                        # pragma: no cover - defensive
+        log.exception("image reading failed")
+        raise HTTPException(502, f"image reading failed: {type(exc).__name__}") from exc
+
+    return ImageReading(**result)

@@ -2,12 +2,13 @@
 
 import { useEffect, useRef, useState } from "react";
 import { ApiError, transcribeAudio } from "@/lib/api";
+import type { InputStatusState } from "./InputStatus";
 
 interface MicButtonProps {
   /** Receives the transcript. It is placed in the input for the reader to
    *  confirm — never submitted automatically. See the note below. */
   onTranscript: (text: string, confidence: number | null) => void;
-  onStatus?: (text: string) => void;
+  onStatus?: (state: InputStatusState | null) => void;
   disabled?: boolean;
 }
 
@@ -59,7 +60,7 @@ export function MicButton({ onTranscript, onStatus, disabled }: MicButtonProps) 
   async function start() {
     cancelledRef.current = false;
     setState("starting");
-    onStatus?.("Waiting for microphone…");
+    onStatus?.({ text: "Waiting for microphone permission…", busy: true });
     let stream: MediaStream;
     try {
       if (!navigator.mediaDevices?.getUserMedia) {
@@ -70,11 +71,13 @@ export function MicButton({ onTranscript, onStatus, disabled }: MicButtonProps) 
       // Denied, no hardware, and insecure-context all look the same to the
       // user: nothing happened. Name it instead, and log the real cause.
       console.error("microphone unavailable", error);
-      onStatus?.(
-        error instanceof DOMException && error.name === "NotAllowedError"
-          ? "Microphone permission denied"
-          : "Microphone unavailable",
-      );
+      onStatus?.({
+        tone: "error",
+        text:
+          error instanceof DOMException && error.name === "NotAllowedError"
+            ? "Microphone permission denied"
+            : "Microphone unavailable",
+      });
       setState("idle");
       return;
     }
@@ -83,7 +86,7 @@ export function MicButton({ onTranscript, onStatus, disabled }: MicButtonProps) 
     if (cancelledRef.current) {
       stream.getTracks().forEach((track) => track.stop());
       setState("idle");
-      onStatus?.("Cancelled");
+      onStatus?.(null);
       return;
     }
 
@@ -95,7 +98,7 @@ export function MicButton({ onTranscript, onStatus, disabled }: MicButtonProps) 
       };
       recorder.onerror = (event) => {
         console.error("MediaRecorder error", event);
-        onStatus?.("Recording failed");
+        onStatus?.({ text: "Recording failed", tone: "error" });
         stream.getTracks().forEach((track) => track.stop());
         clearTimer();
         setState("idle");
@@ -111,7 +114,11 @@ export function MicButton({ onTranscript, onStatus, disabled }: MicButtonProps) 
       recorderRef.current = recorder;
       setSeconds(0);
       setState("recording");
-      onStatus?.("Listening — click again to stop");
+      onStatus?.({
+        text: "Recording — click the button again to stop",
+        busy: true,
+        tone: "recording",
+      });
       timerRef.current = setInterval(() => {
         setSeconds((s) => {
           if (s + 1 >= MAX_SECONDS) stop();
@@ -121,7 +128,7 @@ export function MicButton({ onTranscript, onStatus, disabled }: MicButtonProps) 
     } catch (error) {
       console.error("MediaRecorder unavailable", error);
       stream.getTracks().forEach((track) => track.stop());
-      onStatus?.("Recording not supported in this browser");
+      onStatus?.({ text: "Recording is not supported in this browser", tone: "error" });
       setState("idle");
     }
   }
@@ -134,36 +141,45 @@ export function MicButton({ onTranscript, onStatus, disabled }: MicButtonProps) 
     if (state !== "recording") return;
     clearTimer();
     setState("transcribing");
-    onStatus?.("Transcribing…");
     recorderRef.current?.stop();
   }
 
   async function send(blob: Blob) {
     try {
       if (blob.size < 1000) {
-        onStatus?.("Recording too short");
+        onStatus?.({ text: "That recording was too short", tone: "error" });
         return;
       }
-      const result = await transcribeAudio(blob);
+      const size = `${Math.max(1, Math.round(blob.size / 1024))} KB`;
+      const result = await transcribeAudio(blob, undefined, (phase, percent) =>
+        onStatus?.(
+          phase === "uploading"
+            ? { text: `Sending the recording (${size})…`, busy: true, percent }
+            : { text: "Transcribing — the speech model is listening to it…", busy: true },
+        ),
+      );
       if (!result.transcript) {
-        onStatus?.("Nothing heard — try again");
+        onStatus?.({ text: "Nothing heard — try again", tone: "error" });
         return;
       }
       onTranscript(result.transcript, result.confidence);
-      onStatus?.(
-        result.confidence !== null
-          ? `Heard (${Math.round(result.confidence * 100)}%) — check it, then send`
-          : "Check the text, then send",
-      );
+      onStatus?.({
+        text:
+          result.confidence !== null
+            ? `Heard it, ${Math.round(result.confidence * 100)}% confident — check the text, then ask`
+            : "Check the text, then ask",
+      });
     } catch (error) {
       console.error("transcription failed", error);
-      onStatus?.(
-        error instanceof ApiError
-          ? error.status === 503
-            ? "Voice input not configured on the server"
-            : `Transcription failed (${error.status})`
-          : "Could not reach the backend",
-      );
+      onStatus?.({
+        tone: "error",
+        text:
+          error instanceof ApiError
+            ? error.status === 503
+              ? "Voice input is not configured on the server"
+              : `Transcription failed (${error.status})`
+            : "Could not reach the backend",
+      });
     } finally {
       setState("idle");
       setSeconds(0);

@@ -32,7 +32,7 @@ function newId(): string {
  * A refusal is NOT one of these — the backend returns that as a normal 200 with
  * `unsupported: true`, and it is an answer, not an error.
  */
-function errorAssistantMessage(error: unknown): AssistantMessage {
+function errorAssistantMessage(error: unknown, question?: string): AssistantMessage {
   let subheading = "Connection issue";
   let text =
     "Couldn't reach the backend API. Confirm it's running (see backend/README.md) and try again.";
@@ -69,6 +69,9 @@ function errorAssistantMessage(error: unknown): AssistantMessage {
     resolvedQuestion: null,
     generator: null,
     generatorSubstituted: null,
+    retryQuestion: question ?? null,
+    notice: null,
+    suggestedModel: null,
     blocks: [{ type: "paragraph", segments: [{ type: "text", text }] }],
     citations: {},
     references: [],
@@ -147,19 +150,34 @@ export function ChatShell() {
     }
   }, []);
 
-  async function submitQuestion(question: string) {
+  /**
+   * Ask a question. `retryOf` re-runs one that failed.
+   *
+   * A retry drops the failed answer and re-sends the same question against the
+   * memory as it was BEFORE that attempt. Both halves matter: appending a second
+   * copy of the question would make the transcript lie about what was asked, and
+   * carrying memory forward from a failed attempt would feed the next one
+   * whatever the failure left behind.
+   */
+  async function submitQuestion(question: string, retryOf?: string, withModel?: string) {
     const trimmed = question.trim();
     if (!trimmed || loading) return;
 
-    const userMessage: ChatMessage = { id: newId(), role: "user", text: trimmed };
-    const historyForRequest = [...messages, userMessage];
+    let historyForRequest: ChatMessage[];
+    if (retryOf) {
+      // Cut the failed answer and everything after it, keeping the question.
+      const index = messages.findIndex((m) => m.id === retryOf);
+      historyForRequest = index === -1 ? messages : messages.slice(0, index);
+    } else {
+      historyForRequest = [...messages, { id: newId(), role: "user", text: trimmed }];
+      setInputValue("");
+    }
     setMessages(historyForRequest);
-    setInputValue("");
     setLoading(true);
 
     try {
       const assistantMessage = await sendQuery(trimmed, historyForRequest, {
-        model: model ?? undefined,
+        model: withModel ?? model ?? undefined,
         memory,
       });
       const nextMessages = [...historyForRequest, assistantMessage];
@@ -174,13 +192,34 @@ export function ChatShell() {
       setConversations(saveConversation(conversationId, nextMessages, nextMemory));
       setCitationLibrary((current) => ({ ...current, ...assistantMessage.citations }));
     } catch (error) {
-      setMessages((current) => [...current, errorAssistantMessage(error)]);
+      // A transport failure never reaches the summariser, so memory is
+      // untouched here by construction — the next attempt starts from the same
+      // context this one did.
+      setMessages((current) => [...current, errorAssistantMessage(error, trimmed)]);
     } finally {
       setLoading(false);
     }
   }
 
+  function handleRetry(messageId: string, withModel?: string) {
+    const index = messages.findIndex((m) => m.id === messageId);
+    if (index <= 0) return;
+    const asked = messages[index - 1];
+    if (asked.role !== "user") return;
+    // Switching the picker too, so the choice sticks for the rest of the
+    // conversation rather than applying to one answer and silently reverting.
+    if (withModel) setModel(withModel);
+    void submitQuestion(asked.text, messageId, withModel);
+  }
+
   function handleNewChat() {
+    // Save before clearing. Conversations are normally persisted as each answer
+    // arrives, but a turn that ended in a transport error never reached that
+    // path — without this, starting a new conversation would drop the question
+    // that failed, which is exactly the one worth keeping.
+    if (messages.length > 0) {
+      setConversations(saveConversation(conversationId, messages, memory));
+    }
     setConversationId(newConversationId());
     setMessages([]);
     setMemory(null);
@@ -238,6 +277,7 @@ export function ChatShell() {
       <Header
         activeTopic={firstUserMessage?.text ?? null}
         drawerOpen={drawerOpen}
+        sidebarOpen={sidebarOpen}
         onToggleSidebar={() => setSidebarOpen((open) => !open)}
         onToggleDrawer={() => setDrawerOpen((open) => !open)}
       />
@@ -280,6 +320,8 @@ export function ChatShell() {
                     message={message}
                     onActivateCitation={handleActivateCitation}
                     onFollowup={submitQuestion}
+                    onRetry={(withModel?: string) => handleRetry(message.id, withModel)}
+                    canRetry={!loading}
                   />
                 ),
               )}

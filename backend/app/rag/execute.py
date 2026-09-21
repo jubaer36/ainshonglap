@@ -28,6 +28,8 @@ so no model can alter it.
 
 from __future__ import annotations
 
+import re
+
 from app.rag import catalog, config
 from app.rag.answer import (
     SCHEMA, SYSTEM, Answer, build_context, general_answer, outline_answer,
@@ -335,9 +337,187 @@ def execute(plan: Plan, *, backend: str | None = None, model: str | None = None,
         a = general_answer(plan.asked, None, backend=backend, model=model)
         a.plan = plan
         return a
+    if plan.category == "document":
+        return document_answer(plan, backend=backend, model=model)
     if plan.category == "structural":
         return structural_answer(plan, backend=backend, model=model)
     return semantic_answer(plan, backend=backend, model=model, **kw)
+
+
+# Phrases that mark a pasted document rather than a typed question. Drawn from
+# how law reports and briefs are actually laid out — a reader pasting one of
+# these is asking "read this", not "answer this in a sentence".
+DOCUMENT_MARKERS = (
+    "case brief", "facts:", "argument:", "arguments:", "order:", "held:",
+    "judgment:", "judgement:", "ratio:", "issue:", "issues:", "petitioner",
+    "respondent", "writ petition", "appellant", "decided on",
+)
+# "55 DLR (2003) 363", "2003 BLD 45" — a law-report citation, which no ordinary
+# question contains.
+REPORT_CITATION = re.compile(
+    r"\b\d{1,3}\s*(?:DLR|BLD|BLC|MLR|SCOB|CLC|PLD)\b|\bvs?\.\s+[A-Z]", re.I)
+
+
+def document_like(text: str) -> bool:
+    """Is this a pasted document rather than a question?
+
+    Two independent signals, because either alone is wrong. Length alone would
+    catch a long, careful question; markers alone would miss a transcribed page
+    that happens to contain none of them. A document is long **and** shaped like
+    one — or carries a law-report citation, which nothing else does.
+    """
+    body = (text or "").strip()
+    if len(body) < config.LONG_INPUT_CHARS:
+        return False
+    lowered = body.lower()
+    if any(marker in lowered for marker in DOCUMENT_MARKERS):
+        return True
+    if REPORT_CITATION.search(body):
+        return True
+    # A transcribed page with no legal furniture at all: still a document if it
+    # is long and reads as prose rather than as one question.
+    return len(body) > config.LONG_INPUT_CHARS * 2 and body.count(".") >= 6
+
+
+DOCUMENT_SYSTEM = (
+    "You are a legal information assistant for Bangladesh criminal law. The user "
+    "has pasted a DOCUMENT — a case brief, a law-report extract, a transcribed "
+    "page — and you are given the statutory sections it refers to, taken from "
+    "the Code of Criminal Procedure 1898, the Penal Code 1860 and the Evidence "
+    "Act 1872.\n\n"
+    "Explain what the provisions the document relies on actually SAY, using only "
+    "the sections provided.\n\n"
+    "Rules:\n"
+    "1. Answer ONLY from the provided sections. The document is context, NOT a "
+    "source — it may summarise, paraphrase or misstate the law, and anything in "
+    "it that is not in the sections below is unverified.\n"
+    "2. Judgments, case law, guidelines laid down by a court, and the "
+    "Constitution are NOT in this corpus. Do not restate them, even if the "
+    "document quotes them, and say plainly that they are outside what you hold.\n"
+    "3. Every claim must carry the section number it came from and a VERBATIM "
+    "quote copied exactly from that section's text. Quotes are checked "
+    "automatically.\n"
+    "4. If the provided sections do not cover what is being asked, set "
+    "sufficient=false.\n"
+    "5. Do not add a disclaimer; one is attached automatically."
+)
+
+# Every section number a passage cites: "Section 54", "sections 54 and 167",
+# "s.302", "CrPC 154". Deliberately deterministic — the planner is asked for
+# these too, but a 1,000-character case brief buries the instruction, and it
+# returned an empty list for a text that names s.54 and s.167 four times.
+CITED_RE = re.compile(
+    r"\b(?:sections?|secs?\.?|ss?\.)\s*"
+    r"(\d{1,3}[A-Z]{0,2}(?:\s*(?:,|and|&|to|-)\s*\d{1,3}[A-Z]{0,2})*)",
+    re.I)
+NUM_RE = re.compile(r"\d{1,3}[A-Z]{0,2}", re.I)
+ACT_HINTS = ((("criminal procedure", "crpc", "cr.p.c", "cr. p. c"), "crpc"),
+             (("penal code",), "penal"),
+             (("evidence act",), "evidence"))
+
+
+def cited_sections(text: str, default_act: str | None = None) -> list[dict]:
+    """Sections a passage names, as catalog rows. Never invents one.
+
+    Each number is resolved against the catalog and dropped if it does not
+    exist, so a misread "s.999" contributes nothing rather than a near miss.
+    Where the passage names an Act near the citation, that Act is used; where it
+    does not, the plan's Act is, and failing that every Act is tried and only an
+    unambiguous match is kept.
+    """
+    body = text or ""
+    lowered = body.lower()
+    rows: list[dict] = []
+    seen: set[str] = set()
+
+    for match in CITED_RE.finditer(body):
+        # Which Act this citation belongs to, read from the words around it.
+        window = lowered[max(0, match.start() - 90): match.end() + 90]
+        act = default_act
+        for needles, slug in ACT_HINTS:
+            if any(n in window for n in needles):
+                act = slug
+                break
+        for number in NUM_RE.findall(match.group(1)):
+            number = number.upper()
+            candidates = ([catalog.section(act, number)] if act
+                          else catalog.find_number(number))
+            found = [c for c in candidates if c]
+            # Ambiguous without an Act named: all three have a section 54, and
+            # guessing which was meant is how a citation ends up pointing at the
+            # wrong statute.
+            if len(found) != 1:
+                continue
+            rec = found[0]
+            if rec["key"] not in seen:
+                seen.add(rec["key"])
+                rows.append(rec)
+    return rows
+
+
+def document_answer(plan: Plan, *, backend: str | None = None,
+                    model: str | None = None, k: int | None = None) -> Answer:
+    """A pasted document: read it, and explain the provisions it cites.
+
+    Two sources of context, and the first is the point of this path:
+
+      cited     the sections the passage NAMES, fetched from the catalog by
+                number. Guaranteed present, not merely likely — this is the
+                failure that made the category necessary. A case brief about
+                CrPC ss.54 and 167 retrieved s.58, s.66 and s.93C instead,
+                because 1,000 characters of narrative ("BLAST, writ petition,
+                custodial death") swamped the 60 characters of statutory
+                language in the embedding, and the answer was refused with both
+                provisions sitting in the corpus, named in the question.
+      retrieved whatever the passage is *about* beyond what it cites.
+
+    Cited sections come first and are never displaced by ranked ones.
+    """
+    cited = cited_sections(plan.question, plan.act)
+    hits = [_as_retrieved(rec, i) for i, rec in enumerate(cited, 1)]
+
+    room = MAX_CONTEXT_SECTIONS - len(hits)
+    if room > 0:
+        have = {h.key for h in hits}
+        for hit in retrieve(plan.query, k=k or config.FINAL_K):
+            if hit.key not in have:
+                hits.append(hit)
+                if len(hits) >= MAX_CONTEXT_SECTIONS:
+                    break
+
+    if not hits:
+        return Answer(plan.question, refused=True, plan=plan,
+                      reason="nothing in the indexed Acts matched this document")
+
+    # Whatever model the caller chose, or the server default. A document is not
+    # silently rerouted to a bigger one; the response suggests it instead.
+    llm = get_llm(backend, model)
+    raw = llm.generate_json(
+        DOCUMENT_SYSTEM,
+        f"Sections:\n\n{build_context(hits)}\n\n---\n\n"
+        f"Document:\n{plan.asked}", SCHEMA)
+
+    if not raw.get("sufficient"):
+        return Answer(plan.question, refused=True, plan=plan, sources=hits,
+                      reason="the indexed Acts do not cover what this document asks",
+                      model=llm.name)
+
+    checked = check_claims(raw.get("claims") or [], hits)
+    kept = [{"text": c.text, "section": c.resolved_section, "quote": c.quote}
+            for c in checked.claims if c.ok]
+    dropped = [f"s.{c.section}: {c.failure}" for c in checked.failures]
+    if not kept:
+        return Answer(plan.question, refused=True, plan=plan, dropped=dropped,
+                      reason="no claim survived citation verification",
+                      sources=hits, verification=checked, model=llm.name)
+
+    cited_keys = {c["section"] for c in kept}
+    return Answer(
+        plan.question, refused=False, reason=None, plan=plan,
+        summary=raw.get("summary") or "", claims=kept, dropped=dropped,
+        sources=[h for h in hits if str(h.section) in cited_keys],
+        verification=checked, model=llm.name,
+    )
 
 
 def answer_question(question: str, *, backend: str | None = None,

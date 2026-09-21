@@ -82,6 +82,38 @@ DEFAULT_GENERATOR = os.getenv("RAG_GENERATOR", "qwen")
 # own budget.
 FALLBACK_GENERATOR = os.getenv("RAG_FALLBACK_GENERATOR", "mercury")
 
+# A pasted document — a case brief, a transcribed page — is a different job from
+# a typed question: a wall of narrative prose wrapped around a few statutory
+# references, where the work is reading carefully rather than answering briefly.
+# gpt-oss-20b is used for those. It also has its own daily budget on Groq, so a
+# long input does not eat the default generator's.
+#
+# Only applies when the caller did not choose a model: an explicit pick from the
+# model picker is always honoured.
+LONG_INPUT_GENERATOR = os.getenv("RAG_LONG_INPUT_GENERATOR", "oss")
+
+# Generators with the context and capacity for a pasted document. Nothing is
+# switched to them automatically: the reader picked a model, and swapping it
+# behind their back is the silent-substitution problem again. When a document
+# arrives on a smaller model the answer is still produced, and the response
+# carries a suggestion they can act on in one click.
+LARGE_CONTEXT_MODELS = tuple(
+    m.strip() for m in
+    os.getenv("RAG_LARGE_CONTEXT_MODELS", "oss120,mercury,super,gemini").split(",")
+    if m.strip())
+
+# Offered first in that suggestion.
+SUGGESTED_DOCUMENT_MODEL = os.getenv("RAG_DOCUMENT_GENERATOR", "oss120")
+
+
+def suggests_larger_model(alias: str | None) -> str | None:
+    """The model to suggest for a document, or None when the current one will do."""
+    current = (alias or DEFAULT_GENERATOR).strip()
+    if current in LARGE_CONTEXT_MODELS:
+        return None
+    return SUGGESTED_DOCUMENT_MODEL
+LONG_INPUT_CHARS = int(os.getenv("RAG_LONG_INPUT_CHARS", "700"))
+
 # The router runs on every question and only classifies and rewrites, so it
 # wants a small fast model, not the one that writes the answer. lfm measured
 # fastest of the free routes that enforce JSON schema, on the actual router

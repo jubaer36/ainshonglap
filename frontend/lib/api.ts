@@ -6,6 +6,7 @@ import type {
   ConversationMemory,
   GeneratorInfo,
   IconColorToken,
+  ImageReading,
   QueryPlan,
   QuickAction,
   Reference,
@@ -26,6 +27,8 @@ const QUERY_TIMEOUT_MS = 180_000;
 const BROWSE_TIMEOUT_MS = 15_000;
 // Transcription is roughly realtime; a 60s clip should never take this long.
 const TRANSCRIBE_TIMEOUT_MS = 60_000;
+// Vision models are slower than speech, and a dense page is a long output.
+const IMAGE_TIMEOUT_MS = 180_000;
 
 /** Distinguishes "the API said no" from "the API wasn't there", which need
  * different messages to the reader. */
@@ -206,41 +209,114 @@ export async function fetchPlan(question: string, model?: string): Promise<Query
 export async function transcribeAudio(
   blob: Blob,
   language?: string,
+  onPhase?: (phase: "uploading" | "processing", percent?: number) => void,
 ): Promise<Transcription> {
   const form = new FormData();
   // A filename is required for FastAPI to treat this as an UploadFile; the
   // extension is what carries the container type through.
   form.append("audio", blob, "recording.webm");
   const query = language ? `?language=${encodeURIComponent(language)}` : "";
+  const raw = await postFormWithPhases<Record<string, unknown>>(
+    `/api/transcribe${query}`,
+    form,
+    TRANSCRIBE_TIMEOUT_MS,
+    onPhase,
+  );
+  return {
+    transcript: (raw.transcript as string) ?? "",
+    confidence: (raw.confidence as number) ?? null,
+    duration: (raw.duration as number) ?? null,
+    model: (raw.model as string) ?? null,
+    language: (raw.language as string) ?? null,
+    requestId: (raw.request_id as string) ?? null,
+  };
+}
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TRANSCRIBE_TIMEOUT_MS);
-  try {
-    const response = await fetch(`${API_BASE_URL}/api/transcribe${query}`, {
-      method: "POST",
-      body: form,
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      throw new ApiError(
-        response.status,
-        response.status === 503
-          ? "Voice input is not configured on the server."
-          : `Transcription failed with status ${response.status}`,
-      );
-    }
-    const raw = (await response.json()) as Record<string, unknown>;
-    return {
-      transcript: (raw.transcript as string) ?? "",
-      confidence: (raw.confidence as number) ?? null,
-      duration: (raw.duration as number) ?? null,
-      model: (raw.model as string) ?? null,
-      language: (raw.language as string) ?? null,
-      requestId: (raw.request_id as string) ?? null,
+/**
+ * Upload a file and report the two phases honestly.
+ *
+ * `fetch` cannot report upload progress, so "sending" and "the model is
+ * working" are indistinguishable through it — the UI would have to guess when
+ * one became the other. XHR exposes `upload.onprogress`, so the switch happens
+ * when the bytes have actually left: everything after that really is the server
+ * and the model, which is what the waiting message claims.
+ */
+function postFormWithPhases<T>(
+  path: string,
+  form: FormData,
+  timeoutMs: number,
+  onPhase?: (phase: "uploading" | "processing", percent?: number) => void,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${API_BASE_URL}${path}`);
+    xhr.timeout = timeoutMs;
+    xhr.responseType = "text";
+
+    onPhase?.("uploading", 0);
+    xhr.upload.onprogress = (event) => {
+      if (!event.lengthComputable) return;
+      const percent = Math.round((event.loaded / event.total) * 100);
+      onPhase?.(percent >= 100 ? "processing" : "uploading", percent);
     };
-  } finally {
-    clearTimeout(timer);
-  }
+    // Some browsers fire `load` on the upload without a final progress event.
+    xhr.upload.onload = () => onPhase?.("processing", 100);
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          resolve(JSON.parse(xhr.responseText) as T);
+        } catch {
+          reject(new ApiError(xhr.status, "The server sent a malformed response."));
+        }
+        return;
+      }
+      // The server's own message is more specific than anything invented here
+      // — a 415 explains exactly what to send instead.
+      let detail = `${path} failed with status ${xhr.status}`;
+      try {
+        const body = JSON.parse(xhr.responseText) as { detail?: string };
+        if (body.detail) detail = body.detail;
+      } catch {
+        /* keep the generic message */
+      }
+      reject(new ApiError(xhr.status, detail));
+    };
+    xhr.onerror = () => reject(new ApiError(0, "Could not reach the backend."));
+    xhr.ontimeout = () => reject(new ApiError(0, "The request timed out."));
+    xhr.send(form);
+  });
+}
+
+/** One page as PNG, JPEG or WebP. PDFs and documents are refused by the server
+ *  — a PDF has a text layer that the ingestion parser reads far more reliably
+ *  than a vision model can. */
+export const IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp"];
+export const IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+
+/**
+ * Read the text off a single page image. Does NOT ask the question — the
+ * transcription goes back for the reader to check, exactly as with voice,
+ * because a plausibly-wrong reading ("302A" -> "302") would otherwise become a
+ * fully grounded answer about a different provision.
+ */
+export async function readImage(
+  file: File,
+  onPhase?: (phase: "uploading" | "processing", percent?: number) => void,
+): Promise<ImageReading> {
+  const form = new FormData();
+  form.append("image", file, file.name);
+  const raw = await postFormWithPhases<Record<string, unknown>>(
+    "/api/read-image",
+    form,
+    IMAGE_TIMEOUT_MS,
+    onPhase,
+  );
+  return {
+    text: (raw.text as string) ?? "",
+    model: (raw.model as string) ?? null,
+    chars: (raw.chars as number) ?? 0,
+  };
 }
 
 function normalizeSectionSummary(raw: Record<string, unknown>): SectionSummary {
@@ -272,6 +348,9 @@ function normalizeAssistantMessage(raw: Record<string, unknown>): AssistantMessa
     resolvedQuestion: (raw.resolved_question as string) ?? null,
     generator: (raw.generator as string) ?? null,
     generatorSubstituted: (raw.generator_substituted as string) ?? null,
+    retryQuestion: null,
+    notice: (raw.notice as string) ?? null,
+    suggestedModel: (raw.suggested_model as string) ?? null,
     blocks: raw.blocks as AssistantMessage["blocks"],
     citations: raw.citations as AssistantMessage["citations"],
     references: ((raw.references as Record<string, unknown>[]) ?? []).map(normalizeReference),

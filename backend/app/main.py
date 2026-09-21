@@ -3,6 +3,7 @@
   POST /api/query          question -> cited answer, or a refusal
   GET  /api/plan           what the planner decided, without answering
   POST /api/transcribe     voice input -> transcript (never an answer)
+  POST /api/read-image     one page image -> text (never an answer)
   GET  /api/retrieve       raw retrieval, no generation (inspection/debugging)
   GET  /api/models         selectable generators
   GET  /api/acts           indexed acts
@@ -140,6 +141,15 @@ def _speech_state() -> dict:
             "language": speech.LANGUAGE}
 
 
+def _vision_state() -> dict:
+    """Whether image input is configured, and what it will accept."""
+    from app.rag import vision
+
+    return {"available": vision.available(), "model": vision.MODEL,
+            "accepts": sorted(vision.ALLOWED_TYPES),
+            "max_mb": vision.MAX_BYTES // (1024 * 1024), "pages": 1}
+
+
 @app.get("/health", tags=["ops"])
 async def health() -> dict:
     from app.rag import config
@@ -154,6 +164,7 @@ async def health() -> dict:
         "planner": {"model": config.PLANNER_MODEL,
                     "enabled": config.PLAN_QUERIES},
         "speech": _speech_state(),
+        "vision": _vision_state(),
         "quota_blocked": _quota_state(),
         "generator": dict(zip(("backend", "model"),
                               config.resolve_generator(None))) |

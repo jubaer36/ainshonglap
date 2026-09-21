@@ -3,11 +3,18 @@
 interface HeaderProps {
   activeTopic: string | null;
   drawerOpen: boolean;
+  sidebarOpen: boolean;
   onToggleSidebar: () => void;
   onToggleDrawer: () => void;
 }
 
-export function Header({ activeTopic, drawerOpen, onToggleSidebar, onToggleDrawer }: HeaderProps) {
+export function Header({
+  activeTopic,
+  drawerOpen,
+  sidebarOpen,
+  onToggleSidebar,
+  onToggleDrawer,
+}: HeaderProps) {
   function handleShare() {
     const shareData = {
       title: "AinShonglap Bangladesh Legal Brief",
@@ -26,11 +33,16 @@ export function Header({ activeTopic, drawerOpen, onToggleSidebar, onToggleDrawe
       <div className="flex items-center gap-3 min-w-0">
         <button
           type="button"
-          className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500 hover:text-slate-800 lg:hidden"
+          // `lg:hidden` used to sit here, so the sidebar could only be
+          // collapsed on small screens — on a desktop it was permanent.
+          className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500 hover:text-slate-800"
           onClick={onToggleSidebar}
-          title="Toggle Sidebar"
+          title={sidebarOpen ? "Hide conversations" : "Show conversations"}
+          aria-expanded={sidebarOpen}
         >
-          <span className="material-symbols-outlined text-[20px]">menu</span>
+          <span className="material-symbols-outlined text-[20px]">
+            {sidebarOpen ? "left_panel_close" : "left_panel_open"}
+          </span>
         </button>
         <div className="flex items-center gap-2.5">
           <div className="w-8 h-8 rounded-lg bg-slate-900 text-white flex items-center justify-center font-serif font-bold text-base shadow-sm">

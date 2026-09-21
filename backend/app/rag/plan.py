@@ -50,7 +50,8 @@ from dataclasses import dataclass, field
 from app.rag import catalog
 from app.rag.llm import get_llm
 
-CATEGORIES = ("meta", "structural", "semantic", "out_of_scope", "general")
+CATEGORIES = ("meta", "structural", "semantic", "document", "out_of_scope",
+              "general")
 
 # What a structural request wants done with the coordinates it named.
 OPERATIONS = ("fetch", "enumerate", "overview")
@@ -75,6 +76,13 @@ SYSTEM = (
     "arrest without a warrant?'. Use this for ANY legal scenario the three Acts "
     "above could plausibly govern — crimes, police procedure, evidence, "
     "trials — even when the user names no section and the facts are messy.\n"
+    "  'document'   the user has PASTED A DOCUMENT rather than asked a question: "
+    "a case brief, a law-report extract, a judgment summary, a transcribed page "
+    "from a book or screen. Recognise it by shape — headings like 'Facts:', "
+    "'Argument:', 'Held:', 'Order:', party names, a law-report citation such as "
+    "'55 DLR (2003) 363' — or simply by being a long passage of legal prose with "
+    "a short question tacked on. The work is reading the passage and explaining "
+    "the provisions it refers to.\n"
     "  'out_of_scope' a LEGAL question, but about law those three Acts do not "
     "contain: another statute (the Dowry Prohibition Act, the Digital Security "
     "Act, labour law, family law, tax, constitutional law), another country's "
@@ -100,7 +108,10 @@ SYSTEM = (
     "when the request is not chapter-scoped. Never invent a chapter number.\n"
     "sections — section numbers explicitly named, e.g. ['302','379']. Empty "
     "otherwise. NEVER guess a number: if the user did not say it, leave this "
-    "empty and let retrieval find it.\n"
+    "empty and let retrieval find it. This matters MOST for 'document': a "
+    "pasted case brief names the provisions it is about ('Section 54 of the "
+    "CrPC', 'Sections 54 and 167'), and every one of those numbers belongs "
+    "here. Read the whole passage for them.\n"
     "section_from / section_to — both set only for a range like '378 to 382'.\n\n"
     "search_query — for 'semantic' only: the question restated in statutory "
     "vocabulary so a search over statutory text finds it. 'broke into a house' "
