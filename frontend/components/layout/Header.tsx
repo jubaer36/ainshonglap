@@ -41,13 +41,10 @@ export function Header({ activeTopic, drawerOpen, onToggleSidebar, onToggleDrawe
               <h1 className="font-serif font-semibold text-slate-900 text-sm tracking-tight">
                 AinShonglap
               </h1>
-              <span className="text-[11px] font-mono font-medium px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200/80">
-                Bangladesh Law AI
+              <span className="text-[11px] font-mono text-slate-400">
+                Bangladesh criminal law
               </span>
             </div>
-            <p className="text-[11px] text-slate-400 font-sans hidden sm:block">
-              Plain-Language Statutory Intelligence &amp; Verified Precedents
-            </p>
           </div>
         </div>
         {activeTopic && (

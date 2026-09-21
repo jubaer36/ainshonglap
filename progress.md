@@ -5,17 +5,48 @@
 - Renders structured answers (paragraphs, numbered steps, bullets) rather than flat text — legal answers like FIR filing steps need the structure.
 - Citations render inline with a reference panel, so a claim traces back to its source without leaving the chat.
 - TS types mirror the backend's Pydantic schemas by hand.
+- Each answer `kind` renders differently, because the outcomes are not variations
+  of each other: `clarify` is a blue question (one detail away from an answer),
+  `out_of_scope` a neutral boundary, and only genuine retrieval failure is amber.
+  A provenance badge says whether the text was quoted verbatim from the catalog,
+  cited and checked, or is the model's own knowledge.
+- Voice input puts the transcript in the box for confirmation and never sends it.
+- A `context · N turns` chip opens the conversation memory: the running summary
+  verbatim, the section keys kept exactly, a stale warning when the summariser
+  failed, and a Forget button. Hidden state that steers answers is inspectable.
+- Conversations are saved in `localStorage` and listed in the sidebar, each
+  record carrying its **memory and citations**, not just messages — reopening
+  one has to restore what the assistant remembered, or the next follow-up
+  silently loses its context. Client-side for the same reason as the memory
+  itself: a server that never receives these questions cannot mishandle them.
+  Capped at 50, every access guarded, since storage throws in private windows
+  and when full.
+- Enter sends, Shift+Enter inserts a newline, and an IME composition guard stops
+  Enter firing mid-word while composing Bangla.
+
+### UI cleanup
+- Removed the standing chrome text: "Powered by Bangladeshi Legal Corpus:
+  BDLaws, Supreme Court Precedents & Gazettes", "Plain-Language Statutory
+  Intelligence & Verified Precedents", "Bangladeshi Codex Active", the sidebar
+  footer paragraph, and the always-on disclaimer strip.
+- Three of those were **false**: there is no case law, no gazettes and no
+  precedents in the corpus, and the status line described activity that did not
+  exist. For a tool whose whole value is that claims are checkable, decorative
+  copy overstating its sources is the worst kind of clutter.
+- **The disclaimer requirement (brief, line 37) is still met**: it is appended
+  server-side from a constant to every answer including refusals
+  (`app/rag/present.py`), so it sits on the answers where it is read rather than
+  under the input box where it became wallpaper.
+- The status line now shows only real events — microphone state, transcription
+  confidence, memory errors — and renders nothing otherwise.
 
 ## Backend
 - FastAPI service over the real pipeline: `POST /api/query`, `GET /api/retrieve`, `GET /api/acts`, `GET /api/sections[/{key}]`, `GET /health`. Contract and configuration in `backend/API.md`.
 - The mock response module is gone; every endpoint serves the indexed corpus.
-- Query handling now distinguishes `meta`, `lookup`, `browse`, `summarize`,
-  `general` and `legal` intents. Exact lookups and statute outlines use the
-  indexed corpus directly instead of forcing every request through top-k RAG.
-- The current router is hybrid: obvious intents use patterns and ambiguous
-  questions use a schema-constrained small model. This is an intermediate
-  implementation; `query-routing-plan.md` specifies a model-authored plan with
-  validated executors as the replacement.
+- Questions are planned into five categories and executed by validated code
+  (`app/rag/plan.py` -> `execute.py`); `POST /api/transcribe` takes voice input;
+  conversation memory is a rolling summary carried by the client. The six-intent
+  pattern router it replaced survives behind `RAG_PLAN=0` as an outage switch.
 
 ## Legal documents
 - 34 PDFs under `Laws/` — CrPC 1898 plus related criminal-law acts, scoped to the assessment brief. Provenance per file in `Laws/SOURCES.md`.
@@ -160,6 +191,116 @@
 - Conversation history is accepted but not used; typed Act/chapter/section scope
   is planned for follow-ups such as “show that section.”
 
+## Validated executors and the served pipeline (stage 3)
+- `app/rag/execute.py` turns a validated plan into an `Answer`, one executor per
+  category: `meta` from the catalog manifest, `structural` by exact SQL fetch,
+  `semantic` through retrieval + generation + the C2/C3 gates, `out_of_scope`
+  and `clarify` as reasoned refusals, `general` as a labelled ungrounded answer.
+- `POST /api/query` runs the planner path (`RAG_PLAN=1`, a kill switch rather
+  than a permanent fork). `GET /api/plan` returns what the planner decided
+  without answering, for when an answer looks wrong and the first question is
+  whether it was *planned* wrong.
+- `AssistantMessage.kind` carries which machine answered, so the client can tell
+  "outside these Acts" from "which Act did you mean?" — `unsupported` alone
+  cannot. Eight kinds; the frontend renders `clarify` as a question in blue,
+  `out_of_scope` as a neutral boundary, and only genuine retrieval failures in
+  amber. A provenance badge states whether text was quoted verbatim from the
+  catalog, cited and checked, or ungrounded.
+- Two rules enforced in code: the Act **filters** a structural plan but is only
+  a **hint** on a semantic one (a scenario planner answers `act=crpc` for the
+  arrest while the death is Penal Code, and filtering would drop it); and a
+  structural fetch quotes rather than paraphrases, so no model can alter it.
+- Verified end to end over HTTP across all seven paths, including a 42-citation
+  chapter listing and a four-section theft answer with every quote verified.
+
+## Voice input
+- `POST /api/transcribe` (Deepgram nova-3) returns a transcript and **never an
+  answer**. The separation is the safety property: a misheard section number
+  produces a perfectly grounded answer about a different offence — the planner
+  names coordinates that exist, the catalog fetches them, the quote verifies
+  against the section fetched. Every gate passes because none of them know what
+  was said, so the reader seeing the words is the only check on this path.
+- `MicButton` records, transcribes, and puts the text in the input box for
+  confirmation. Click-to-toggle, not hold-to-talk: holding raced the permission
+  prompt, so the release arrived before the stream was granted and recording
+  began after the button came up.
+- Keyterm prompting boosts statutory vocabulary built from the catalog, because
+  a general speech model turns "cognizable" into "recognizable" rather than
+  failing visibly.
+- **Bengali is `bn`, nova-3 only, and is not in Deepgram's `multi`
+  code-switching set.** Mixed Bangla-English — the ordinary register for talking
+  about law here — has no single-model answer. `scripts/deepgram_stt.py
+  --compare` measures the cost of the choice; transcription accuracy on real
+  speech is **not yet measured**, and the metric that matters is section-number
+  accuracy, not WER (a 9% WER transcript that turns 379 into 279 is a different
+  offence).
+
+## Conversation memory
+- A rolling summary: after each turn, the previous summary plus the new question
+  and answer go to Gemini 3.5 Flash Lite (on a second key, `GEMINI_API_KEY_2`,
+  so per-turn summarisation never competes for quota) and come back as one short
+  paragraph. That paragraph is the context the next question is read against.
+- The planner decides `follow_up` explicitly and **defaults to false**, then
+  rewrites a follow-up into a standalone `resolved_question`. Everything
+  downstream consumes the rewrite, so no executor knows a conversation happened.
+- Summarisation runs **after** the answer, so a summariser outage costs the
+  conversation its memory, never the user their answer.
+- Memory is client-held and echoed each turn; the server stores nothing. For
+  questions this personal that is a privacy property, and it also means no
+  session store and nothing to lose on restart.
+- **A rolling summary is lossy and the loss compounds**, and the detail most
+  likely to be mangled is a section number. So the memory carries two things:
+  the prose summary, and a `sections` list of citation keys copied by *code*
+  from the answer's own sources. The prompt asks for verbatim numbers; the code
+  list is the guarantee.
+- The frontend shows it: a `context · N turns` chip opens a panel with the
+  summary verbatim, the cited section keys (clickable), a stale warning when the
+  summariser failed, and a Forget button. Hidden state that steers answers
+  should be inspectable.
+- Observed working on two providers: "what if he had survived with only
+  injuries?" → *"What offence is committed if three men beat a man... causing
+  him injuries but not death?"*; "the section right before it" after s.302 →
+  s.301 fetched exactly. A topic switch to "what is the capital of France"
+  correctly inherited nothing.
+- Two limits: follow-up detection is **model-dependent** (Groq flagged "arrest
+  *them*" as a follow-up, Mercury did not), and none of this is on a pinned
+  regression set yet.
+
+## Provider quota and fallback
+- Free tiers run out, and on Groq the daily token cap is **per model** — a 429
+  naming `qwen/qwen3.8-27b` says nothing about `openai/gpt-oss-20b`. So
+  `app/rag/quota.py` records exhaustion per model, with the cooldown parsed from
+  the provider's own "try again in 12m40s".
+- `GET /api/models` marks a route unavailable with the reason and a countdown;
+  the picker greys it out, moves a dead selection to the fallback, and re-polls
+  so a model un-greys when its budget resets. `POST /api/query` substitutes the
+  fallback (`mercury`, a different provider) and **says so** in the response —
+  a silent swap would hide which model wrote the answer.
+- Only genuine quota errors are recorded. A 500 or a timeout says nothing about
+  budget, and blocking a model for an hour over a blip would be worse than the
+  blip.
+- Generators registered: `qwen`, `oss` (gpt-oss-20b), `oss120`, `lfm`, `super`,
+  `mercury`, `mercury-2`, `gemini`.
+
+## Serving correctness fixes
+- **Every handler was `async def` while doing blocking work** — cross-encoder
+  inference then a synchronous HTTPS call — so FastAPI ran them on the event
+  loop and one in-flight question froze the whole server. The model list, the
+  statute browser and citation previews were all unusable while any answer
+  generated. Blocking handlers are now plain `def` (threadpool); `/api/transcribe`
+  stays async for the upload and offloads the Deepgram call explicitly.
+- **Warmup blocked startup.** Loading BGE-M3 and the cross-encoder took ~30s
+  before uvicorn served anything, so a browser that loaded in 368ms asked for
+  the model list and timed out — a backend still waking up looked like a broken
+  one. Warmup now runs in a worker thread, the catalog (SQLite, milliseconds)
+  loads synchronously, and `/health` reports `warming` until ready.
+- CORS allowed only `http://localhost:3000`; `127.0.0.1:3000` is a different
+  origin to a browser, so opening the app at the other address blocked every
+  response after it arrived. Both are allowed by default now.
+- The model picker returned `null` whenever its list was empty, so a failing
+  `/api/models` looked identical to a feature that did not exist. It now shows
+  the error with a retry.
+
 ## Documentation
 - Root, backend and frontend READMEs now describe the real pipeline, Groq Qwen
   default, request modes, setup, metrics and known limitations.
@@ -174,8 +315,14 @@
   names coordinates (42/42 category, 27/27 scope on 41 pinned cases) and the
   verified SQLite catalog fetches them exactly, failing closed on anything it
   does not have.
-- Next: build the four executors behind the planner, then replace `FINAL_K=5`
-  with a fitted relevance threshold — at most 10 sections to the generator, every
-  section above the threshold shown to the reader as catalog records. Query
-  rewriting remains part of that work because 28.6% of gold sections are still
-  never retrieved.
+- The planner path is now served end to end, with voice input and conversation
+  memory on top of it. What is built is wider than what is measured: the
+  executors, memory, voice and quota handling have no pinned regression numbers,
+  and `plan_cases.py` (42/42 category, 27/27 scope) still covers only planning.
+- Next, and in this order: pin follow-up cases in `plan_cases.py`, then replace
+  `FINAL_K=5` with a fitted relevance threshold plus facet retrieval. Two
+  separate scenario runs refused answerable questions because five retrieval
+  slots all went to *hurt* sections and never reached culpable homicide — a
+  multi-issue scenario collapses into one embedding query, and the dominant
+  wording takes every slot. Query rewriting belongs to the same work, since
+  28.6% of gold sections are still never retrieved.

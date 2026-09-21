@@ -72,13 +72,13 @@ Stable patterns currently handle obvious meta/browse/lookup/summary requests;
 the schema-constrained router handles the remainder. Direct coordinates are
 validated against the corpus, and ambiguous section numbers require an Act.
 
-**This is being replaced.** `app/rag/plan.py` collapses the six intents into
-four categories — `meta`, `structural` (lookup/browse/summarize, differing by
-operation), `semantic`, `general` — and lets a strict-JSON Groq Qwen call decide,
-returning coordinates only. `app/rag/catalog.py` then executes them against
-`Laws/main/catalog.sqlite` with parameterized SQL. Both are built and measured
-(`experiments.md` E12, E13) but not yet wired into `/api/query`; the executors
-are the next step.
+**This has been replaced and is now the served path.** `app/rag/plan.py`
+collapses the six intents into five categories — `meta`, `structural`
+(lookup/browse/summarize, differing by operation), `semantic`, `out_of_scope`,
+`general` — with a strict-JSON call returning coordinates only.
+`app/rag/catalog.py` executes them against `Laws/main/catalog.sqlite` with
+parameterized SQL, and `app/rag/execute.py` holds one executor per category.
+The old pattern router survives behind `RAG_PLAN=0` as an outage switch.
 
 The legal path retrieves 20 distinct section candidates, cross-encoder reranks
 them, and sends the best five to the generator. This is appropriate for a
@@ -140,8 +140,7 @@ inside the pipeline would surface as a false refusal. Requests pin
 
 - only the CrPC, Penal Code and Evidence Act are served
 - legal generation sees five reranked sections, limiting broad coverage
-- model routing and structural scope extraction are not yet one unified plan
-- history does not yet resolve follow-ups such as “show that chapter”
-- exact browsing is an in-memory read model over `chunks.json`, not yet SQLite
+- follow-up detection varies by model and is not pinned by a regression set
+- voice transcription accuracy on real speech is unmeasured
 - citation gates validate the source and quote, not semantic entailment
 - generation abstention and multi-section completeness evaluation are unfinished

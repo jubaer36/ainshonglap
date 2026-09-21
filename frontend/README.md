@@ -3,6 +3,13 @@
 Next.js 16 and React 19 client for the AinShonglap Bangladesh criminal-law
 assistant. It consumes the FastAPI contract documented in `../backend/API.md`.
 
+The UI carries no decorative copy. Text that described sources the corpus does
+not have — "Supreme Court Precedents & Gazettes", "Verified Precedents" — was
+removed rather than reworded: for a tool whose value is that every claim is
+checkable, chrome that overstates its sources is worse than none. The required
+disclaimer is appended server-side to every answer, so it appears where it is
+read instead of permanently under the input box.
+
 ## Features
 
 - chat input with loading, timeout and provider-error states
@@ -15,6 +22,22 @@ assistant. It consumes the FastAPI contract documented in `../backend/API.md`.
 - distinct rendering per answer `kind`: quoted sections, chapter listings,
   cited answers, ungrounded general answers, out-of-scope boundaries,
   clarification questions and refusals
+- a provenance badge stating how each answer was produced — quoted verbatim from
+  the catalog, cited and checked, or not from the Acts at all
+- voice input beside the Ask button: click to record, click to stop, and the
+  transcript lands in the box for you to check. It is never sent automatically,
+  because a misheard section number becomes a fully grounded answer about a
+  different offence and no gate downstream can catch that
+- a `context · N turns` chip opening the conversation memory: the running
+  summary verbatim, the section keys kept exactly, a stale warning when the
+  summariser failed, and a Forget button
+- the model picker greys out routes that are out of quota, with a countdown,
+  and moves a dead selection to the fallback
+- conversations saved in `localStorage` and listed in the sidebar; each record
+  carries its memory and citations, so reopening one restores the context a
+  follow-up needs
+- Enter sends, Shift+Enter inserts a newline, and Enter is ignored while an IME
+  is composing (typing Bangla would otherwise fire mid-word)
 
 The TypeScript contract in `lib/types.ts` mirrors the backend Pydantic models in
 `backend/app/models/schemas.py`. Snake-case API fields are converted to
@@ -56,7 +79,11 @@ components/layout/StatuteBrowser.tsx corpus navigation
 components/layout/ReferencesDrawer.tsx citation/source preview
 components/chat/ModelPicker.tsx      generator selection
 lib/api.ts                           all backend calls and normalization
+lib/conversations.ts                 saved conversations in localStorage
 components/chat/AnswerKindBadge.tsx  how an answer was produced, in three words
+components/chat/MemoryPanel.tsx      the running summary the next question is read against
+components/chat/MicButton.tsx        record, transcribe, place in the box — never send
+components/layout/ConversationList.tsx  saved conversations, newest first
 lib/types.ts                         frontend API contract
 ```
 

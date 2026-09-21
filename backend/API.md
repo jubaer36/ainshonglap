@@ -29,8 +29,33 @@ RAG_WARMUP=0 uvicorn app.main:app --reload   # skip model load (corpus endpoints
 ```
 
 Returns an `AssistantMessage`: `heading`, `blocks` (paragraphs with inline
-citation segments), `citations` keyed by citation key, `unsupported`, and
-`kind`.
+citation segments), `citations` keyed by citation key, `unsupported`, `kind`,
+and — for a conversation — `memory`, `resolved_question`, `generator`.
+
+#### Conversation memory
+
+Send the `memory` from the previous answer back with the next question:
+
+```json
+{"question": "what if he had survived instead?",
+ "memory": {"summary": "The user described three men beating a man...",
+            "sections": ["penal-s302", "penal-s304"], "turns": 1}}
+```
+
+A rolling summary, rewritten after every turn by Gemini 3.5 Flash Lite on
+`GEMINI_API_KEY_2`. The planner decides `follow_up` itself, **defaulting to
+false**, and rewrites a follow-up into a standalone question; `resolved_question`
+comes back so the reader can see what was actually answered. A bad rewrite would
+otherwise be a confident, properly cited answer to a question nobody asked.
+
+The server stores nothing — the client holds the memory and echoes it. For
+questions this personal that is a privacy property, and it removes the session
+store entirely. `sections` is written by code from the answer's own citations,
+never by the summariser, because a rolling summary is lossy and the detail most
+likely to be mangled is a section number.
+
+`generator` names the model that answered, and `generator_substituted` the alias
+it replaced when the requested one was out of quota.
 
 **A refusal is a 200 with `unsupported: true`**, not an error — "the Acts do not
 cover this" is an answer. A **502** means the generator was unreachable, which
@@ -135,6 +160,32 @@ code-switching set** (en, es, fr, de, hi, ru, pt, ja, it, nl). Mixed
 Bangla-English has no single-model answer; `RAG_STT_LANGUAGE` picks one, and
 `scripts/deepgram_stt.py --compare` measures what the choice costs.
 
+### GET `/api/models`
+
+Selectable generators, with availability:
+
+```json
+{"alias": "qwen", "backend": "groq", "model": "qwen/qwen3.8-27b",
+ "enforces_schema": true, "default": true, "fallback": false,
+ "available": false, "unavailable_reason": "daily token limit reached",
+ "seconds_remaining": 760}
+```
+
+Two different things make a route unusable, and they are reported separately.
+`enforces_schema: false` is permanent and about correctness — the pipeline needs
+a verbatim quote per claim, and a route answering in prose parses as "no claims"
+and surfaces as a false refusal. `available: false` is temporary and about
+budget.
+
+Quota is tracked **per model**: Groq's daily token cap named
+`qwen/qwen3.8-27b` specifically, and `openai/gpt-oss-20b` has its own. The
+cooldown is parsed from the provider's own "try again in 12m40s". Only genuine
+quota errors count — a 500 or a timeout says nothing about budget.
+
+When the chosen generator is out, `POST /api/query` answers on
+`RAG_FALLBACK_GENERATOR` (default `mercury`, deliberately a *different
+provider*) and reports the substitution rather than making it silently.
+
 ### GET `/api/retrieve?q=...&k=5&rerank=true`
 
 The retrieval half alone, with dense and reranker scores per hit. `rerank=false`
@@ -143,8 +194,10 @@ served and measured numbers cannot drift.
 
 ## Configuration
 
-`backend/.env.local` (gitignored) holds `GROQ_API_KEY`. OpenRouter and Gemini
-keys are optional fallbacks.
+`backend/.env.local` (gitignored) holds the keys: `GROQ_API_KEY`,
+`INCEPTION_API_KEY` (Mercury), `GEMINI_API_KEY`, `GEMINI_API_KEY_2` (the
+conversation summariser, on its own key so it never competes for quota),
+`DEEPGRAM_API_KEY` (voice), `OPENROUTER_API_KEY`.
 
 | var | default | |
 |---|---|---|
@@ -156,6 +209,9 @@ keys are optional fallbacks.
 | `RAG_PLAN` | `1` | `0` falls back to the old pattern router |
 | `RAG_ROUTER_MODEL` | `lfm` | old router's model, used only when `RAG_PLAN=0` |
 | `RAG_DENSE_K` / `RAG_FINAL_K` | `20` / `5` | candidates reranked / sections returned |
+| `RAG_FALLBACK_GENERATOR` | `mercury` | used when the chosen generator is out of quota |
+| `RAG_MEMORY_MODEL` | `gemini-3.5-flash-lite` | rolling conversation summariser |
+| `RAG_MEMORY_CHARS` | `700` | ceiling on the summary, so context stays bounded |
 | `RAG_STT_MODEL` | `nova-3` | Deepgram model; Bengali needs nova-3 |
 | `RAG_STT_LANGUAGE` | `en` | `en`, `bn`, or `multi` (no Bengali in `multi`) |
 | `RAG_WARMUP` | `1` | `0` skips model loading at startup |
@@ -188,6 +244,9 @@ app/rag/
                 it for structural queries)
   refine.py     the pattern router, used only when RAG_PLAN=0
   speech.py     Deepgram STT — audio -> transcript, never an answer
+  memory.py     rolling conversation summary; prose from a model, section keys
+                from code
+  quota.py      per-model exhaustion and cooldown, for fallback and the picker
   present.py    Answer -> AssistantMessage
 ```
 

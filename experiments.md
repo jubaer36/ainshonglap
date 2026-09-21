@@ -633,7 +633,75 @@ did.
 
 ---
 
-## What E2-E14 together establish
+## E15 — voice input and conversation memory (BUILT, NOT MEASURED)
+
+Recorded here so the log does not imply these carry numbers. Both work in
+ordinary use; neither has a pinned regression set, and one has a metric that
+matters more than the obvious one.
+
+**Voice (Deepgram nova-3).** `POST /api/transcribe` returns a transcript and
+never an answer, because the pipeline **cannot detect a correctly-executed wrong
+question**: a misheard "379" as "279" produces a plan naming coordinates that
+exist, a catalog fetch that succeeds, and a quote that verifies against the
+section fetched. Every gate passes. The reader seeing the words is the only
+check, so the API has no path that skips it.
+
+The metric that matters is therefore **section-number accuracy, not WER**. A
+transcript at 9.1% WER that turns 379 into 279 is a different offence;
+`scripts/deepgram_stt.py` reports the two separately, plus recall of statutory
+terms a general model smooths into commoner words ("cognizable" ->
+"recognizable"). Verified on synthetic audio only: auth, endpoint, parameters,
+all three language codes, and the metric code. **Accuracy on real speech is
+unmeasured.**
+
+One finding from the documentation rather than from a run: Bengali is `bn`,
+nova-3 only, and is **not** in Deepgram's `multi` code-switching set (en, es,
+fr, de, hi, ru, pt, ja, it, nl). Mixed Bangla-English — how people here actually
+talk about law — has no single-model answer, and `--compare` exists to price
+that choice.
+
+**Memory (rolling summary, Gemini 3.5 Flash Lite).** After each turn the
+previous summary plus the new question and answer are summarised into one
+paragraph, which the next question is read against. The planner decides
+`follow_up` explicitly, defaulting to false, and rewrites a follow-up into a
+standalone question that everything downstream consumes unchanged.
+
+Observed, on two providers, not scored:
+
+| turn | resolved to |
+|---|---|
+| "what if he had survived with only injuries?" | "What offence is committed if three men beat a man... causing him injuries but not death?" |
+| "and what about the section right before it?" (after s.302) | "what does section 301 of the penal code say" → s.301 fetched |
+| "what is the capital of France?" | no rewrite — context correctly **not** inherited |
+
+A bug worth recording because the class of it will recur: the planner rewrote
+"the section right before it" correctly and then filled the coordinates from the
+**original** wording, which has no section number — so `sections` came back
+empty and the structural executor enumerated all 556 sections instead of
+fetching one. Fixed by instructing the prompt to derive every field from its own
+rewrite, plus a targeted re-plan when a follow-up yields a structural plan with
+no scope. **A model asked to do two things in one call will do one of them
+against the wrong input.**
+
+**What is not measured.** Follow-up detection is model-dependent — Groq flagged
+"was it lawful to arrest *them*" as a follow-up and Mercury did not — and
+nothing pins multi-turn behaviour, least of all the topic switches that must not
+inherit context. Summary drift over long conversations is unquantified; the
+mitigation (citation keys copied by code, never by the summariser) is a
+guarantee about section numbers only, not about the prose.
+
+**What these runs incidentally exposed.** Two separate scenario conversations
+refused answerable questions: "three men beat a man... he died in hospital"
+retrieved `penal-s323/324/326` — *hurt* sections — and never reached
+s.299/300/302/304. The generator refused correctly on what it was handed. This
+is E8's over-refusal question arriving in ordinary use, and it is a retrieval
+failure rather than a generation one: a two-issue scenario collapses into one
+embedding query and the dominant wording takes all five slots. It is the
+strongest argument yet for phase 4 (facets + threshold).
+
+---
+
+## What E2-E15 together establish
 
 Both chunk-formatting knobs are flat — retrieval on this corpus is not limited
 by how chunks are labelled or sized. Ranking is where the gains were, exactly as

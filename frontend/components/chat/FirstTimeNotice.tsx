@@ -12,7 +12,7 @@ export function FirstTimeNotice({ onDismiss }: FirstTimeNoticeProps) {
       </div>
       <div className="flex-1 text-xs space-y-0.5">
         <div className="flex items-center justify-between">
-          <span className="font-semibold text-slate-900">Legal Intelligence Notice</span>
+          <span className="font-semibold text-slate-900">Before you start</span>
           <button
             type="button"
             className="text-slate-400 hover:text-slate-700 p-0.5 rounded"
@@ -23,8 +23,8 @@ export function FirstTimeNotice({ onDismiss }: FirstTimeNoticeProps) {
           </button>
         </div>
         <p className="text-slate-600 leading-relaxed">
-          Clear plain-language answers verified against Bangladeshi codified law. Hover over any
-          highlighted section pill to inspect the verbatim statute in the right panel.
+          Answers come only from the Code of Criminal Procedure 1898, the Penal Code 1860 and
+          the Evidence Act 1872. Click any section pill to read the statute it cites.
         </p>
       </div>
     </div>

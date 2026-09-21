@@ -25,10 +25,11 @@ question
 ```
 
 A planner decides what the question is and names **where** to look; code owns
-every fact. Four categories: `meta` (about the assistant), `structural` (a named
+every fact. Five categories: `meta` (about the assistant), `structural` (a named
 section, range, chapter or Act — fetched exactly, in statutory order),
-`semantic` (provisions that must be found), `general` (answered plainly, no
-citations). A coordinate the catalog does not have returns nothing rather than
+`semantic` (provisions that must be found), `out_of_scope` (a legal question
+about law outside these three Acts — answered with a refusal, never from
+memory), `general` (not a legal question; answered plainly, no citations). A coordinate the catalog does not have returns nothing rather than
 the nearest match, so a wrong chapter fails visibly instead of quietly returning
 different law. Measured at 42/42 category and 27/27 scope on a pinned 41-case
 set (`experiments.md` E13).
@@ -38,10 +39,29 @@ schema-capable OpenRouter and Gemini models remain available as fallbacks.
 Generator output is never trusted as a citation: every claim must cite a
 retrieved section and include a quote found verbatim in it.
 
-The planner and catalog are live; the executors behind them are being built, so
-the served path still runs the older six-intent router. Focused answers still
-cap at five sections — the fitted relevance threshold that replaces that cap is
-`plan.md` phase 4.
+The planner, catalog and executors are live and served. Two things sit on top:
+**voice input** (Deepgram nova-3 — the transcript is shown for confirmation, never
+auto-sent, because the pipeline cannot detect a correctly-executed *wrong*
+question) and **conversation memory** (a rolling summary from Gemini Flash Lite;
+the planner rewrites a follow-up into a standalone question so nothing
+downstream knows a conversation happened).
+
+Generators are selectable per request and quota-aware: exhaustion is tracked per
+model, an exhausted route is greyed out in the picker, and `/api/query`
+substitutes a different provider and says so.
+
+Conversations are saved in the browser and listed in the sidebar. Nothing about
+a conversation — the questions, the memory, the history — is stored on the
+server; for questions like "my employer has not paid me", a server that never
+receives them cannot mishandle them.
+
+The required disclaimer is appended server-side from a constant to every answer,
+including refusals, so it travels with the answer rather than sitting as chrome.
+
+Focused answers still cap at five sections. That cap is the largest known
+weakness — a two-issue scenario collapses into one embedding query and the
+dominant wording takes every slot — and the fitted threshold plus facet
+retrieval that replaces it is `plan.md` phase 4.
 
 ## Repository layout
 
@@ -110,7 +130,9 @@ python scripts/openrouter_chat.py --json --model lfm
 
 | method | path | purpose |
 |---|---|---|
-| POST | `/api/query` | routed, cited answer or refusal |
+| POST | `/api/query` | planned, cited answer or refusal; carries conversation memory |
+| GET | `/api/plan` | what the planner decided, without answering |
+| POST | `/api/transcribe` | voice input → transcript (never an answer) |
 | GET | `/api/retrieve` | inspect dense/reranked retrieval |
 | GET | `/api/models` | selectable schema-capable generators |
 | GET | `/api/acts` | indexed Acts and section counts |
@@ -135,10 +157,24 @@ See `backend/API.md` for the request/response contract and configuration.
 ## Current limitations
 
 - Only three Acts are ingested; amendments, case law and remaining PDFs are not served.
-- The answer path sends five reranked sections to the generator, so it is optimized for focused answers rather than exhaustive provision discovery.
-- Routing is hybrid pattern/LLM rather than a single model-authored execution plan.
-- Conversation history is sent by the UI but is not yet used to resolve follow-ups.
-- Quote verification proves provenance, not that a claim is logically entailed by its quote.
-- Generation quality and multi-section completeness still need dedicated evaluation.
+- The answer path sends at most five reranked sections to the generator. A
+  scenario raising two legal issues collapses into one embedding query, so the
+  dominant wording takes every slot — "three men beat a man and he died"
+  retrieves *hurt* sections and never reaches culpable homicide, and the
+  generator then refuses, correctly, on what it was given. Facet retrieval plus
+  a fitted threshold is the fix (`plan.md` phase 4).
+- The CrPC Second Schedule — which classifies offences as bailable or
+  cognizable — is **not in the corpus**, so "is house theft bailable?" is
+  refused. No Bangladesh source for it exists in the repo; the copy that
+  contains one is Pakistan's CrPC and was rejected for that reason.
+- Quote verification proves provenance, not that a claim is logically entailed
+  by its quote.
+- Voice transcription accuracy on real speech is unmeasured; the metric that
+  matters is section-number accuracy, not word error rate.
+- Follow-up detection varies by model and has no pinned regression set; nor do
+  the executors, memory, voice or quota fallback. `plan_cases.py` covers
+  planning only.
+- Generation quality and multi-section completeness still need dedicated
+  evaluation.
 
 This system provides legal information, not legal advice.

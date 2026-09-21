@@ -48,8 +48,17 @@ cd backend
 uvicorn app.main:app --reload            # API on :8000
 ```
 
-Secrets live in `backend/.env.local` (gitignored). Groq Qwen is the default
-generator (`GROQ_API_KEY`); OpenRouter LFM is currently the default router.
+Secrets live in `backend/.env.local` (gitignored): `GROQ_API_KEY` (default
+generator and planner), `INCEPTION_API_KEY` (Mercury, the quota fallback),
+`GEMINI_API_KEY_2` (conversation summariser, on its own key), `DEEPGRAM_API_KEY`
+(voice input), plus optional `GEMINI_API_KEY` and `OPENROUTER_API_KEY`.
+
+**Free-tier budgets are a real constraint.** Groq's daily token cap is per model
+and has been exhausted once by verification runs. Prefer offline checks —
+imports, `tsc --noEmit`, eslint, direct tests of pure logic — and use
+`plan_cases.py --only` rather than re-running a whole suite to confirm a narrow
+fix. `app/rag/quota.py` records exhaustion per model so the picker can grey a
+route out and `/api/query` can fall back.
 
 ## The pipeline
 
@@ -80,6 +89,9 @@ python scripts/experiments/experiment_granularity.py            # retrieval unit
 python scripts/experiments/experiment_abstention.py --n 20      # over-answering (E8)
 python scripts/groq_chat.py --json                              # Groq schema probe (E11)
 python scripts/inception_chat.py --json                         # Mercury schema probe (E14)
+python scripts/deepgram_stt.py --record 6 --expect "..."        # voice: number accuracy, WER
+python scripts/chat_demo.py                                     # multi-turn, shows the memory
+python scripts/answer_demo.py                                   # full path, one question at a time
 ```
 
 Two read models, two jobs. **FAISS** answers "which provisions resemble this
@@ -89,6 +101,11 @@ stays the only source of law. A model names coordinates
 (`app/rag/plan.py`); `app/rag/catalog.py` fetches them with parameterized SQL.
 The model never writes SQL, and a coordinate the catalog does not have comes
 back empty rather than as the nearest match.
+
+Handlers that do blocking work (retrieval, generator calls) are plain `def`, not
+`async def`: FastAPI runs an `async` handler on the event loop, and one blocking
+handler freezes every other request. Warmup loads the retrieval models in a
+worker thread so the server answers immediately and `/health` reports `warming`.
 
 Serving: `uvicorn app.main:app --reload`. The API and the eval scripts share
 `app/rag/pipeline.retrieve()` — keep it that way. They were once separate, and

@@ -2,7 +2,6 @@
 
 import { useRef, useState } from "react";
 import type { ConversationMemory } from "@/lib/types";
-import { Disclaimer } from "./Disclaimer";
 import { MemoryPanel } from "./MemoryPanel";
 import { MicButton } from "./MicButton";
 import { ModelPicker } from "./ModelPicker";
@@ -21,7 +20,9 @@ interface InputDockProps {
   onActivateCitation?: (key: string) => void;
 }
 
-const DEFAULT_STATUS = "Bangladeshi Codex Active";
+// Empty by default: the status line carries only real events — microphone
+// state, transcription results, memory errors — and renders nothing otherwise.
+const DEFAULT_STATUS = "";
 
 export function InputDock({
   value,
@@ -44,7 +45,6 @@ export function InputDock({
 
   function handleSubmit() {
     if (!value.trim() || disabled) return;
-    flashStatus("Synthesizing Bangladeshi statutory codes…", DEFAULT_STATUS);
     onSubmit();
   }
 
@@ -74,56 +74,44 @@ export function InputDock({
             }}
           />
           <div className="flex items-center justify-between px-3 pb-2.5 pt-1">
-            <div className="flex items-center gap-1 text-slate-500">
+            <div className="flex items-center gap-1 text-slate-500 min-w-0">
               <ModelPicker value={model} onChange={onModelChange} disabled={disabled} />
               <MemoryPanel
                 memory={memory}
                 onForget={onForgetMemory}
                 onActivateCitation={onActivateCitation}
               />
+              {status && (
+                <span className="font-mono text-[11px] text-slate-400 hidden md:inline ml-1.5 truncate">
+                  {status}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-1.5 flex-shrink-0">
               <MicButton
                 disabled={disabled}
                 onStatus={(text) => flashStatus(text, DEFAULT_STATUS)}
-                // Placed in the box, never submitted. A misheard section number
-                // would otherwise become a confidently grounded answer about a
-                // different offence, and nothing downstream can catch that.
+                // The transcript is placed in the box, never submitted. A
+                // misheard section number would otherwise become a confidently
+                // grounded answer about a different offence, and nothing
+                // downstream can catch that.
                 onTranscript={(text) => {
                   onChange(value ? `${value.trim()} ${text}` : text);
                   textareaRef.current?.focus();
                 }}
               />
-              <span className="font-mono text-[11px] text-slate-400 hidden md:inline ml-1.5">
-                {status}
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                className="px-2.5 py-1 text-xs text-slate-500 hover:text-slate-800 transition-colors"
-                onClick={() => {
-                  onChange("");
-                  textareaRef.current?.focus();
-                }}
-              >
-                Clear
-              </button>
               <button
                 type="button"
                 className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-slate-900 text-white hover:bg-slate-800 text-xs font-medium shadow-sm transition-transform active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
                 onClick={handleSubmit}
                 disabled={disabled || !value.trim()}
               >
-                <span>Synthesize</span>
+                <span>Ask</span>
                 <span className="material-symbols-outlined text-[15px]">arrow_upward</span>
               </button>
             </div>
           </div>
         </div>
-        <div className="text-center font-mono text-[10px] text-slate-400">
-          Powered by Bangladeshi Legal Corpus: BDLaws, Supreme Court of Bangladesh Precedents &amp;
-          Gazettes.
-        </div>
-        <Disclaimer />
       </div>
     </div>
   );

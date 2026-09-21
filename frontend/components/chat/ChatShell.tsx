@@ -2,6 +2,14 @@
 
 import { useEffect, useState } from "react";
 import { ApiError, fetchSection, sendQuery } from "@/lib/api";
+import {
+  deleteConversation,
+  getConversation,
+  listConversations,
+  newConversationId,
+  saveConversation,
+  type SavedConversation,
+} from "@/lib/conversations";
 import type { AssistantMessage, ChatMessage, Citation, UserMessage, ConversationMemory } from "@/lib/types";
 import { Header } from "../layout/Header";
 import { ReferencesDrawer } from "../layout/ReferencesDrawer";
@@ -75,6 +83,12 @@ export function ChatShell() {
   // privacy property. Cleared by "New chat", which is what makes that button
   // actually start a new conversation rather than just empty the screen.
   const [memory, setMemory] = useState<ConversationMemory | null>(null);
+  // Saved conversations live in localStorage (see lib/conversations.ts): these
+  // are people's legal questions, and a server that never receives them cannot
+  // mishandle them. `conversationId` is allocated up front so the first answer
+  // lands in a record rather than creating one retroactively.
+  const [conversations, setConversations] = useState<SavedConversation[]>([]);
+  const [conversationId, setConversationId] = useState<string>(() => newConversationId());
   const [inputValue, setInputValue] = useState("");
   const [loading, setLoading] = useState(false);
   const [noticeDismissed, setNoticeDismissed] = useState(false);
@@ -118,6 +132,10 @@ export function ChatShell() {
   }, [activeCitationKey, citationLibrary]);
 
   useEffect(() => {
+    setConversations(listConversations());
+  }, []);
+
+  useEffect(() => {
     // Below lg, sidebar/drawer are fixed overlays (see Sidebar/ReferencesDrawer)
     // rather than flex-row columns, so default them closed there. Deferred to
     // an effect (rather than the useState initializer) so server and client
@@ -144,10 +162,16 @@ export function ChatShell() {
         model: model ?? undefined,
         memory,
       });
-      setMessages((current) => [...current, assistantMessage]);
+      const nextMessages = [...historyForRequest, assistantMessage];
+      setMessages(nextMessages);
       // Carry the updated summary into the next turn. Left untouched on error,
       // so a failed request does not erase the conversation's memory.
+      const nextMemory = assistantMessage.memory ?? memory;
       if (assistantMessage.memory) setMemory(assistantMessage.memory);
+      // Saved with the memory, not just the messages: reopening a conversation
+      // has to restore what the assistant remembered, or the next follow-up
+      // silently loses its context.
+      setConversations(saveConversation(conversationId, nextMessages, nextMemory));
       setCitationLibrary((current) => ({ ...current, ...assistantMessage.citations }));
     } catch (error) {
       setMessages((current) => [...current, errorAssistantMessage(error)]);
@@ -157,6 +181,7 @@ export function ChatShell() {
   }
 
   function handleNewChat() {
+    setConversationId(newConversationId());
     setMessages([]);
     setMemory(null);
     setInputValue("");
@@ -164,6 +189,31 @@ export function ChatShell() {
     if (window.matchMedia("(max-width: 1023px)").matches) {
       setSidebarOpen(false);
     }
+  }
+
+  function handleOpenConversation(id: string) {
+    const saved = getConversation(id);
+    if (!saved) return;
+    setConversationId(saved.id);
+    setMessages(saved.messages);
+    setMemory(saved.memory);
+    setInputValue("");
+    setActiveCitationKey(null);
+    // Citations from the reopened conversation, so its pills resolve without
+    // re-fetching every section.
+    const restored: Record<string, Citation> = {};
+    for (const message of saved.messages) {
+      if (message.role === "assistant") Object.assign(restored, message.citations);
+    }
+    setCitationLibrary((current) => ({ ...current, ...restored }));
+    if (window.matchMedia("(max-width: 1023px)").matches) setSidebarOpen(false);
+  }
+
+  function handleDeleteConversation(id: string) {
+    setConversations(deleteConversation(id));
+    // Deleting the conversation on screen leaves it open but detached; start a
+    // fresh one so the view matches what is stored.
+    if (id === conversationId) handleNewChat();
   }
 
   function handleActivateCitation(key: string) {
@@ -207,6 +257,10 @@ export function ChatShell() {
           open={sidebarOpen}
           onNewChat={handleNewChat}
           onActivateCitation={handleActivateCitation}
+          conversations={conversations}
+          activeConversationId={conversationId}
+          onOpenConversation={handleOpenConversation}
+          onDeleteConversation={handleDeleteConversation}
         />
         <main className="flex-1 flex flex-col h-full bg-white relative min-w-0 overflow-hidden">
           <div className="flex-1 overflow-y-auto px-4 md:px-12 py-6 space-y-6">

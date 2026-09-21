@@ -10,7 +10,7 @@ export function ThinkingBubble() {
           <span className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce [animation-delay:-0.15s]" />
           <span className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce" />
         </span>
-        <span>Searching Bangladeshi statutory codex…</span>
+        <span>Searching the statutes…</span>
       </div>
     </div>
   );

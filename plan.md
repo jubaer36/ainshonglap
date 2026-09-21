@@ -30,20 +30,32 @@ where to look; an **answerer** writes from whatever the fetcher returned. Code
 owns every fact in between. Full design: `query-routing-plan.md`.
 
 ```
-question -> PLANNER (strict JSON, coordinates only, never text or SQL)
-              |
-              +-- meta        canned capability answer from the catalog manifest
-              +-- structural  SQL by coordinates: section, range, chapter, Act
-              +-- semantic    retrieve wide, rerank, keep everything above a
-              |               score threshold — not a fixed top-k
-              +-- general     plain answer, no citations, no grounding claimed
-              |
-              v
-            ANSWERER (question + fetched evidence -> cited answer)
+voice ──► /api/transcribe ──► transcript shown to the reader, never auto-sent
+                                   |
+question + conversation memory ────┘
+      |
+      v
+   PLANNER (strict JSON, coordinates only, never text or SQL)
+      |  follow_up? -> rewrite into a standalone question
+      |
+      +-- meta          capability answer from the catalog manifest
+      +-- structural    SQL by coordinates: section, range, chapter, Act
+      +-- semantic      retrieve wide, rerank, keep everything above a
+      |                 score threshold — not a fixed top-k
+      +-- out_of_scope  a legal question outside these Acts: say so, cite nothing
+      +-- general       plain answer, no citations, no grounding claimed
+      |
+      v
+   ANSWERER (question + fetched evidence -> cited answer)
+      |
+      v
+   answer + rolling summary (Gemini Flash Lite) -> client, returned next turn
 ```
 
-Four categories replace the old six intents: browse, summarize and lookup are
-all `structural`, differing by operation rather than by machine.
+Five categories replace the old six intents: browse, summarize and lookup are
+all `structural`, differing by operation rather than by machine; `out_of_scope`
+was split out of `general` because answering a question about a statute we do
+not hold, from memory, is the failure E1 recorded.
 
 ### Phase 1 — structural catalog — **done (E12)**
 
@@ -67,7 +79,7 @@ all `structural`, differing by operation rather than by machine.
 - 42/42 category and 25/27 → 27/27 scope on 41 pinned cases, of which the first
   27 are those previously pinned against the regex router.
 
-### Phase 3 — validated executors — **next**
+### Phase 3 — validated executors — **done**
 
 - `meta`: capability response from live catalog/index metadata.
 - `structural / fetch`: exact Act/section fetch, ambiguity handled.
@@ -79,6 +91,7 @@ all `structural`, differing by operation rather than by machine.
   cite nothing.
 - `general`: clearly labelled ungrounded answer.
 - Retire `refine.classify_pattern` and the intent regexes once these are live.
+  (Still present, reachable only via `RAG_PLAN=0` as an outage switch.)
 
 **`act` is a hint on a semantic plan, never a filter.** On the scenario "they
 beat a man, he died, they were arrested without a warrant", the planner returns
@@ -87,7 +100,7 @@ homicide. Hard-filtering retrieval to the named Act would drop exactly the
 provisions the question needs. Structural plans filter by Act because the reader
 named it; semantic plans must not.
 
-### Phase 4 — threshold instead of top-k
+### Phase 4 — threshold instead of top-k — **next, and the biggest gap**
 
 `RAG_FINAL_K=5` stops being an answer-shaping constant. Relevance decides how
 many provisions are shown; the prompt budget separately decides how many reach
@@ -109,6 +122,14 @@ the generator.
 - Expand explicit cross-references one hop, marking why each was included.
 - Never claim literal completeness; report the threshold and truncation state.
 
+Two scenario runs have now failed on exactly this. "Three men beat a man
+outside a shop at midnight and he died in hospital" retrieved `penal-s323/324/326`
+— *hurt* sections — and never reached s.299/300/302/304. The generator refused,
+correctly, on what it was handed. The cause is not only that five is too few: a
+scenario with two legal issues (fatal assault, warrantless arrest) collapses into
+one embedding query and the dominant wording takes every slot. Facets — one
+query per issue, merged — are as necessary as the threshold.
+
 The threshold is also the **abstention** mechanism, and the harder half of
 "say you don't know". `out_of_scope` catches a question that names a statute we
 do not hold, which is easy because the planner can read the name. It cannot
@@ -120,33 +141,55 @@ AUC 0.727 — weak, which is why no default was set then; refitting against
 per-section relevance rather than per-question answerability is part of this
 phase.
 
-### Phase 5 — clarification as a visible answer
+### Phase 5 — clarification as a visible answer — **done**
 
 The planner already decides when a request cannot be executed as written — an
 ambiguous section number, a subjective selection like "the most important laws"
 — and the validator already turns unresolvable coordinates into a question. None
 of it is surfaced yet: there is no `clarification` answer kind and no UI for it.
 
-- Add the answer kind and render it as a question, not as a refusal.
-- Keep over-asking as a measured failure: breadth is what `semantic` is for.
+- `kind="clarify"` renders in blue as a question, distinct from a refusal.
+- Over-asking remains a measured failure: breadth is what `semantic` is for, and
+  `plan_cases.py` pins two cases that must NOT ask.
 
-### Phase 6 — conversation scope and UI
+### Phase 6 — conversation memory — **done, differently than designed**
 
-Single-turn scenarios already work. Follow-ups on a scenario do not: "In that
-scenario, what if the man had survived with only injuries?" currently plans as
-`out_of_scope` with a clarification, because nothing in the question names the
-scenario. It asks rather than inventing, which is the right failure, but it is
-still a failure.
+Built as a **rolling summary** rather than typed scope. After each turn the
+previous summary plus the new question and answer go to Gemini 3.5 Flash Lite
+and come back as one paragraph, which the next question is read against. The
+planner decides `follow_up` explicitly (defaulting to false) and rewrites a
+follow-up into a standalone question; everything downstream sees an ordinary
+self-contained question.
 
-- Return typed active Act/chapter/section scope with each answer.
-- Send that scope with the next request so “that section” and “in that scenario”
-  are resolvable.
-- Carry the scenario facts, not just coordinates: a follow-up changes one fact
-  of a fact pattern, which chapter/section scope alone cannot represent.
+Typed scope alone would not have worked: it handles "show that section" and
+completely fails "what if he had survived", because a fact pattern is not a
+coordinate. The summary carries facts; a code-written `sections` list carries
+the citation keys the summariser is not allowed to paraphrase.
+
+The UI half is done too: the running summary is inspectable from a `context · N
+turns` chip, the resolved question is shown on any answer that used context, and
+conversations persist in `localStorage` with their memory attached so reopening
+one restores what the assistant knew.
+
+Remaining here:
+- Follow-up detection is **model-dependent** — Groq flagged "arrest *them*" as a
+  follow-up and Mercury did not. Needs pinning in `plan_cases.py`.
+- No regression set yet for multi-turn behaviour, including topic switches that
+  must not inherit context.
+- Summary drift over long conversations is unquantified. The mitigation —
+  citation keys written by code, never by the summariser — guarantees section
+  numbers only, not the prose around them.
 - Add related-section groups, total counts and load-more behavior to the frontend.
 - Keep exact citation previews backed by corpus keys.
 
-### Phase 7 — evaluation and rollout
+### Phase 7 — evaluation and rollout — **the standing gap**
+
+Everything since phase 3 is built but unmeasured. `plan_cases.py` covers
+planning only (42/42 category, 27/27 scope); the executors, memory, voice input
+and quota fallback have no pinned numbers at all. Voice has the sharpest missing
+metric: **section-number accuracy**, not WER, because a 9% WER transcript that
+turns 379 into 279 is a different offence.
+
 
 - Router: intent, operation, scope and clarification accuracy.
 - Focused retrieval: existing Recall@k/MRR/Act metrics.
@@ -156,7 +199,13 @@ still a failure.
 
 ## Parallel backlog
 
-- Finish E8 against the shipping Groq generator.
+- Finish E8 against a shipping generator — the over-refusal it was meant to
+  measure is now visible in ordinary use.
+- Voice: measure section-number accuracy on real speech, and the cost of the
+  Bangla/English language choice (`deepgram_stt.py --compare`).
+- Free-tier budgets are a real constraint: Groq's daily token cap is per model
+  and was exhausted once by verification runs. Prefer offline checks and
+  `--only` over re-running whole suites.
 - Parser gaps surfaced by the catalog verifier (E12): five continuation
   fragments re-detected as sections, and a missing `crpc-s99A`.
 - Measure query rewriting; 28.6% of gold sections are never retrieved.

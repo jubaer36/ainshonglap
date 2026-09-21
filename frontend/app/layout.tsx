@@ -18,8 +18,11 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "AinShonglap · Bangladesh Legal Intelligence Assistant",
-  description: "Plain-language statutory intelligence & verified precedents for Bangladeshi law.",
+  title: "AinShonglap",
+  // No "verified precedents" — there is no case law in the corpus, only the
+  // three Acts.
+  description:
+    "Answers on Bangladesh criminal law, cited to the Code of Criminal Procedure 1898, the Penal Code 1860 and the Evidence Act 1872.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
