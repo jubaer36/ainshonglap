@@ -1,10 +1,9 @@
 # Generation plan — step 12
 
-Answer generation: turn the 5 retrieved sections into a cited answer, or refuse.
-Options, evidence, and what each one would have to prove before adoption.
-
-Nothing here is implemented. This is the survey stage, matching
-`parsing-plan.md` and `retrieval-plan.md`.
+Answer generation: turn retrieved sections into a cited answer, or refuse.
+This began as the option survey; the `Status` section records what is now built.
+The focused path still supplies five sections, while `query-routing-plan.md`
+defines the planned separate comprehensive-discovery path.
 
 ---
 
@@ -79,22 +78,17 @@ Act s.25. Gemini 2.5 Flash answered 5/5 correctly.
 
 | option | for | against |
 |---|---|---|
-| **Gemini 2.5 Flash** (API key already in `.env.local`) | 5/5 on E1 with correct citations; 1M context; native structured output. [Mina](https://arxiv.org/html/2511.08605v1) scored Gemini-2.5-Flash **77% MCQ / 81.8% written / 81.0% viva** on the 2022–23 **Bangladesh Bar Council exams**, graded by law faculty — the closest published jurisdiction match that exists | paid API; external dependency; not self-hosted |
-| **DeepSeek via AgentRouter** (key present) | already wired; cheap | untested here on legal QA |
-| **Local Qwen2.5-7B / Llama-3.1-8B via vLLM** (weights already downloaded) | no API dependency, satisfies "self-hosted" wording, free at inference | E1's 3B sibling hallucinated on 3/5; GRAB-RAG's abstention collapse was measured precisely in this size class |
-| **Llama-3.3-70B via Groq** (what LegalEase-BD uses) | strong, fast, free tier | another external dependency |
+| **Groq Qwen 3.8 27B** | current default; strict JSON schema passed; direct probes returned in 0.95-1.31s | free-tier token limits; two ungrounded probes hallucinated section/Act details, so retrieval and gates are mandatory |
+| **Gemini Flash-Lite** | native structured output; Gemini 2.5 Flash scored 5/5 in E1 and has the closest published Bangladesh-jurisdiction evidence | external dependency; current Flash-Lite version has not received the same local legal evaluation |
+| **OpenRouter LFM / Nemotron Super** | schema-capable fallbacks; LFM is a small fast router | shared free-route latency and availability |
+| **Local baseline models** | useful historical comparison | removed from the production generator registry; unconstrained output and weak E1 result |
 
-**Recommendation:** Gemini 2.5 Flash as primary, behind a thin interface with a
-local vLLM backend as the second implementation. Reasons: the Bar Council
-numbers are the single most relevant published evidence available for this
-jurisdiction, E1 already tested it here, and the brief explicitly permits a free
-or paid API. The local backend is worth building anyway — it makes the
-self-hosted requirement demonstrable, and it gives a second model for the
-judge/verifier roles below, where using the same model to check its own output
-is circular.
-
-**What would change this:** if Gemini and a local model score within noise on
-our own generation eval, take the local one and drop the dependency.
+**Current decision:** Groq `qwen/qwen3.8-27b` is the default behind the common
+LLM interface. Gemini and the two measured schema-capable OpenRouter routes are
+fallbacks. Schema compatibility is established, but legal quality is not: E11
+showed that fast, valid JSON can still contain wrong statutory content. The
+retrieved-section and verbatim-quote gates remain mandatory, and the shipping
+Groq model needs the unfinished generation evaluation.
 
 ---
 
@@ -221,16 +215,17 @@ that refuses everything scores perfectly on hallucination.
 
 ---
 
-## Recommended path
+## Delivery path
 
-| # | do | why it is first |
+| # | work | status |
 |---|---|---|
-| 1 | LLM client behind one interface (Gemini primary, vLLM second) | unblocks both this step and step 10's query rewriting |
-| 2 | structured prompt: claim + section id + verbatim quote (B2+B3) | makes everything downstream checkable |
-| 3 | C2 + C3 deterministic citation gates | closes the E1 fabrication hole, costs nothing, needs no model |
-| 4 | fit the D2 abstention threshold on the 608 set, report the operating point | turns refusal into a measured parameter |
-| 5 | generation eval: citation validity, faithfulness, abstention both directions | the project currently cannot tell if step 12 works at all |
-| 6 | disclaimer in the response contract, not in the prompt | it must not be something the model can forget to say |
+| 1 | common hosted-LLM interface; Groq Qwen default | done |
+| 2 | structured claim + section id + verbatim quote | done |
+| 3 | C2 + C3 deterministic citation gates | done |
+| 4 | fit and publish the D2 score-threshold curve | done; no default adopted |
+| 5 | generation eval: validity, faithfulness, abstention both directions | current gap; E8 incomplete |
+| 6 | disclaimer in the server response, not the prompt | done |
+| 7 | comprehensive multi-section discovery separate from focused generation | planned in `query-routing-plan.md` |
 
 Item 6 is deliberate: a disclaimer emitted by the LLM is a disclaimer the LLM
 can omit. It belongs in the API response schema.
@@ -239,8 +234,8 @@ can omit. It belongs in the API response schema.
 
 ## Open questions
 
-- **Does Gemini 2.5 Flash actually collapse under our misleading context?**
-  GRAB-RAG measured 3.8–8B models. Directly testable: feed it the 41% of
+- **Does Groq Qwen collapse under our misleading context?** GRAB-RAG measured
+  smaller models. Directly testable: feed the shipping model the 41% of
   questions where the gold section is absent from the top 5 and count answers.
   This is the single most informative experiment available and should run before
   any prompt tuning.
@@ -276,7 +271,7 @@ Built and serving (`backend/app/rag/`, `backend/API.md`):
 
 | decision | shipped |
 |---|---|
-| A model | pluggable backend; OpenRouter default. `provider.require_parameters` pins routing to providers that enforce schemas — verified: deepseek-v4-flash, lfm-2.5-2.6b, nemotron-3-super; verified not: gemma-4-31b |
+| A model | pluggable hosted backend; Groq Qwen is the default and passed the strict-schema probe. OpenRouter fallbacks pin routing to providers that enforce schemas |
 | B answer shape | JSON schema, one claim per assertion, each with section number and verbatim quote |
 | C citations | **C2 + C3 live.** C2 resolves the act too, not just the number — all three acts have a s.25. Failing claims dropped; none surviving becomes a refusal. C4 (NLI) not built |
 | D abstention | prompt + gates. D2 threshold now **fitted** (E10): AUC 0.727, weak separation. Still no default — refusing 70% of failed retrievals costs 35% of answerable questions. `min_score` is opt-in with a published curve; -3.00 is the least-bad point if one is wanted |
@@ -309,7 +304,7 @@ it does not remove it, and the residue is the product.
 
 | | choice | the argument |
 |---|---|---|
-| A model | Gemini 2.5 Flash primary, local vLLM second | Mina scored Gemini-2.5-Flash **77% MCQ / 81.8% written** on the 2022–23 Bangladesh Bar Council exams — closest published jurisdiction match. E1 scored it 5/5 here. Second backend so the verifier is not the generator grading itself |
+| A model | Groq Qwen default; Gemini and schema-capable OpenRouter fallbacks | Groq passed strict output and latency probes, but E11 also demonstrated ungrounded legal hallucinations; the common interface and citation gates are therefore non-optional |
 | B answer shape | structured JSON **+** verbatim quote per claim | schema conformance is ~.95 across models while value accuracy varies widely — JSON alone buys well-formedness, the quote field is what makes output checkable |
 | C citations | C2 key validity + C3 quote string-match, deterministic | unusually cheap **for us**: parsing is verified, so the cited section's exact text is known and a quote either occurs in it or does not. Closes the E1 hole where Qwen fabricated a quotation of CrPC s.154 |
 | D abstention | reranker score threshold + quote gate; prompt as cooperative layer only | prompt-only abstention reaches 41.6% under misleading context; chain-of-thought 37.8%. The aggressive option (P3) hits 13.3% but **discards 49.8% of answerable questions** |
@@ -323,7 +318,7 @@ it does not remove it, and the residue is the product.
   operating point** rather than a prompt instruction — the score distribution
   for hits vs misses is directly measurable.
 
-**First experiment, before any prompt tuning:** feed Gemini the 41% of questions
+**First experiment, before any prompt tuning:** feed Groq Qwen the 41% of questions
 where the gold section is absent from the top 5 and count how often it answers
 anyway. GRAB-RAG measured 3.8–8B models on adversarial entity swaps; whether the
 collapse reproduces here, at this model size, on merely-wrong rather than

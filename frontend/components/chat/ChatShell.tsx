@@ -52,6 +52,10 @@ function errorAssistantMessage(error: unknown): AssistantMessage {
     role: "assistant",
     heading: "AinShonglap Plain Legal Guide",
     subheading,
+    // A transport failure renders like a refusal — amber, "can't answer". It is
+    // not out_of_scope (we never reached the corpus) and not clarify (there is
+    // nothing for the reader to disambiguate).
+    kind: "refused",
     unsupported: true,
     blocks: [{ type: "paragraph", segments: [{ type: "text", text }] }],
     citations: {},

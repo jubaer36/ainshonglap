@@ -3,6 +3,10 @@
 FastAPI service over the retrieval + generation pipeline. Endpoints and
 configuration: **`API.md`**.
 
+The default generator is `qwen/qwen3.8-27b` served directly by Groq with strict
+JSON-schema output. OpenRouter LFM currently handles intent routing; Gemini and
+the remaining schema-capable OpenRouter models are optional fallbacks.
+
 ## Run locally
 
 Everything (API + the `scripts/` experiments) runs in one conda env — no `venv`:
@@ -21,7 +25,8 @@ scripts need — one env, one file.
 Docs at http://localhost:8000/docs · health at `/health` (reports index stats
 and the configured models, so a degraded start is visible without reading logs).
 
-`.env.local` (gitignored) holds `OPENROUTER_API_KEY` / `GEMINI_API_KEY`.
+`.env.local` (gitignored) holds `GROQ_API_KEY` for the default Qwen generator.
+`OPENROUTER_API_KEY` is used by the default router; Gemini is an optional fallback.
 
 ```bash
 curl -X POST http://localhost:8000/api/query \
@@ -49,6 +54,37 @@ scripts/             ingestion + tooling: parse, chunk, index, eval, rerank, REP
 design. They used to be separate implementations, and the logged numbers ended
 up describing a pipeline nothing could serve (`experiments.md` E7).
 
+## Request handling
+
+`POST /api/query` is not always a vector-search operation. The current router
+separates six cases:
+
+| intent | execution |
+|---|---|
+| `meta` | describe the indexed corpus and assistant capabilities |
+| `lookup` | fetch an explicitly named Act/section directly |
+| `browse` | enumerate sections from the parsed hierarchy |
+| `summarize` | summarize a whole Act from its chapter outline |
+| `general` | answer without legal citations and label it ungrounded |
+| `legal` | dense retrieval, section collapse, reranking, generation and citation gates |
+
+Stable patterns currently handle obvious meta/browse/lookup/summary requests;
+the schema-constrained router handles the remainder. Direct coordinates are
+validated against the corpus, and ambiguous section numbers require an Act.
+
+**This is being replaced.** `app/rag/plan.py` collapses the six intents into
+four categories — `meta`, `structural` (lookup/browse/summarize, differing by
+operation), `semantic`, `general` — and lets a strict-JSON Groq Qwen call decide,
+returning coordinates only. `app/rag/catalog.py` then executes them against
+`Laws/main/catalog.sqlite` with parameterized SQL. Both are built and measured
+(`experiments.md` E12, E13) but not yet wired into `/api/query`; the executors
+are the next step.
+
+The legal path retrieves 20 distinct section candidates, cross-encoder reranks
+them, and sends the best five to the generator. This is appropriate for a
+focused answer but is not yet an exhaustive “show every related provision”
+mode. Conversation history is accepted by the API but not yet used.
+
 ## Pipeline
 
 Each stage is checked against something external, not self-reported:
@@ -59,6 +95,8 @@ python scripts/verify/verify_parsed.py          #   vs the PDF + the bdlaws orac
 python scripts/chunk_sections.py         # parsed -> Laws/main/chunks/*.json
 python scripts/verify/verify_chunks.py          #   vs the parsed JSON
 python scripts/build_index.py            # chunks -> BGE-M3 vectors + FAISS
+python scripts/build_catalog.py          # parsed -> Laws/main/catalog.sqlite
+python scripts/verify/verify_catalog.py         #   vs the parsed JSON
 python scripts/eval_retrieval.py         #   Recall@k / MRR / Act accuracy
 python scripts/rerank.py --topk 20       #   dense vs + reranker, with delta
 ```
@@ -79,18 +117,30 @@ Measurement lives in `scripts/experiments/`: `eval_retrieval.py`, `rerank.py`,
 `fit_threshold.py`, `experiment_retrieval.py` (prefix, chunk budget),
 `experiment_granularity.py` (retrieval unit), `experiment_abstention.py`
 (does the generator answer when retrieval missed), plus the LLM baselines
-`openrouter_chat.py`, `gemini_chat.py`, `local_llm_chat.py`.
+`groq_chat.py`, `openrouter_chat.py`, `gemini_chat.py`, plus the historical
+local-model baseline scripts.
 
 ## Generator baselines
 
 ```bash
-python scripts/openrouter_chat.py --list            # known model aliases
-python scripts/openrouter_chat.py --model lfm       # REPL; /model switches live
-python scripts/openrouter_chat.py --json --model X  # does this route enforce JSON schema?
-python scripts/gemini_chat.py                       # Gemini 2.5 Flash
-python scripts/local_llm_chat.py                    # local Qwen2.5-VL-3B
+python scripts/plan_demo.py                         # planner, question by question
+python scripts/experiments/plan_cases.py            # planner, graded (E13)
+python scripts/groq_chat.py                         # default Qwen REPL
+python scripts/groq_chat.py --json                  # strict-schema probe
+python scripts/openrouter_chat.py --model lfm       # router/fallback probe
+python scripts/gemini_chat.py                       # optional Gemini fallback
 ```
 
 The `--json` probe matters: a route that ignores the schema returns prose, which
 inside the pipeline would surface as a false refusal. Requests pin
 `provider.require_parameters` so such routes fail loudly instead.
+
+## Current limitations
+
+- only the CrPC, Penal Code and Evidence Act are served
+- legal generation sees five reranked sections, limiting broad coverage
+- model routing and structural scope extraction are not yet one unified plan
+- history does not yet resolve follow-ups such as “show that chapter”
+- exact browsing is an in-memory read model over `chunks.json`, not yet SQLite
+- citation gates validate the source and quote, not semantic entailment
+- generation abstention and multi-section completeness evaluation are unfinished

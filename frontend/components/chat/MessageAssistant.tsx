@@ -1,4 +1,5 @@
 import type { AssistantMessage } from "@/lib/types";
+import { AnswerKindBadge } from "./AnswerKindBadge";
 import { BlockRenderer } from "./BlockRenderer";
 import { QuickActionButton } from "./QuickActionButton";
 import { UnsupportedAnswer } from "./UnsupportedAnswer";
@@ -20,9 +21,12 @@ export function MessageAssistant({
         আইন
       </div>
       <div className="flex-1 space-y-3">
-        <div className="flex items-center justify-between pb-1 border-b border-slate-100 text-xs">
+        <div className="flex items-center justify-between gap-3 pb-1 border-b border-slate-100 text-xs">
           <span className="text-xs font-medium text-slate-800">{message.heading}</span>
-          <span className="text-[11px] text-slate-400">{message.subheading}</span>
+          <span className="flex items-center gap-2 flex-shrink-0">
+            <AnswerKindBadge kind={message.kind} />
+            <span className="text-[11px] text-slate-400">{message.subheading}</span>
+          </span>
         </div>
 
         {message.unsupported ? (

@@ -1,8 +1,8 @@
 # Experiment log
 
 Each entry: objective, hypothesis, configuration, result, decision. Negative
-results are kept — two of the three so far overturned an assumption, which is
-more useful than confirming one.
+and inconclusive results are kept because several overturned assumptions or
+exposed harness defects.
 
 Harness: `backend/scripts/experiments/experiment_retrieval.py`. All runs score against the
 same 608 gold questions from `bangladesh-legal-qa-dataset` (external, scraped
@@ -353,11 +353,10 @@ E1's fabricated-quotation failure by construction. But whether the prompt alone
 would have sufficed is an open question, and the honest statement is that this
 project does not yet know how often its generator over-answers.
 
-**To finish it:** ~19 calls for the control stratum, with incremental writes so
-an interrupted run resumes instead of re-spending. Worth running against
-deepseek-v4-flash and liquid/lfm-2.5-2.6b both — GRAB-RAG's collapse was
-measured in the 2.6B size class, so a gap between them would be the published
-finding reproducing on our corpus.
+**To finish it:** rerun both strata against the shipping Groq Qwen generator,
+with incremental writes so an interrupted run resumes instead of re-spending.
+Gemini or LFM can be a comparison arm only after the default model has a complete
+result.
 
 ---
 
@@ -424,7 +423,171 @@ spending as a refusal.
 
 ---
 
-## What E2-E10 together establish
+## E11 — direct Groq Qwen provider and schema smoke test
+
+**Objective.** Replace slow/unreliable free OpenRouter answer routes with a fast
+direct provider without losing the strict JSON shape required by the answer
+pipeline.
+
+**Config.** `qwen/qwen3.8-27b` through Groq's OpenAI-compatible endpoint,
+temperature 0. Two no-retrieval probes in `scripts/groq_chat.py`: one strict
+JSON-schema request about police confessions and one ordinary request about
+Penal Code s.379.
+
+**Result.** The strict-schema response returned in **1.31s** and the ordinary
+response in **0.95s**. The JSON response matched the closed schema exactly.
+Both legal answers were substantively unsafe without retrieval:
+
+- it attributed Evidence Act ss.25-27 to the CrPC;
+- it described Penal Code s.379 as the definition of theft and s.380 as the
+  general punishment, confusing the roles of ss.378-380.
+
+**Decision.** Adopt Groq Qwen as the default provider/model for its latency and
+schema enforcement, never for parametric legal knowledge. Keep retrieval and
+C2/C3 gates mandatory. This is a provider/compatibility smoke test, **not** a
+generation-quality measurement: n=2 and no retrieved context. Finish E8 against
+this shipping model before making claims about grounded quality or abstention.
+
+---
+
+## E12 — building the structural catalog, and what verifying it found
+
+**Objective.** Give exact requests ("Chapter XVI", "sections 378 to 382") an
+exact mechanism. Semantic ranking is the wrong instrument once the reader has
+named what they want: asked for Chapter XVI, a vector index returns what *reads
+like* Chapter XVI, which is not the same set.
+
+**Config.** `scripts/build_catalog.py` builds `Laws/main/catalog.sqlite` from
+`Laws/main/parsed/*.json` — acts, chapters, sections, subsections,
+cross-references, and an FTS5 index over titles and text.
+`scripts/verify/verify_catalog.py` re-reads the parsed JSON and compares, on the
+same principle as `verify_parsed.py`: a builder that drops a section drops it
+from its own count too.
+
+**Result.** 3 acts, 76 chapters, 1,247 sections, 1,873 subsections, 878
+cross-references, 2.5 MB. Rebuild is deterministic by content digest. All checks
+pass.
+
+Two of the three findings are **already-known parser defects**, listed under
+*Outstanding* in `verification.md` — the catalog verifier reproduced them from a
+different direction, which is the useful part, not a discovery:
+
+1. **Five section numbers occur twice** — `crpc-s100/344/429/526`, `penal-s2`.
+   Known from `verify_chunks.py`, which hit them as duplicate chunk ids. What is
+   new is the mechanism: they are kept (the text is in the document), flagged
+   `continuation=1`, excluded from listings, and denied the citation key, so the
+   catalog can hold them without `penal-s2` resolving to a fragment from page
+   104. **The live system still has the older behaviour** — `app/rag/library.py`
+   concatenates same-key chunks, gluing those fragments onto the real section's
+   text.
+2. **`crpc-s99A` is missing from the parse.** Also known (one of seven CrPC
+   sections missing against the oracle). Reached here independently: it is cited
+   five times by other sections while 99B-99G are all present, so reference
+   resolution finds it without consulting the oracle at all.
+
+The third is new:
+
+3. **60 references resolve nowhere in their own Act but exist in another** —
+   CrPC text saying "section 323" with no Act named, where 323 is Penal Code.
+   The build refuses to guess a target and the verifier counts them, rather than
+   letting them average into a success rate.
+
+One extraction bug found and fixed mid-build: `"section 3 and 2nd Schedule"` was
+producing a reference to a section `2ND`, 49 times. Rejecting ordinals dropped
+unresolved references from 13.9% to 9.1%.
+
+**Decision.** Adopt. The catalog is a rebuildable read model; parsed JSON
+remains the source of truth. Note that no retrieval number moves here — this is
+a correctness mechanism for requests retrieval was answering wrongly, not a
+ranking change, so the 608-question rule does not apply to it. The parser
+findings are logged for the parsing backlog, not fixed here.
+
+---
+
+## E13 — model-authored planning replaces the regex router
+
+**Objective.** Decide what a question *is* before answering it. The regex router
+could only recognise phrasings someone had already thought of: "show me the
+sections about documentary evidence" matched no pattern, fell through to
+semantic search, and answered a listing request with five ranked guesses.
+
+**Config.** `app/rag/plan.py`. One strict-JSON Groq Qwen call returns
+coordinates only — category, operation, act, chapter, sections, range — never
+statutory text and never SQL. `validate()` then checks every coordinate against
+the catalog. Four categories (meta, structural, semantic, general) against the
+old router's six intents; browse/summarize/lookup all become `structural`,
+differing by operation rather than by machine. Measured on
+`scripts/experiments/plan_cases.py`: 41 pinned questions, of which the first 27
+are exactly those pinned against the regex router.
+
+**Result.** **Category 42/42 (100%). Scope 25/27 (93%)** on first run, 293s,
+one transient fallback. Cases the regex router could not structurally pass:
+
+| question | plan |
+|---|---|
+| show me the sections about documentary evidence | evidence, Ch V |
+| state the laws from the murder chapter | penal, Ch XVI |
+| list the chapter on offences against property | penal, Ch XVII |
+| Show me section 25 | clarification — exists in all three Acts |
+| Show me Chapter XCIX of the Penal Code | rejected, note recorded |
+
+Both scope failures were in our code, not the model's: the plan carried the
+reader's "16" where the Act prints "XVI". Execution was already correct, since
+the catalog matches either, but the raw spelling would leak into answer headings
+and break equality downstream. The validator now canonicalises to the Act's own
+numbering.
+
+**The cost problem, and the fix.** The first version sent the full 76-chapter
+listing on every call: 1,873 tokens, which exhausted Groq's
+input-tokens-per-minute allowance after *three* questions — 7 of 10 test calls
+died on 429. Restructured into two tiers: the standard call sends only the act
+list (778 tokens), and the chapter listing is fetched in a second call only when
+the planner reports a chapter described by subject rather than numbered. Most
+questions now cost one call at 0.5-0.6s; "the murder chapter" costs two at
+0.9s. Backoff on 429 was added at the same time, so a burst becomes latency
+rather than a silent degradation to semantic search.
+
+**Decision.** Adopt model-first planning, reversing the position recorded
+against the old router. That position — patterns first, model only for leftovers
+— was evidence-based, but the evidence was against **lfm-2.6B**, which had
+labelled identical phrasings differently between two prompt revisions. Groq Qwen
+on the same job is 42/42. The model changed, so the conclusion changed.
+
+**A hole found after the first run: `general` was doing two jobs.** Asked "What
+does the Dowry Prohibition Act say about demanding dowry?", the planner returned
+`general` — defined as *answer plainly, no citations*, i.e. from parametric
+memory. That is an ungrounded legal answer about a statute this corpus does not
+hold: precisely E1, where the same model family placed Evidence Act ss.25-27 in
+the CrPC. Collapsing "not law" and "law we do not have" into one category is
+safe in one direction and dangerous in the other, so they were split. A fifth
+category, `out_of_scope`, now covers legal questions outside the three Acts:
+7/7 on the boundary cases, with `general` and `semantic` unchanged.
+
+**Scenario questions.** These are what the product is for, and single-turn they
+work: "My brother and two friends beat a man outside a shop at midnight, the man
+died, they were arrested without a warrant" plans as `semantic` with the
+restatement *"arrest without warrant for causing death by voluntarily causing
+hurt"*. One risk surfaced. The planner returned `act=crpc` for that scenario —
+right for the arrest, wrong as a filter, because the death engages Penal Code
+culpable homicide. **On a semantic plan the Act must be a hint, not a filter**,
+or retrieval drops the provisions the question needs. Recorded in `plan.md`
+phase 3 before the executors are written.
+
+Follow-ups do not work: "In that scenario, what if the man had survived?" plans
+as `out_of_scope` with a clarification. It asks instead of inventing, which is
+the right failure mode, but conversation scope (phase 6) is what fixes it.
+
+**What this does not measure.** Planner accuracy is not answer accuracy. These
+cases are hand-written by the same person who wrote the prompt, which is the
+weakest kind of test set; they catch regressions, not blind spots. The
+clarification and `out_of_scope` paths are decided and validated but have no
+executor and no UI. And `out_of_scope` only catches questions that *name* a
+statute we lack — a question that sounds like our Acts but is not answered by
+them still needs the relevance threshold (phase 4) to abstain.
+
+---
+
+## What E2-E13 together establish
 
 Both chunk-formatting knobs are flat — retrieval on this corpus is not limited
 by how chunks are labelled or sized. Ranking is where the gains were, exactly as
@@ -439,8 +602,10 @@ Where the 608 questions stand on the live pipeline (dual index + reranking):
 | never retrieved at all | 31.6pp | −3.0pp (E5) | **28.6pp** |
 | wrong statute at rank 1 | 17.8% | −5.3pp | **12.5%** |
 
-**Next.** Query rewriting for the never-retrieved bucket, which is now within
-1pp of being the largest and which no reranker can reach.
+**Next retrieval experiment.** Query rewriting for the never-retrieved bucket,
+which is now within 1pp of being the largest and which no reranker can reach.
+The product-level work immediately before it is the query-planner shadow
+evaluation and multi-section ground-truth set in `query-routing-plan.md`.
 
 Generation is now built and served, and is the part of the system with no
 numbers attached to it: no faithfulness, citation-precision or abstention

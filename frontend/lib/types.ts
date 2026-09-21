@@ -59,11 +59,36 @@ export interface UserMessage {
   text: string;
 }
 
+/**
+ * Which machine produced an answer. `unsupported` only says "not a grounded
+ * answer"; it cannot tell "outside these Acts" from "which Act did you mean?",
+ * and those read very differently to someone waiting for an answer.
+ *
+ *  legal        retrieved, generated, every claim citation-checked
+ *  lookup       one named section, quoted verbatim from the catalog
+ *  outline      a chapter/range listing, or a whole-Act summary
+ *  meta         about the assistant itself
+ *  general      not a legal question; the model's own knowledge, uncited
+ *  out_of_scope a legal question about law outside the indexed Acts
+ *  clarify      the request needs one more detail before it can be run
+ *  refused      searched, and nothing survived the citation gates
+ */
+export type AnswerKind =
+  | "legal"
+  | "lookup"
+  | "outline"
+  | "meta"
+  | "general"
+  | "out_of_scope"
+  | "clarify"
+  | "refused";
+
 export interface AssistantMessage {
   id: string;
   role: "assistant";
   heading: string;
   subheading: string;
+  kind: AnswerKind;
   unsupported: boolean;
   blocks: ContentBlock[];
   citations: Record<string, Citation>;
@@ -123,4 +148,30 @@ export interface GeneratorInfo {
   enforcesSchema: boolean | null;
   note: string | null;
   default: boolean;
+}
+
+/**
+ * What the planner decided, from GET /api/plan — coordinates, never content.
+ * Used by the debug view: when an answer looks wrong, the first question is
+ * whether it was *planned* wrong.
+ */
+export interface QueryPlan {
+  question: string;
+  category: "meta" | "structural" | "semantic" | "out_of_scope" | "general";
+  operation: "fetch" | "enumerate" | "overview" | null;
+  act: string | null;
+  chapter: string | null;
+  sections: string[];
+  range: [string, string] | null;
+  searchQuery: string | null;
+  terms: string[];
+  needsClarification: boolean;
+  clarification: string | null;
+  /** "llm" normally; "fallback" when planning failed and the question
+   *  degraded to plain semantic retrieval. */
+  by: string;
+  /** Everything validation changed or rejected, e.g. a chapter renumbered to
+   *  the Act's own spelling, or a coordinate dropped for not existing. */
+  notes: string[];
+  error: string | null;
 }

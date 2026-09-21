@@ -17,6 +17,7 @@ Supporting detail, read only when working on that area:
 `retrieval-plan.md` (embedder and retrieval options and the decision),
 `retrieval-baseline.md` (measured retrieval numbers),
 `generation-plan.md` (answer generation, citation enforcement, abstention options),
+`query-routing-plan.md` (model-authored plans, SQLite catalog, broad coverage),
 `experiments.md` (experiment log — read before re-testing something),
 `similar-projects.md` (what comparable repos chose at each stage),
 `verification.md` (how parsing and chunking are checked).
@@ -47,7 +48,8 @@ cd backend
 uvicorn app.main:app --reload            # API on :8000
 ```
 
-Secrets live in `backend/.env.local` (gitignored).
+Secrets live in `backend/.env.local` (gitignored). Groq Qwen is the default
+generator (`GROQ_API_KEY`); OpenRouter LFM is currently the default router.
 
 ## The pipeline
 
@@ -61,25 +63,39 @@ python scripts/verify/verify_parsed.py          #   check vs the PDF + bdlaws or
 python scripts/chunk_sections.py         # parsed  -> Laws/main/chunks/*.json
 python scripts/verify/verify_chunks.py          #   check vs the parsed JSON
 python scripts/build_index.py            # chunks  -> BGE-M3 vectors + FAISS
+python scripts/build_catalog.py          # parsed  -> Laws/main/catalog.sqlite
+python scripts/verify/verify_catalog.py         #   check vs the parsed JSON
 
 # any legal PDF, not just the three acts; --backend auto OCRs scans via Docling
 python scripts/parse_law_pdf.py --pdf "Laws/The Arms Act, 1878.pdf" \
     --name "The Arms Act, 1878" --act-no "XI of 1878" --slug arms
 
+python scripts/plan_demo.py          # walk the planner question by question
+python scripts/experiments/plan_cases.py         #   graded: category + scope (E13)
 python scripts/eval_retrieval.py     #   Recall@k / MRR / Act accuracy
 python scripts/rerank.py --topk 20   # + cross-encoder rerank, with delta
 python scripts/experiments/fit_threshold.py      #   abstention operating curve (E10)
 python scripts/experiments/experiment_retrieval.py --what all   # A/B prefix, chunk budget
 python scripts/experiments/experiment_granularity.py            # retrieval unit (E5)
 python scripts/experiments/experiment_abstention.py --n 20      # over-answering (E8)
+python scripts/groq_chat.py --json                              # Groq schema probe (E11)
 ```
+
+Two read models, two jobs. **FAISS** answers "which provisions resemble this
+question"; **`catalog.sqlite`** answers "which provisions *are* these" — exact
+section, range, chapter, Act. Both are rebuildable from the parsed JSON, which
+stays the only source of law. A model names coordinates
+(`app/rag/plan.py`); `app/rag/catalog.py` fetches them with parameterized SQL.
+The model never writes SQL, and a coordinate the catalog does not have comes
+back empty rather than as the nearest match.
 
 Serving: `uvicorn app.main:app --reload`. The API and the eval scripts share
 `app/rag/pipeline.retrieve()` — keep it that way. They were once separate, and
 the logged numbers ended up describing a pipeline nothing could serve (E7).
 Endpoints and configuration: `backend/API.md`.
 
-Generator routes must enforce JSON schema; check one with
+Generator routes must enforce JSON schema. Check the default with
+`python scripts/groq_chat.py --json`; check an OpenRouter fallback with
 `python scripts/openrouter_chat.py --json --model <alias>`. A route that ignores
 the schema returns prose, which the pipeline would surface as a false refusal.
 

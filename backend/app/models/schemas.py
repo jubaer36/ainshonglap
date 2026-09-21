@@ -115,12 +115,22 @@ class HistoryMessage(BaseModel):
 
 
 class QueryRequest(BaseModel):
-    question: str
+    question: str = Field(examples=["What is the punishment for theft?"])
     history: list[HistoryMessage] = Field(default_factory=list)
     # Optional per-request generator: an alias from GET /api/models, a
     # "backend:model" pair, or a bare model id. Omitted uses the server default.
-    model: str | None = None
-    refine: bool | None = None      # override the query-refiner flag
+    #
+    # `examples=[None]` is load-bearing: without it Swagger UI fills the field
+    # with the literal string "string", which reaches the provider as a model id
+    # and comes back as a 404 that reads like an outage rather than a typo.
+    model: str | None = Field(
+        default=None, examples=[None],
+        description="Generator alias from GET /api/models (e.g. 'qwen'), a "
+                    "'backend:model' pair, or a bare model id. Omit for the "
+                    "server default.")
+    refine: bool | None = Field(
+        default=None, examples=[None],
+        description="Override the query-refiner flag. Omit for the server default.")
 
 
 class AssistantMessage(BaseModel):
@@ -128,6 +138,12 @@ class AssistantMessage(BaseModel):
     role: Literal["assistant"] = "assistant"
     heading: str
     subheading: str
+    # Which machine produced this, so the client can render the outcomes
+    # differently. `unsupported` says only that it is not a grounded answer; it
+    # cannot distinguish "outside these Acts" from "which Act did you mean?",
+    # and those deserve different treatment on screen.
+    kind: Literal["legal", "lookup", "outline", "meta", "general",
+                  "out_of_scope", "clarify", "refused"] = "legal"
     unsupported: bool = False
     blocks: list[ContentBlock]
     citations: dict[str, Citation] = Field(default_factory=dict)

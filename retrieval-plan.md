@@ -125,10 +125,12 @@ retrieved?" should gate answering.
 
 ## Plan
 
-Status: 1-4 done. Cross-encoder reranking adopted (E4); structure-aware
-reranking and hybrid BM25 still untested; step 5's refusal path is built as
-citation gates rather than a score threshold, and is **not yet measured** —
-see `generation-plan.md`.
+Status: the dense baseline, evaluation harness, cross-encoder reranker,
+dual-granularity index and shared serving pipeline are built. Live results are
+R@1 41.8%, R@5 59.0%, R@20 71.4%, MRR 0.498 and Act accuracy 87.5% (E7).
+The fitted score threshold is weak (AUC 0.727) and remains opt-in (E10);
+downstream citation gates are live, while generation abstention is not yet
+measured completely.
 
 1. **Baseline** — BGE-M3, local store, dense-only. Index 1,321 chunks with
    metadata.
@@ -138,14 +140,21 @@ see `generation-plan.md`.
    first.
 3. **Measure**: Recall@k and nDCG@k against gold sections. Nothing is adopted
    before this exists.
-4. **Then test, in descending order of evidence**: structure-aware reranking →
-   cross-encoder reranker → hybrid BM25.
+4. **Then test, in descending order of evidence**: cross-encoder reranking was
+   adopted; structure-aware cross-reference expansion and hybrid BM25 remain
+   untested.
 5. **Refusal path** in parallel: abstain when retrieval is weak, and measure
    abstention as its own metric.
 
-## Open question worth settling first
+## Current next questions
 
-Parsing the remaining 25 acts (step 7) may belong *before* this, for two
-reasons: the index would otherwise be built twice, and Document-Level Retrieval
-Mismatch — the failure the hierarchy prefix exists to prevent — is not really
-measurable across only three acts.
+- Can model-generated statutory query facets raise the 71.4% candidate ceiling?
+- Can explicit cross-reference expansion improve multi-section coverage on top
+  of the existing reranker?
+- What relevance threshold gives useful comprehensive discovery without flooding
+  the result with adjacent but immaterial provisions?
+
+These now sit inside `query-routing-plan.md`, which separates the five-section
+focused answer path from broad, thresholded and paginated discovery. Parsing the
+remaining Acts remains a corpus-expansion task, not a prerequisite for measuring
+the current three-Act pipeline.

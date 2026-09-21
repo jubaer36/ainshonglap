@@ -7,14 +7,15 @@
 > verbatim in it. That check is only cheap because parsing is verified here:
 > the cited section's exact text is known.
 
-How we know the parse and the chunks are correct, and what is still
-outstanding. Two suites, one per stage.
+How we know the parse, the chunks and the catalog are correct, and what is still
+outstanding. Three suites, one per stage.
 
 ```bash
 conda activate ainshonglap
 cd backend
 python scripts/verify/verify_parsed.py                  # PDF -> parsed JSON
 python scripts/verify/verify_chunks.py                  # parsed JSON -> chunks
+python scripts/verify/verify_catalog.py                 # parsed JSON -> catalog.sqlite
 python scripts/verify/verify_parsed.py --act crpc --verbose
 ```
 
@@ -155,9 +156,60 @@ prefix and metadata disagree would cite the wrong provision.
    sections were pooled and compared against a single source, reporting false
    K1/K2/K5 failures.
 
-Three of the defects found across both stages have been in verification code
+Four of the defects found across the three stages have been in verification code
 rather than in the data. **Check the checker** is not a slogan here; it is the
 most common failure mode on this project.
+
+## Stage 3 — the catalog (`verify_catalog.py`)
+
+`catalog.sqlite` is a rebuildable read model of the parsed JSON, and the same
+rule applies to it: the build script reports what it *thinks* it inserted, which
+is not evidence. Every check re-reads `Laws/main/parsed/*.json`. **All checks
+pass** — 3 acts, 76 chapters, 1,247 sections, 1,873 subsections, 878 references.
+
+**D1 — counts.** Acts, chapters, sections and subsections, recomputed per act
+from the JSON, including the nested child tree.
+
+**D2 — text parity.** Every section's text compared byte for byte, **by
+position** rather than by citation key. The first version of this check keyed on
+`penal-s302`-style keys and reported the catalog as broken; the duplicate
+section numbers below mean a key is not a unique handle. The checker was wrong,
+as usual.
+
+**D3 — identity and hierarchy.** Citation keys unique; no section orphaned from
+its chapter; nested children keep their parent link; no section filed under
+another Act's chapter.
+
+**D4 — statutory ordering.** `num_int`/`num_suffix` must sort 302 < 302A < 303,
+and must reconstruct the printed number exactly. Lexicographic order puts `302A`
+before `31`, which would make every range query cover the wrong interval.
+
+**D5 — FTS parity.** The full-text index covers exactly the sections table, and
+returns a match for a term known to be in the corpus.
+
+**D6 — reference resolution.** Resolvable targets must exist. Unresolved ones
+are **reported as a rate, not failed** — drafters cite repealed and
+out-of-corpus provisions, and that is the document's business. Two patterns are
+separated out of that rate because they are not the document's business: a
+target cited alongside lettered siblings that exist (a parse gap), and a target
+absent from its own Act but present in another (a reference the conservative
+same-Act default mis-assigns).
+
+**D7 — determinism.** Rebuild into a temp file; the content digest must match.
+The digest hashes rows in fixed order rather than file bytes, since SQLite's
+page allocation is not ours to control.
+
+### What it caught
+
+- **Five duplicate section numbers**, independently reproducing the defect
+  `verify_chunks.py` found as duplicate chunk ids. Now held as
+  `continuation = 1`: kept, excluded from listings, denied the citation key.
+- **`crpc-s99A`**, reached without the oracle — it is cited five times while
+  99B-99G are present.
+- **49 references to a section `2ND`**, from `"section 3 and 2nd Schedule"`.
+  Rejecting ordinals took unresolved references from 13.9% to 9.1%.
+- **One bug in the checker itself** (D2, above) — the fourth such across three
+  stages.
 
 ## Outstanding
 

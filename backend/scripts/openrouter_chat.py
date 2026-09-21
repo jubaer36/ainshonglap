@@ -13,7 +13,7 @@ Run (from backend/, with the ainshonglap conda env active):
     python experiments/openrouter_chat.py --model lfm     # alias, or a full id
     python experiments/openrouter_chat.py --list          # known aliases
     python experiments/openrouter_chat.py --check --model all   # verify every route (free)
-    python experiments/openrouter_chat.py --json --model gemma  # structured-output probe
+    python scripts/openrouter_chat.py --json --model lfm  # structured-output probe
 
 Inside the REPL, `/model <alias>` switches without restarting and `/models`
 lists them.
@@ -50,7 +50,8 @@ from app.rag import config as _cfg  # noqa: E402
 
 MODELS = {a: g["model"] for a, g in _cfg.GENERATORS.items()
           if g["backend"] == "openrouter"}
-DEFAULT = _cfg.DEFAULT_GENERATOR
+DEFAULT = (_cfg.DEFAULT_ROUTER if _cfg.DEFAULT_ROUTER in MODELS
+           else next(iter(MODELS)))
 MODEL_ID = MODELS[DEFAULT]
 
 
@@ -115,8 +116,8 @@ def ask(key: str, model: str, question: str, schema: dict | None = None) -> tupl
         # OpenRouter serves one model from several providers, and the model's
         # advertised `structured_outputs` is the union across them. Without this,
         # the request can land on a provider that treats the schema as a hint and
-        # returns prose — google/gemma-4-31b-it did exactly that. This restricts
-        # routing to providers that actually support every parameter sent.
+        # returns prose. This restricts routing to providers that actually
+        # support every parameter sent.
         body["provider"] = {"require_parameters": True}
 
     r = requests.post(f"{API}/chat/completions", headers=headers(key),

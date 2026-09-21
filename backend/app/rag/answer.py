@@ -27,12 +27,13 @@ A disclaimer the generator emits is one the generator can omit.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from app.rag import config
 from app.rag.llm import get_llm
 from app.rag.pipeline import Retrieved, retrieve
-from app.rag.refine import Refined, refine
+from app.rag.refine import Refined, extract_scope, parse_citation, refine
 from app.rag.citations import strip_prefix
 from app.rag.verify import VerifiedAnswer, check_claims
 
@@ -112,7 +113,10 @@ class Answer:
     question: str
     refused: bool
     reason: str | None                  # why, when refused
-    kind: str = "legal"          # "legal" | "meta" — meta answers carry no citations
+    # legal | meta | general | lookup | outline — and, from the planner path,
+    # structural | out_of_scope | clarify. Only `legal`, `lookup` and `outline`
+    # carry citations; the rest deliberately carry none.
+    kind: str = "legal"
     ambiguous: bool = False
     clarification: str = ""
     summary: str = ""
@@ -122,6 +126,9 @@ class Answer:
     verification: VerifiedAnswer | None = None
     model: str = ""
     refined: Refined | None = None      # None when routing is off
+    # The plan this answer was executed from, when it came through the planner
+    # path (app/rag/execute.py). None on the older router path.
+    plan: object | None = None
 
 
 def capability_answer() -> str:
@@ -152,6 +159,255 @@ def capability_answer() -> str:
         "rather than answering from memory. I cannot advise on your situation, "
         "cover case law or other statutes, or tell you what a court would decide."
     )
+
+
+GENERAL_SYSTEM = (
+    "You are the general-conversation side of a Bangladesh criminal law "
+    "assistant. This question is not about the indexed Acts, so answer it "
+    "normally and briefly from your own knowledge. Do NOT cite Bangladeshi "
+    "statutes, and do not claim the answer comes from them — the citation "
+    "machinery does not run on this path, so anything you cite here is "
+    "unverified."
+)
+
+GENERAL_SCHEMA = {
+    "type": "object",
+    "properties": {"answer": {"type": "string", "description": "brief, direct"}},
+    "required": ["answer"],
+}
+
+
+def general_answer(question: str, ref: Refined | None, *, backend: str | None = None,
+                   model: str | None = None) -> Answer:
+    """Answer an ordinary, non-legal question.
+
+    Kept strictly apart from the legal path: no retrieval, no citations, and the
+    result is marked `kind="general"` so the presenter can say where it came
+    from. Refusing these was wrong — "what is 17 times 23" is not a failure of a
+    legal assistant — but answering them *as though grounded* would be worse.
+    """
+    try:
+        raw = get_llm(backend, model).generate_json(GENERAL_SYSTEM, question,
+                                                    GENERAL_SCHEMA)
+        text = (raw.get("answer") or "").strip()
+    except Exception as exc:
+        return Answer(question, refused=True, refined=ref,
+                      reason=f"general answer unavailable: {type(exc).__name__}")
+    if not text:
+        return Answer(question, refused=True, refined=ref,
+                      reason="no answer produced")
+    return Answer(question, refused=False, reason=None, kind="general",
+                  summary=text, refined=ref)
+
+
+def lookup_answer(question: str, ref: Refined | None) -> Answer | None:
+    """Return a named section verbatim, or None if it cannot be resolved.
+
+    No LLM and no retrieval: the reader supplied the citation, so this is a
+    dictionary lookup. That also makes it the one path where the quoted text is
+    guaranteed correct by construction.
+    """
+    from app.rag import library
+
+    parsed = parse_citation(question)
+    if not parsed:
+        return None
+    slug, number = parsed
+    slugs = [slug] if slug else [a["slug"] for a in library.acts()]
+    found = [rec for s in slugs if (rec := library.get(f"{s}-s{number}"))]
+    if not found:
+        return None
+    if len(found) > 1:
+        names = ", ".join(f"{r['act']} s.{number}" for r in found)
+        return Answer(question, refused=True, refined=ref,
+                      reason=f"section {number} exists in more than one Act "
+                             f"({names}) — name the Act")
+    rec = found[0]
+    hit = Retrieved(act=rec["act"], section=rec["section"],
+                    section_title=rec.get("section_title"), text=rec["text"],
+                    score=0.0, dense_score=0.0, rank=1, metadata=rec)
+    title = f"{rec['act']}, Section {rec['section']}"
+    if rec.get("section_title"):
+        title += f": {rec['section_title']}"
+    return Answer(question, refused=False, reason=None, kind="lookup",
+                  summary=title,
+                  claims=[{"text": rec["text"], "section": rec["section"],
+                           "quote": rec["text"]}],
+                  sources=[hit], refined=ref)
+
+
+SUMMARY_SYSTEM = (
+    "You write a short plain-English overview of a statute. You are given its "
+    "real chapter structure, taken from the parsed document. Describe what the "
+    "Act covers, chapter by chapter, in at most 150 words.\n\n"
+    "Use ONLY the chapter titles and counts provided. Do not name section "
+    "numbers, do not state penalties, and do not add anything you know about "
+    "this Act from elsewhere — the outline is the only thing that has been "
+    "verified against the source document."
+)
+SUMMARY_SCHEMA = {
+    "type": "object",
+    "properties": {"summary": {"type": "string"}},
+    "required": ["summary"],
+}
+
+
+def outline_answer(question: str, ref: Refined | None, *, prose: bool = True,
+                   backend: str | None = None, model: str | None = None) -> Answer:
+    """Summarise a whole Act from its parsed structure.
+
+    The Act cannot be summarised by retrieval — 556 sections is not a top-5 — and
+    feeding all of them to a model would be both expensive and pointless, since
+    the answer wanted is structural. So the structure IS the answer: parts,
+    chapters, chapter titles and counts, straight out of the parsed hierarchy.
+
+    The optional prose pass sees only that outline, never the statutory text, so
+    it can rephrase the document's own shape but cannot invent provisions.
+    """
+    from app.rag import library
+
+    slug = library.resolve_act(question)
+    if not slug:
+        acts = library.acts()
+        names = ", ".join(a["name"] for a in acts)
+        return Answer(question, refused=True, refined=ref,
+                      reason=f"name which Act to summarise ({names})")
+    o = library.outline(slug)
+    if not o:
+        return Answer(question, refused=True, refined=ref,
+                      reason=f"{slug} is not in the index")
+
+    head = f"{o['act']}"
+    if o["act_no"]:
+        head += f" ({o['act_no']})"
+    facts = (f"{head} — {o['sections']} sections in {len(o['chapters'])} chapters"
+             + (f", pp. {o['pages'][0]}-{o['pages'][1]} of the source PDF."
+                if o["pages"] else "."))
+    lines = [f"{c['chapter']}. {c['title'] or '(untitled)'} — "
+             f"{len(c['sections'])} sections" for c in o["chapters"]]
+
+    text = facts
+    if prose:
+        payload = head + "\n" + "\n".join(lines)
+        try:
+            raw = get_llm(backend, model).generate_json(
+                SUMMARY_SYSTEM, payload, SUMMARY_SCHEMA)
+            if (w := (raw.get("summary") or "").strip()):
+                text = f"{facts}\n\n{w}"
+        except Exception:
+            pass          # the structural facts stand on their own
+    return Answer(question, refused=False, reason=None, kind="outline",
+                  summary=text, claims=[{"text": l, "section": "", "quote": ""}
+                                        for l in lines],
+                  refined=ref)
+
+
+# "Chapter XVI", "chapter 16", "ch. V" — the scope of a listing request.
+CHAPTER_RE = re.compile(r"\b(?:chapter|chap\.?|ch\.)\s*([IVXLC]+|\d{1,2})\b", re.I)
+
+_ROMAN = {"I": 1, "V": 5, "X": 10, "L": 50, "C": 100}
+
+
+def _roman_to_int(r: str) -> int | None:
+    total, prev = 0, 0
+    for ch in reversed(r.upper()):
+        v = _ROMAN.get(ch)
+        if v is None:
+            return None
+        total, prev = (total - v if v < prev else total + v), max(v, prev)
+    return total
+
+
+def chapter_key(text: str) -> str | None:
+    """Chapter named in the question, normalised to how the parser stores it."""
+    m = CHAPTER_RE.search(text)
+    if not m:
+        return None
+    raw = m.group(1).upper()
+    return raw if _roman_to_int(raw) is not None and not raw.isdigit() else raw
+
+
+def _chapter_matches(stored: str, asked: str) -> bool:
+    """Compare "XVI" against "16" as well as against "XVI".
+
+    Chapters are stored as the document writes them, which is roman for all
+    three acts. A reader typing "chapter 16" means the same thing.
+    """
+    stored, asked = (stored or "").strip().upper(), asked.strip().upper()
+    if stored == asked:
+        return True
+    si, ai = _roman_to_int(stored), (int(asked) if asked.isdigit()
+                                     else _roman_to_int(asked))
+    return si is not None and ai is not None and si == ai
+
+
+def browse_answer(question: str, ref: Refined | None, limit: int = 60,
+                  scope=None) -> Answer:
+    """List an Act's sections, grouped by chapter.
+
+    "State all the sections of the Penal Code" is a real request with a real
+    answer; it was previously refused with a pointer to the sidebar, which is
+    the system declining to do something it can trivially do. No model and no
+    retrieval — this is the parsed table of contents.
+    """
+    from app.rag import library
+
+    scope = scope or extract_scope(question)
+    slug = scope.act or library.resolve_act(question)
+    if not slug:
+        acts = library.acts()
+        listed = "; ".join(f"{a['name']} ({a['sections']} sections)" for a in acts)
+        return Answer(question, refused=False, reason=None, kind="outline",
+                      summary=f"Indexed Acts — {listed}. Name one to list its "
+                              f"sections.", refined=ref)
+    o = library.outline(slug)
+    if not o:
+        return Answer(question, refused=True, refined=ref,
+                      reason=f"{slug} is not in the index")
+
+    # A chapter-scoped request must not silently return the whole Act from the
+    # top: asking for Chapter XVI and receiving Chapter I is wrong in a way the
+    # reader cannot see. Scope comes from extract_scope, which resolves an
+    # explicit "Chapter XVI" by regex and a described one ("the murder chapter")
+    # by matching the Act's real titles.
+    chapters = o["chapters"]
+    asked = scope.chapter if scope and scope.chapter else chapter_key(question)
+    scope = ""
+    if asked:
+        matched = [c for c in chapters if _chapter_matches(c["chapter"], asked)]
+        if not matched:
+            have = ", ".join(str(c["chapter"]) for c in chapters)
+            return Answer(question, refused=True, refined=ref,
+                          reason=f"{o['act']} has no chapter {asked} "
+                                 f"(chapters: {have})")
+        chapters = matched
+        limit = max(limit, sum(len(c["sections"]) for c in matched))
+        scope = f", Chapter {matched[0]['chapter']}"
+
+    claims, shown = [], 0
+    for c in chapters:
+        claims.append({"text": f"Chapter {c['chapter']}"
+                               f"{' — ' + c['title'] if c['title'] else ''}"
+                               f" ({len(c['sections'])} sections)",
+                       "section": "", "quote": ""})
+        for sec in c["sections"]:
+            if shown >= limit:
+                break
+            claims.append({"text": f"  s.{sec['section']} "
+                                   f"{sec['title'] or '(untitled)'}",
+                           "section": sec["section"], "quote": ""})
+            shown += 1
+        if shown >= limit:
+            break
+    total = sum(len(c["sections"]) for c in chapters)
+    summary = (f"{o['act']}{scope} — {total} sections"
+               if asked else
+               f"{o['act']} — {o['sections']} sections in "
+               f"{len(o['chapters'])} chapters")
+    if shown < total:
+        summary += f". Showing the first {shown}; browse the statute list for all."
+    return Answer(question, refused=False, reason=None, kind="outline",
+                  summary=summary, claims=claims, refined=ref)
 
 
 def build_context(hits: list[Retrieved]) -> str:
@@ -201,12 +457,21 @@ def answer(question: str, k: int | None = None, *, backend: str | None = None,
             return Answer(question, refused=False, kind="meta", reason=None,
                           summary=capability_answer(), refined=ref)
         if ref.intent == "browse":
-            return Answer(question, refused=True, refined=ref,
-                          reason="this asks to list provisions rather than answer a "
-                                 "question — browse the statute list instead")
-        if ref.intent == "out_of_scope":
-            return Answer(question, refused=True, refined=ref,
-                          reason="not a question about Bangladesh criminal law")
+            return browse_answer(question, ref)
+        if ref.intent == "summarize":
+            return outline_answer(question, ref, backend=backend, model=model)
+        if ref.intent == "lookup":
+            # The section is named, so fetch it. Semantic search ranks by
+            # similarity to the question, which can put the section the reader
+            # asked for *below* its neighbours — wrong, and confusingly so when
+            # they typed the number themselves.
+            direct = lookup_answer(question, ref)
+            if direct is not None:
+                return direct
+            # Unresolvable citation falls through to retrieval rather than
+            # failing: "section 999" may still be a real question.
+        if ref.intent == "general":
+            return general_answer(question, ref, backend=backend, model=model)
 
     # `hits` lets an experiment reuse a cached retrieval pass. Retrieval over the
     # eval set costs ~10 minutes of cross-encoder time, and re-paying it per run

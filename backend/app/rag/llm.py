@@ -1,12 +1,8 @@
-"""One interface over the generator, so the model is a configuration choice.
+"""One interface over the hosted generators used by the application.
 
-Two backends. Gemini 2.5 Flash is the default — E1 scored it 5/5 with correct
-citations where a local 3B model fabricated a quotation of CrPC s.154, and Mina
-(arXiv 2511.08605) reports Gemini-2.5-Flash at 77-81.8% on the 2022-23
-Bangladesh Bar Council exams, the closest published jurisdiction match there is.
-The local backend exists because the brief allows self-hosting, and because
-using the generator to check its own output is circular — a verifier should be
-a different model.
+Groq Qwen is the default because it is fast and enforces the JSON schema this
+pipeline requires. Gemini and the measured schema-capable OpenRouter routes
+remain available as fallbacks and experiment controls.
 
 Everything returns parsed JSON against a supplied schema. Structured output is
 not a formatting nicety here: it is what makes a missing citation a schema
@@ -21,11 +17,13 @@ import functools
 import json
 import os
 import pathlib
+import time
 from typing import Any, Protocol
 
 DEFAULT_GEMINI = os.getenv("RAG_GEMINI_MODEL", "gemini-3.5-flash-lite")
+DEFAULT_GROQ = os.getenv("RAG_GROQ_MODEL", "qwen/qwen3.8-27b")
 DEFAULT_OPENROUTER = os.getenv("RAG_OPENROUTER_MODEL",
-                               "deepseek/deepseek-v4-flash-0731:free")
+                               "liquid/lfm-2.5-2.6b:free")
 ENV_FILE = pathlib.Path(__file__).resolve().parents[2] / ".env.local"
 
 
@@ -65,18 +63,88 @@ class GeminiLLM:
         return json.loads(resp.text)
 
 
+class GroqLLM:
+    """Groq's OpenAI-compatible endpoint with strict structured output."""
+
+    API = "https://api.groq.com/openai/v1/chat/completions"
+
+    def __init__(self, model: str = DEFAULT_GROQ, temperature: float = 0.0,
+                 max_tokens: int = 4096, timeout: int = 120):
+        from dotenv import load_dotenv
+
+        load_dotenv(ENV_FILE, override=True)
+        key = os.environ.get("GROQ_API_KEY")
+        if not key:
+            raise RuntimeError("GROQ_API_KEY not set (expected in backend/.env.local)")
+        self.name = model
+        self.temperature = temperature
+        self.max_tokens = max_tokens
+        self.timeout = timeout
+        self._key = key
+
+    def _post(self, body: dict, attempts: int = 4):
+        """POST with backoff on 429.
+
+        Groq's free tier limits input tokens per minute, and the planner runs on
+        every question — a burst hits the ceiling and every call after it fails
+        instantly. Retrying on the header Groq sends turns that into latency
+        rather than a planning failure, which would otherwise degrade to plain
+        semantic search and answer a listing request with five ranked guesses.
+        """
+        import requests
+
+        response = None
+        for i in range(attempts):
+            response = requests.post(
+                self.API,
+                timeout=self.timeout,
+                headers={"Authorization": f"Bearer {self._key}",
+                         "Content-Type": "application/json"},
+                json=body,
+            )
+            if response.status_code != 429 or i == attempts - 1:
+                return response
+            raw = response.headers.get("retry-after")
+            try:
+                delay = float(raw) if raw else 2.0 * (2 ** i)
+            except ValueError:
+                delay = 2.0 * (2 ** i)
+            time.sleep(min(delay, 30.0))
+        return response
+
+    def generate_json(self, system: str, prompt: str, schema: dict) -> dict:
+        body = {
+            "model": self.name,
+            "messages": [{"role": "system", "content": system},
+                         {"role": "user", "content": prompt}],
+            "temperature": self.temperature,
+            "max_completion_tokens": self.max_tokens,
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {"name": "answer", "strict": True,
+                                "schema": _strict(schema)},
+            },
+        }
+        response = self._post(body)
+        if response.status_code != 200:
+            raise RuntimeError(f"groq {response.status_code}: {response.text[:300]}")
+        data = response.json()
+        if data.get("error"):
+            raise RuntimeError(f"groq: {json.dumps(data['error'])[:300]}")
+        choice = (data.get("choices") or [{}])[0]
+        content = (choice.get("message") or {}).get("content")
+        if not (content or "").strip():
+            raise RuntimeError(
+                f"empty content from {self.name} "
+                f"(finish_reason={choice.get('finish_reason')})")
+        return json.loads(content)
+
+
 class OpenRouterLLM:
     """OpenAI-compatible REST endpoint, via `requests`.
 
-    Verified on `deepseek/deepseek-v4-flash-0731:free`: the route advertises
-    both `response_format` and `structured_outputs`, and returns schema-valid
-    JSON, so the schema is enforced rather than merely suggested. That matters —
     OpenRouter serves one model through several providers and only some of them
-    enforce schemas, so support is a property of the route, not of the model.
-
-    It is a reasoning model: roughly three quarters of its completion tokens are
-    reasoning, so `max_tokens` has to leave room for the thinking as well as the
-    answer or the JSON arrives truncated.
+    enforce schemas, so support is a property of the route, not just the model.
     """
 
     API = "https://openrouter.ai/api/v1/chat/completions"
@@ -93,12 +161,8 @@ class OpenRouterLLM:
                 "OPENROUTER_API_KEY not set (expected in backend/.env.local)")
         self.name = model
         self.temperature = temperature
-        # Every free route tried here is reasoning-capable, and reasoning tokens
-        # come out of the same budget as the answer. At 4096 roughly a fifth of
-        # calls returned an empty string: the model had spent the whole budget
-        # thinking and had nothing left to emit the JSON with. The ceiling is
-        # generous rather than tuned — an unused ceiling costs nothing, a tight
-        # one costs the call.
+        # Reasoning tokens come out of the same budget as the answer, so leave
+        # enough room for the schema-constrained JSON to be emitted.
         self.max_tokens = max_tokens
         self.timeout = timeout
         self.reasoning_effort = reasoning_effort
@@ -123,8 +187,7 @@ class OpenRouterLLM:
         # sent, response_format included. OpenRouter reports a model's
         # `structured_outputs` as the union across its providers, so without this
         # a request can land on one that treats the schema as a hint and answers
-        # in prose — which is how google/gemma-4-31b-it returned an essay to a
-        # schema-constrained call.
+        # in prose.
         body["provider"] = {"require_parameters": True}
         if self.reasoning_effort:
             body["reasoning"] = {"effort": self.reasoning_effort}
@@ -160,9 +223,7 @@ class OpenRouterLLM:
 
 
 def _strict(schema: dict) -> dict:
-    """OpenRouter strict mode wants `additionalProperties: false` on every
-    object. Ours are written without it, so add it rather than duplicating the
-    schema per backend — Gemini ignores the key, so one schema serves both."""
+    """Add strict mode's `additionalProperties: false` recursively."""
     if schema.get("type") == "object":
         schema = {**schema, "additionalProperties": False,
                   "properties": {k: _strict(v)
@@ -170,53 +231,6 @@ def _strict(schema: dict) -> dict:
     elif schema.get("type") == "array" and "items" in schema:
         schema = {**schema, "items": _strict(schema["items"])}
     return schema
-
-
-class LocalLLM:
-    """transformers-backed fallback. No constrained decoding, so the JSON is
-    coaxed by prompt and parsed defensively — a local model that emits prose
-    around its JSON is common, and losing the whole answer to that would be a
-    harness failure rather than a model failure."""
-
-    def __init__(self, model: str | None = None, temperature: float = 0.0):
-        self.name = model or os.getenv("RAG_LOCAL_MODEL",
-                                       "meta-llama/Llama-3.1-8B-Instruct")
-        self.temperature = temperature
-        self._tok = None
-        self._model = None
-
-    def _load(self):
-        if self._model is None:
-            import torch
-            from transformers import AutoModelForCausalLM, AutoTokenizer
-
-            from app.rag import config
-
-            self._tok = AutoTokenizer.from_pretrained(self.name)
-            self._model = AutoModelForCausalLM.from_pretrained(
-                self.name, torch_dtype=torch.bfloat16
-            ).to(config.device()).eval()
-        return self._tok, self._model
-
-    def generate_json(self, system: str, prompt: str, schema: dict) -> dict:
-        import torch
-
-        tok, model = self._load()
-        msgs = [
-            {"role": "system",
-             "content": f"{system}\n\nReply with JSON matching this schema and "
-                        f"nothing else:\n{json.dumps(schema)}"},
-            {"role": "user", "content": prompt},
-        ]
-        text = tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
-        enc = tok(text, return_tensors="pt").to(model.device)
-        with torch.no_grad():
-            out = model.generate(**enc, max_new_tokens=1024,
-                                 do_sample=self.temperature > 0,
-                                 temperature=self.temperature or None,
-                                 pad_token_id=tok.eos_token_id)
-        raw = tok.decode(out[0][enc["input_ids"].shape[1]:], skip_special_tokens=True)
-        return _loads_lenient(raw)
 
 
 def _loads_lenient(raw: str) -> dict:
@@ -244,11 +258,11 @@ def get_llm(backend: str | None = None, model: str | None = None) -> Any:
         resolved_backend, resolved_model = config.resolve_generator(model)
         backend = backend or resolved_backend
         model = resolved_model
+    if backend == "groq":
+        return GroqLLM(model or DEFAULT_GROQ)
     if backend == "openrouter":
         return OpenRouterLLM(model or DEFAULT_OPENROUTER)
     if backend == "gemini":
         return GeminiLLM(model or DEFAULT_GEMINI)
-    if backend == "local":
-        return LocalLLM(model)
     raise ValueError(
-        f"unknown LLM backend {backend!r} (expected openrouter, gemini or local)")
+        f"unknown LLM backend {backend!r} (expected groq, openrouter or gemini)")

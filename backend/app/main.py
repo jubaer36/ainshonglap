@@ -1,6 +1,7 @@
 """AinShonglap API.
 
   POST /api/query          question -> cited answer, or a refusal
+  GET  /api/plan           what the planner decided, without answering
   GET  /api/retrieve       raw retrieval, no generation (inspection/debugging)
   GET  /api/models         selectable generators
   GET  /api/acts           indexed acts
@@ -30,7 +31,8 @@ log = logging.getLogger(__name__)
 
 # Set once at startup so /health can report why the API is degraded instead of
 # failing per request with the same error.
-STATE: dict[str, object] = {"ready": False, "error": None, "index": None}
+STATE: dict[str, object] = {"ready": False, "error": None, "index": None,
+                            "catalog": None}
 
 
 @asynccontextmanager
@@ -48,6 +50,17 @@ async def lifespan(app: FastAPI):
             from app.rag.store import load_store
 
             warmup()
+            # The catalog is checked at boot for the same reason the index is:
+            # a missing catalog should surface here, not as a 500 on the first
+            # structural question.
+            try:
+                from app.rag import catalog
+
+                STATE["catalog"] = catalog.manifest()
+            except Exception as exc:               # noqa: BLE001 - reported
+                STATE["catalog"] = None
+                log.warning("catalog unavailable: %s", exc)
+
             index, chunks, meta = load_store()
             STATE.update(ready=True, index={
                 "vectors": int(index.ntotal),
@@ -90,7 +103,10 @@ async def health() -> dict:
         "status": "ok" if STATE["ready"] else "degraded",
         "error": STATE["error"],
         "index": STATE["index"],
+        "catalog": STATE["catalog"],
         "reranker": config.RERANK_MODEL,
+        "planner": {"model": config.PLANNER_MODEL,
+                    "enabled": config.PLAN_QUERIES},
         "generator": dict(zip(("backend", "model"),
                               config.resolve_generator(None))) |
                      {"alias": config.DEFAULT_GENERATOR,

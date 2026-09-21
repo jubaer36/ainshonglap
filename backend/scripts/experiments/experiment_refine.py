@@ -62,7 +62,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--n", type=int, default=60, help="questions (= LLM calls)")
     ap.add_argument("--k", type=int, nargs="+", default=[1, 5, 20])
-    ap.add_argument("--model", default="deepseek", help="alias or full id")
+    ap.add_argument("--model", default="qwen", help="alias or full id")
     ap.add_argument("--sleep", type=float, default=1.0)
     ap.add_argument("--resume", action="store_true",
                     help="reuse rewrites already cached for this model")

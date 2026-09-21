@@ -1,9 +1,11 @@
 import type {
   Act,
+  AnswerKind,
   AssistantMessage,
   ChatMessage,
   GeneratorInfo,
   IconColorToken,
+  QueryPlan,
   QuickAction,
   Reference,
   SectionDetail,
@@ -151,6 +153,33 @@ export async function sendQuery(
   }
 }
 
+/**
+ * What the planner decided, without answering. One small model call: no
+ * retrieval, no generation. Used by the debug panel to show why a question was
+ * routed the way it was.
+ */
+export async function fetchPlan(question: string, model?: string): Promise<QueryPlan> {
+  const params = new URLSearchParams({ q: question });
+  if (model) params.set("model", model);
+  const raw = await getJson<Record<string, unknown>>(`/api/plan?${params}`);
+  return {
+    question: raw.question as string,
+    category: raw.category as QueryPlan["category"],
+    operation: (raw.operation as QueryPlan["operation"]) ?? null,
+    act: (raw.act as string) ?? null,
+    chapter: (raw.chapter as string) ?? null,
+    sections: (raw.sections as string[]) ?? [],
+    range: (raw.range as [string, string]) ?? null,
+    searchQuery: (raw.search_query as string) ?? null,
+    terms: (raw.terms as string[]) ?? [],
+    needsClarification: Boolean(raw.needs_clarification),
+    clarification: (raw.clarification as string) ?? null,
+    by: (raw.by as string) ?? "llm",
+    notes: (raw.notes as string[]) ?? [],
+    error: (raw.error as string) ?? null,
+  };
+}
+
 function normalizeSectionSummary(raw: Record<string, unknown>): SectionSummary {
   return {
     key: raw.key as string,
@@ -171,6 +200,10 @@ function normalizeAssistantMessage(raw: Record<string, unknown>): AssistantMessa
     role: "assistant",
     heading: raw.heading as string,
     subheading: raw.subheading as string,
+    // Older backends did not send `kind`. Falling back on `unsupported` keeps
+    // this working against one, at the cost of the finer distinctions.
+    kind: ((raw.kind as AnswerKind) ??
+      (raw.unsupported ? "refused" : "legal")) as AnswerKind,
     unsupported: Boolean(raw.unsupported),
     blocks: raw.blocks as AssistantMessage["blocks"],
     citations: raw.citations as AssistantMessage["citations"],
