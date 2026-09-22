@@ -82,9 +82,12 @@ The first prompt cost 1,873 tokens and exhausted Groq's per-minute budget after
 three questions; a two-tier prompt now costs 778, fetching the 76-chapter
 listing only when a chapter is described by subject rather than numbered.
 
-**Planner on Gemini** (E16): 1.3-1.8s against 43.3s on a rate-limited Groq, with
-Groq Qwen as a fallback — a different *provider* on purpose, since Groq's limits
-are per-account. The move surfaced a cross-provider schema bug: the schema used
+**The planner has its own key** (E18): `gpt-oss-120b` on
+`GROQ_API_KEY_PLANNER`, outside the generators' rotation, with Gemini 3.5 Flash
+Lite as the fallback — a different *provider* on purpose. The planner runs
+before anything else on every question, so a burst of answers must not leave the
+classifier rate-limited. Gemini held the job before this (E16): 1.3-1.8s against
+43.3s on a rate-limited Groq. The move surfaced a cross-provider schema bug: the schema used
 an empty string as an enum member for "not applicable", which Groq and OpenAI
 accept and **Gemini rejects**. Every Gemini call 400'd and fell through to the
 slow path, so the symptom was latency and the cause was a validation error on a
@@ -111,6 +114,27 @@ so memory carries two things: the prose summary, and a `sections` list of
 citation keys copied by *code* from the answer's own sources. The prompt asks
 for verbatim numbers; the code list is the guarantee. A `context · N turns` chip
 makes all of it inspectable, because hidden state that steers answers should be.
+
+**Retry is offered only on the last message.** It re-asks the question and
+replaces that answer in place, so mid-conversation it would rewrite an answer
+later turns were built on — and the memory summary written after it would still
+describe the answer it replaced. Withheld rather than disabled, since a greyed
+button implies an action you can wait for.
+
+**Conversations can be retitled, and name themselves.** The default title is
+the first question asked; that is a good guess and often the wrong label once a
+conversation moves on. After three turns that produced an answer — refusals do
+not count — `POST /api/conversations/{id}/name` proposes one from the summary.
+Its own model, its own key (`GEMINI_API_KEY_3`) and its own request: naming is
+not on the path to an answer, and folding it into `/api/query` would put a
+second model call between the reader and an answer they are already waiting for.
+
+A title the reader typed is never overwritten. The guard is that the stored
+title still equals the one derived from the first question, so no column and no
+migration were needed. `PATCH /api/conversations/{id}` renames, and both filter
+by `user_id` like every other statement — holding a uuid is not enough to
+retitle a stranger's conversation. Deleting asks first, in the row, with focus
+on Cancel.
 
 **Guest mode stores nothing, anywhere** — not on the server and not in the
 browser. It previously wrote to `localStorage`; "not saved" quietly meaning
@@ -206,6 +230,11 @@ Two known failure modes, both traced:
   forbids reasoning from a provision to its consequence. The prompt is tuned for
   "what is the punishment for X", where the answer sits verbatim in the text.
 
-Both point at `plan.md` phase 4. Next, in order: measure `FINAL_K=8` against 5,
-re-run `plan_cases.py` on the current planner model, then replace the fixed k
-with a fitted threshold plus facet retrieval.
+Both point at `plan.md` phase 4. A third was found and fixed: a request naming
+two Acts was unrepresentable, because the planner's `act` field held one slug —
+so "the first section of both" returned one Act's and dropped the other without
+a word (E18). `acts` is now a list.
+
+Next, in order: measure `FINAL_K=8` against 5, re-run `plan_cases.py` on the
+current planner model, then replace the fixed k with a fitted threshold plus
+facet retrieval.

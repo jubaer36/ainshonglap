@@ -171,10 +171,25 @@ def structural_answer(plan: Plan, *, backend: str | None = None,
     if plan.operation == "overview" and plan.act and not plan.chapter:
         return _overview(plan, backend=backend, model=model)
 
-    total, rows = catalog.sections(
-        act_slug=plan.act, chapter_number=plan.chapter,
-        numbers=plan.sections or None, number_from=plan.section_from,
-        number_to=plan.section_to, limit=limit)
+    # One query per named Act, merged. "The first five sections of the Evidence
+    # Act and the Code of Criminal Procedure" is two fetches and ten sections,
+    # and answering it from one Act was answering a different question without
+    # saying so. The catalog takes a single slug per call by design — it is the
+    # exact-coordinate read model, and a query spanning Acts is a merge of exact
+    # queries rather than a looser one.
+    targets = plan.acts or [plan.act]
+    total, rows = 0, []
+    for slug in targets:
+        found, page = catalog.sections(
+            act_slug=slug, chapter_number=plan.chapter,
+            numbers=plan.sections or None, number_from=plan.section_from,
+            number_to=plan.section_to, limit=limit)
+        total += found
+        rows.extend(page)
+    # Statutory order within each Act, Acts in the order the question named
+    # them. Sorting across Acts would interleave two numbering schemes and read
+    # as one list that is wrong in both.
+    rows = rows[:limit] if limit else rows
 
     if not total:
         trace.step("fetch", "0 sections — coordinates matched nothing")
@@ -210,9 +225,10 @@ def _nothing_found(plan: Plan) -> str:
         where.append("section " + ", ".join(plan.sections))
     if plan.section_from:
         where.append(f"sections {plan.section_from} to {plan.section_to}")
-    act = catalog.act(plan.act)["name"] if plan.act and catalog.act(plan.act) else None
+    named = [catalog.act(a)["name"] for a in (plan.acts or [plan.act])
+             if a and catalog.act(a)]
     what = " and ".join(where) if where else "that"
-    return (f"{what} is not in {act}." if act
+    return (f"{what} is not in {' or '.join(named)}." if named
             else f"{what} is not in the indexed Acts.")
 
 
@@ -224,8 +240,12 @@ def _enumerate(plan: Plan, total: int, rows: list[dict]) -> Answer:
     a screen. The reader can open any of them from the citation drawer.
     """
     head = f"{total} section"+ ("s" if total != 1 else "")
-    if plan.act and (a := catalog.act(plan.act)):
-        head += f" of {a['name']}"
+    # Every Act named, not just the first. A listing drawn from two Acts and
+    # headed with one of them is a caption that contradicts its own contents.
+    named = [a["name"] for slug in (plan.acts or [plan.act])
+             if slug and (a := catalog.act(slug))]
+    if named:
+        head += " of " + " and ".join(named)
     if plan.chapter:
         ch = catalog.chapter(plan.act, plan.chapter)
         head += f", Chapter {plan.chapter}"
@@ -238,7 +258,12 @@ def _enumerate(plan: Plan, total: int, rows: list[dict]) -> Answer:
         # is the "five sections disguised as completeness" failure again.
         head += f". Showing the first {len(rows)}"
 
-    claims = [{"text": f"s.{r['number']} {r['title'] or '(untitled)'}",
+    # With one Act, "s.1" is unambiguous. With two it is not — both have a
+    # section 1, and an undifferentiated list reads as one Act's numbering.
+    multi = len(plan.acts) > 1
+    claims = [{"text": (f"{r['act']} s.{r['number']} " if multi
+                        else f"s.{r['number']} ")
+                       + (r["title"] or "(untitled)"),
                "section": str(r["number"]), "quote": ""} for r in rows]
     return Answer(plan.question, refused=False, reason=None, kind="outline",
                   plan=plan, summary=head, claims=claims,

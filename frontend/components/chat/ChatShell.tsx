@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ApiError, fetchSection, sendQuery } from "@/lib/api";
 import {
   deleteConversation,
+  nameConversation,
+  renameConversation,
   getConversation,
   listConversations,
   newConversationId,
@@ -98,6 +100,11 @@ export function ChatShell() {
   // mishandle them. `conversationId` is allocated up front so the first answer
   // lands in a record rather than creating one retroactively.
   const [conversations, setConversations] = useState<SavedConversation[]>([]);
+  // Conversations naming has already been asked about. The server decides
+  // whether a name is due and refuses politely when it is not, so asking twice
+  // is harmless — but asking on every turn forever is a request per question
+  // for a label that was settled long ago.
+  const namingAsked = useRef<Set<string>>(new Set());
   const [conversationId, setConversationId] = useState<string>(() => newConversationId());
   // The server's id for this conversation, once it has stored one. Distinct
   // from `conversationId`, which is a local key that also exists for guests.
@@ -229,6 +236,16 @@ export function ChatShell() {
       // in the sidebar as soon as it has a title.
       if (assistantMessage.conversationId) setStoredId(assistantMessage.conversationId);
       if (user) void listConversations().then(setConversations);
+      // Naming is a separate request, made after the answer is on screen, so a
+      // second model call never sits between the reader and an answer they are
+      // already waiting for. It returns null unless the title actually changed.
+      const namedId = assistantMessage.conversationId;
+      if (user && namedId && !namingAsked.current.has(namedId)) {
+        namingAsked.current.add(namedId);
+        void nameConversation(namedId, assistantMessage.memory).then((list) => {
+          if (list) setConversations(list);
+        });
+      }
       setCitationLibrary((current) => ({ ...current, ...assistantMessage.citations }));
     } catch (error) {
       // A transport failure never reaches the summariser, so memory is
@@ -282,6 +299,12 @@ export function ChatShell() {
     if (window.matchMedia("(max-width: 1023px)").matches) setSidebarOpen(false);
   }
 
+  async function handleRenameConversation(id: string, title: string) {
+    // The server normalises the title (trimmed, capped, blank -> default), so
+    // the refreshed list is the truth rather than the string typed here.
+    setConversations(await renameConversation(id, title));
+  }
+
   async function handleDeleteConversation(id: string) {
     setConversations(await deleteConversation(id));
     // Deleting the conversation on screen leaves it open but detached; start a
@@ -324,6 +347,13 @@ export function ChatShell() {
     );
   }
 
+  // Retry re-asks the question and replaces that answer in place, so it only
+  // makes sense on the last message. Offered mid-conversation it would rewrite
+  // an answer that later turns were already built on — and the memory summary
+  // that followed it would still describe the answer it replaced. `canRetry`
+  // stays the transient "not while a request is in flight" guard.
+  const lastMessageId = messages[messages.length - 1]?.id ?? null;
+
   return (
     <div className="flex-1 flex flex-col h-full min-h-0">
       <Header
@@ -353,6 +383,7 @@ export function ChatShell() {
           activeConversationId={conversationId}
           onOpenConversation={handleOpenConversation}
           onDeleteConversation={handleDeleteConversation}
+          onRenameConversation={handleRenameConversation}
         />
         <main className="flex-1 flex flex-col h-full bg-white relative min-w-0 overflow-hidden">
           <div className="flex-1 overflow-y-auto px-4 md:px-12 py-6 space-y-6">
@@ -372,7 +403,15 @@ export function ChatShell() {
                     message={message}
                     onActivateCitation={handleActivateCitation}
                     onFollowup={submitQuestion}
-                    onRetry={(withModel?: string) => handleRetry(message.id, withModel)}
+                    onRetry={
+                      // Withheld, not disabled, on anything but the last
+                      // message: `disabled` greys out a button that will come
+                      // back, and this one never will. Both retry affordances
+                      // gate on `onRetry` being present, so this hides them.
+                      message.id === lastMessageId
+                        ? (withModel?: string) => handleRetry(message.id, withModel)
+                        : undefined
+                    }
                     canRetry={!loading}
                   />
                 ),

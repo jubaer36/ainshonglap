@@ -105,8 +105,9 @@ try here.
 ## Phase 7 — what is built but not measured
 
 `plan_cases.py` covers planning only (42/42 category, 27/27 scope), and **those
-numbers were measured on Groq while Gemini now does the planning** — re-running
-it is cheap and comes first. The executors, memory, voice, Groq key rotation,
+numbers were measured on Groq Qwen while two planners have served since** —
+re-running it is cheap and comes first. E18 is the warning: the first evidence
+the number had gone stale was a user hitting a misclassification, not the suite. The executors, memory, voice, Groq key rotation,
 quota fallback and `FINAL_K=8` have no pinned numbers at all.
 
 Voice has the sharpest missing metric: **section-number accuracy**, not WER,

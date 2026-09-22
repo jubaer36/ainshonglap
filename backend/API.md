@@ -23,6 +23,8 @@ RAG_WARMUP=0 uvicorn app.main:app --reload   # skip model load (corpus endpoints
 | POST | `/api/read-image` | one page image → text (never an answer) |
 | GET | `/api/conversations` | saved conversations (signed in) |
 | GET | `/api/conversations/{id}` | one conversation, with per-turn context and images |
+| PATCH | `/api/conversations/{id}` | rename one |
+| POST | `/api/conversations/{id}/name` | name one from its summary |
 | DELETE | `/api/conversations/{id}` | delete one |
 | POST | `/api/conversations/import` | adopt conversations made before signing in |
 | GET | `/health` | liveness, index stats, configured models |
@@ -113,10 +115,19 @@ retrieval, no generation.
 
 ```json
 {"category": "structural", "operation": "enumerate",
- "act": "evidence", "chapter": "V", "sections": [],
+ "act": "evidence", "acts": ["evidence"], "chapter": "V", "sections": [],
  "needs_clarification": false, "by": "llm",
  "notes": ["chapter-lookup: 'DOCUMENTARY EVIDENCE' -> V in evidence"]}
 ```
+
+`acts` is every Act the question named; `act` is the first of them, kept because
+most coordinates concern one and the semantic path reads it as a hint. A request
+spanning two Acts — "the first five sections of the Evidence Act **and** the
+Code of Criminal Procedure" — is one plan with `acts: ["evidence", "crpc"]`, and
+the structural executor runs one catalog query per Act and merges them in the
+order named. This used to be unrepresentable: `act` held one slug, so the second
+Act was either dropped from the answer without a word or turned into "which Act
+did you mean?".
 
 The planner chooses the machine that answers every question, so when an answer
 looks wrong the first thing worth knowing is whether it was *planned* wrong.
@@ -131,12 +142,22 @@ chapter returns nothing rather than the nearest real one.
 
 Set `RAG_PLAN=0` to fall back to the older pattern router in `app/rag/refine.py`.
 
-**The planner runs on Gemini 3.5 Flash Lite** (`gemini2`, on `GEMINI_API_KEY_2`
-so it does not share a quota with anything else), with Groq Qwen as an automatic
-fallback. A different *provider*, not just a different model: Groq's per-minute
-and daily limits are per-account, so a second Groq route waits behind the same
-wall. Measured 1.3-1.8s against 43s on a rate-limited Groq. `gemini2` is marked
-`internal` in the registry and so never appears in the model picker.
+**The planner runs on `gpt-oss-120b`** (`planner`, on `GROQ_API_KEY_PLANNER`),
+with Gemini 3.5 Flash Lite (`gemini2`, on `GEMINI_API_KEY_2`) as an automatic
+fallback. Both are marked `internal` in the registry and never appear in the
+model picker.
+
+The key is a **dedicated prefix, not a fourth numbered one**. `keyring` matches
+the bare name plus numeric suffixes, so `GROQ_API_KEY_PLANNER` is never swept
+into the generators' rotation. The planner runs before anything else on every
+question, and a burst of answers must not leave the classifier rate-limited: a
+failed plan degrades the question to plain semantic retrieval, and "who are you"
+then goes to the statute index and comes back with sections scoring -3.90.
+
+The fallback is a different *provider*, not just a different key — an outage or
+a malformed request is not per-key, so a second Groq route would fail with it.
+Gemini held this job before (E16, 1.3-1.8s) and is measured on it, which makes
+it a standby rather than a guess.
 
 This matters more than it looks. The planner is the first step, so its failures
 do not present as planner failures — a failed plan degrades the question to
@@ -205,7 +226,55 @@ and not a capability. The policies remain for anything that ever connects with
 an anon key.
 
 Another user's conversation returns **404, not 403**: a 403 would confirm the id
-exists.
+exists. This covers `PATCH` as well as the reads — a rename filters by `user_id`
+like everything else, so holding a uuid is not enough to retitle a stranger's
+conversation.
+
+### POST `/api/conversations/{id}/name`
+
+```json
+{"memory": {"summary": "...", "sections": [], "turns": 4, "answered": 3}}
+```
+
+Returns the updated `ConversationSummary`, or `null` when the title is
+unchanged — the ordinary outcome. Safe to call more than once.
+
+**Its own request, not part of `POST /api/query`.** Naming is not on the path to
+an answer, so folding it in would have put a second model call between the
+reader and an answer they were already waiting for, for a label they were not
+looking at yet. It has its own model and key too (`app/rag/naming.py`,
+`GEMINI_API_KEY_3`), because it runs once per conversation while the summariser
+runs every turn, and sharing a key would let a label eat the quota a follow-up
+depends on.
+
+The first question stays the title until a conversation has had
+`RAG_NAME_AFTER` turns that actually produced an answer. Refusals do not count:
+a conversation of three refusals has no subject to name. That count is
+`memory.answered`, which the client echoes back like the rest of the memory.
+
+**A title the reader typed is never overwritten.** The guard is that the stored
+title still equals the one derived from the first question; if it does not,
+either they renamed it or naming already ran, and both are theirs to keep. No
+extra column, so no migration.
+
+Without `GEMINI_API_KEY_3` the call is a no-op and conversations keep their first
+question. `/health` reports whether it is configured, since a missing key
+otherwise looks like a feature that was never built.
+
+### PATCH `/api/conversations/{id}`
+
+```json
+{"title": "Bail for house theft"}
+```
+
+Returns the updated `ConversationSummary`. The default title is the first
+question asked, which is a reasonable guess and often the wrong label for a
+conversation that moved on.
+
+The title is normalised server-side — whitespace collapsed, capped at 120
+characters with an ellipsis, and a blank one falling back to `New
+conversation` — so the client re-reads the list rather than trusting the string
+it sent.
 
 ### What a stored session contains
 
@@ -242,10 +311,11 @@ Ordered best-first (`config.PICKER_ORDER`): `oss120`, `qwen`, `oss`, `gemini`,
 then the rest in registry order. The registry itself is grouped by provider,
 which is the right shape for reading it and the wrong one for choosing from it.
 
-**Internal routes are not listed.** `gemini2` runs the planner and the
-conversation summariser on `GEMINI_API_KEY_2`; offering it as an answer model
-would let a reader spend the classifier's quota and then wonder why the next
-question stopped being routed. It stays resolvable by alias — it is simply not
+**Internal routes are not listed.** `planner` (`GROQ_API_KEY_PLANNER`) and
+`gemini2` (`GEMINI_API_KEY_2`, the planner's fallback and the conversation
+summariser) are machinery, not choices; offering either as an answer model would
+let a reader spend the classifier's quota and then wonder why the next question
+stopped being routed. It stays resolvable by alias — it is simply not
 advertised. `config.selectable()` is the filter, and the 422 "unknown model"
 message lists the same set.
 
@@ -278,11 +348,22 @@ served and measured numbers cannot drift.
 
 ## Configuration
 
-`backend/.env.local` (gitignored) holds the keys: `GROQ_API_KEY`,
-`GROQ_API_KEY_2`, `GROQ_API_KEY_3` (see **Groq key rotation** below),
-`INCEPTION_API_KEY` (Mercury), `GEMINI_API_KEY`, `GEMINI_API_KEY_2` (the planner
-and the conversation summariser, on their own key so they never compete for
-quota), `DEEPGRAM_API_KEY` (voice), `OPENROUTER_API_KEY`.
+`backend/.env.local` (gitignored) holds the keys:
+
+| key | used by |
+|---|---|
+| `GROQ_API_KEY`, `_2`, `_3` | the generators, in rotation (below) |
+| `GROQ_API_KEY_PLANNER` | the planner alone, deliberately outside that rotation |
+| `GEMINI_API_KEY_2` | the planner's fallback and the conversation summariser |
+| `GEMINI_API_KEY_3` | naming a conversation, and nothing else |
+| `GEMINI_API_KEY` | optional generator |
+| `INCEPTION_API_KEY` | Mercury, the cross-provider quota fallback |
+| `DEEPGRAM_API_KEY` | voice |
+| `OPENROUTER_API_KEY` | vision, OpenRouter routes |
+
+Each job that runs on *every* question gets a key nothing else draws on. A
+sidebar label must not be able to exhaust the quota the next follow-up depends
+on.
 
 ### Groq key rotation
 
@@ -313,8 +394,10 @@ model is.
 | `RAG_GROQ_MODEL` | `qwen/qwen3.8-27b` | direct Groq model id |
 | `RAG_LLM_BACKEND` | `groq` | `groq`, `openrouter`, `gemini`, `inception` |
 | `RAG_INCEPTION_MODEL` | `mercury-2.5` | Inception Mercury default |
-| `RAG_PLANNER_MODEL` | `gemini2` | the planner — decides category and coordinates |
-| `RAG_PLANNER_FALLBACK` | `qwen` | tried when the planner's own model fails |
+| `RAG_PLANNER_MODEL` | `planner` | the planner — decides category and coordinates |
+| `RAG_PLANNER_FALLBACK` | `gemini2` | tried when the planner's own model fails |
+| `RAG_NAME_MODEL` | `gemini-3.5-flash-lite` | names a conversation from its summary |
+| `RAG_NAME_AFTER` | `3` | answered turns before a conversation is named |
 | `RAG_TRACE` | `1` | one concise log line per pipeline step; `0` silences |
 | `RAG_PLAN` | `1` | `0` falls back to the old pattern router |
 | `RAG_ROUTER_MODEL` | `lfm` | old router's model, used only when `RAG_PLAN=0` |

@@ -69,6 +69,10 @@ GENERATORS: dict[str, dict] = {
                   "note": "diffusion LLM, 260K ctx; 469 tok/s on the schema probe"},
     "mercury-2": {"backend": "inception",  "model": "mercury-2",
                   "enforces_schema": True,  "note": "previous generation, 128K ctx"},
+    "planner":   {"backend": "groq",       "model": "openai/gpt-oss-120b",
+                  "key_env": "GROQ_API_KEY_PLANNER", "enforces_schema": True,
+                  "internal": True,
+                  "note": "the planner, on its own Groq key"},
     "gemini2":   {"backend": "gemini",     "model": "gemini-3.5-flash-lite",
                   "key_env": "GEMINI_API_KEY_2", "enforces_schema": True,
                   "internal": True,
@@ -147,19 +151,23 @@ DEFAULT_ROUTER = os.getenv("RAG_ROUTER_MODEL", "lfm")
 # for every question, so its judgement bounds the whole system's. It runs on a
 # stronger model than the old regex router's fallback: lfm-2.6B measured
 # unstable on exactly this job, labelling identical phrasings differently
-# between two prompt revisions. Groq Qwen enforces the strict schema the
-# validator depends on.
-PLANNER_MODEL = os.getenv("RAG_PLANNER_MODEL", "gemini2")
-
-# Tried when the planner's own model fails or is rate-limited. A different
-# PROVIDER, not just a different model: Groq's daily cap and its per-minute
-# limits are both per-account, so a second Groq route shares the wall.
+# between two prompt revisions.
 #
-# The planner runs before anything else on every question, so its latency is the
-# floor for the whole system — and when it fails the question degrades to plain
-# semantic retrieval, which sent "who are you" to the statute index and returned
-# sections scoring -3.90.
-PLANNER_FALLBACK = os.getenv("RAG_PLANNER_FALLBACK", "qwen")
+# `planner` is gpt-oss-120b on GROQ_API_KEY_PLANNER — its own key, not the pool
+# the generators rotate through. The planner runs before anything else on every
+# question, so a burst of answers must not leave it rate-limited: a failed plan
+# degrades the question to plain semantic retrieval, which sent "who are you" to
+# the statute index and returned sections scoring -3.90. The key is a dedicated
+# prefix rather than a fourth numbered one precisely so `keyring` does not sweep
+# it into that rotation.
+PLANNER_MODEL = os.getenv("RAG_PLANNER_MODEL", "planner")
+
+# Tried when the planner's own model fails. A different PROVIDER, not just a
+# different key: an outage or a bad request is not per-key, so a second Groq
+# route would fail with it. Gemini 3.5 Flash Lite on GEMINI_API_KEY_2 was the
+# planner before this and is measured on the job (E16), which makes it the
+# obvious standby rather than a guess.
+PLANNER_FALLBACK = os.getenv("RAG_PLANNER_FALLBACK", "gemini2")
 
 # Planning replaces pattern routing. Off falls back to refine.classify_pattern.
 PLAN_QUERIES = os.getenv("RAG_PLAN", "1") == "1"

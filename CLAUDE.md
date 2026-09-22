@@ -48,12 +48,18 @@ cd backend
 uvicorn app.main:app --reload            # API on :8000
 ```
 
-Secrets live in `backend/.env.local` (gitignored): `GEMINI_API_KEY_2` (the
-planner and the conversation summariser, on their own key), `GROQ_API_KEY`
-plus `GROQ_API_KEY_2` and `_3` (default generator `oss120`, planner fallback —
-used in rotation, see below), `INCEPTION_API_KEY` (Mercury, the quota fallback),
-`DEEPGRAM_API_KEY` (voice), `OPENROUTER_API_KEY` (vision, OpenRouter routes),
-`SUPABASE_*` (accounts and storage), plus optional `GEMINI_API_KEY`.
+Secrets live in `backend/.env.local` (gitignored). Every job that runs on
+*every* question has a key nothing else draws on:
+
+| key | used by |
+|---|---|
+| `GROQ_API_KEY`, `_2`, `_3` | the generators, in rotation (see below) |
+| `GROQ_API_KEY_PLANNER` | the planner alone — deliberately outside that rotation |
+| `GEMINI_API_KEY_2` | the planner's fallback and the conversation summariser |
+| `GEMINI_API_KEY_3` | naming a conversation, and nothing else |
+| `INCEPTION_API_KEY` | Mercury, the cross-provider quota fallback |
+| `DEEPGRAM_API_KEY` / `OPENROUTER_API_KEY` | voice / vision and OpenRouter routes |
+| `SUPABASE_*`, optional `GEMINI_API_KEY` | accounts and storage, optional generator |
 
 `app/rag/keyring.py` discovers every `GROQ_API_KEY*` and uses them in turn:
 rotation per call so the daily caps drain evenly, immediate failover to the next

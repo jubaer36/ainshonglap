@@ -73,7 +73,6 @@ SCHEMA = {
     "required": ["summary"],
 }
 
-
 @dataclass
 class Memory:
     """What the next turn is allowed to know about the previous ones."""
@@ -83,6 +82,11 @@ class Memory:
     # answer's own sources — never parsed back out of the summary prose.
     sections: list[str] = field(default_factory=list)
     turns: int = 0
+    # Turns that actually produced an answer. Distinct from `turns`, which
+    # counts refusals too. Kept here because it is a fact about the
+    # conversation, but read by `naming.py`, which decides what to do with it:
+    # a conversation of three refusals has no subject to name.
+    answered: int = 0
     # Set when summarisation failed, so the caller can see that memory stopped
     # updating instead of silently going stale.
     error: str | None = None
@@ -102,7 +106,8 @@ class Memory:
 
     def to_dict(self) -> dict:
         return {"summary": self.summary, "sections": self.sections,
-                "turns": self.turns, "error": self.error}
+                "turns": self.turns, "answered": self.answered,
+                "error": self.error}
 
     @classmethod
     def from_dict(cls, raw: dict | None) -> "Memory":
@@ -112,6 +117,10 @@ class Memory:
             summary=str(raw.get("summary") or "")[:MAX_SUMMARY_CHARS],
             sections=[str(s) for s in (raw.get("sections") or [])][-MAX_SECTIONS:],
             turns=int(raw.get("turns") or 0),
+            # Absent on memories stored before naming existed. They simply
+            # never reach the threshold, which is better than renaming an old
+            # conversation out from under someone.
+            answered=int(raw.get("answered") or 0),
         )
 
 
@@ -174,6 +183,7 @@ def update(memory: Memory | None, question: str, answer) -> Memory:
     # of what happened, and a later turn would inherit provisions the assistant
     # had explicitly declined to rely on.
     keys = list(prev.sections)
+    answered = prev.answered + (0 if failed(answer) else 1)
     if not failed(answer):
         for src in (getattr(answer, "sources", None) or []):
             key = getattr(src, "key", None)
@@ -183,7 +193,8 @@ def update(memory: Memory | None, question: str, answer) -> Memory:
 
     said = answer_text(answer)
     if not said and not question.strip():
-        return Memory(summary=prev.summary, sections=keys, turns=prev.turns)
+        return Memory(summary=prev.summary, sections=keys, turns=prev.turns,
+                      answered=prev.answered)
 
     # On a failed turn the QUESTION is still recorded and the failure is not.
     #
@@ -217,11 +228,14 @@ def update(memory: Memory | None, question: str, answer) -> Memory:
     except Exception as exc:
         trace.step("memory", f"FAILED, kept stale  {type(exc).__name__}", elapsed())
         return Memory(summary=prev.summary, sections=keys, turns=prev.turns + 1,
+                      answered=answered,
                       error=f"{type(exc).__name__}: {exc}"[:160])
 
     if not summary:
         trace.step("memory", "summariser returned nothing", elapsed())
         return Memory(summary=prev.summary, sections=keys, turns=prev.turns + 1,
+                      answered=answered,
                       error="summariser returned nothing")
     trace.recv("memory", f"«{summary}»", elapsed())
-    return Memory(summary=summary, sections=keys, turns=prev.turns + 1)
+    return Memory(summary=summary, sections=keys, turns=prev.turns + 1,
+                  answered=answered)

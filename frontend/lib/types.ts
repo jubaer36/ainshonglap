@@ -91,6 +91,10 @@ export interface ConversationMemory {
   summary: string;
   sections: string[];
   turns: number;
+  /** Turns that produced an answer, as opposed to `turns`, which counts
+   *  refusals too. The server names the conversation when this reaches its
+   *  threshold, so it has to survive the round trip through the client. */
+  answered: number;
   error: string | null;
 }
 

@@ -147,6 +147,14 @@ def _quota_state() -> dict:
     return quota.snapshot()
 
 
+def _naming_state() -> dict:
+    """Whether conversation naming is configured, and on which key."""
+    from app.rag import naming
+
+    return {"available": naming.available(), "model": naming.MODEL,
+            "key_env": naming.KEY_ENV, "after_answers": naming.AFTER_ANSWERS}
+
+
 def _speech_state() -> dict:
     """Whether voice input is configured. Reported so a missing key shows up
     here rather than as a 503 the first time someone taps the microphone."""
@@ -186,6 +194,11 @@ async def health() -> dict:
         "reranker": config.RERANK_MODEL,
         "planner": {"model": config.PLANNER_MODEL,
                     "enabled": config.PLAN_QUERIES},
+        # Reported because it is the one part of the system that fails
+        # invisibly: without GEMINI_API_KEY_3 conversations simply keep their
+        # first question as a title, which looks like a feature that was never
+        # built rather than a key that was never set.
+        "naming": _naming_state(),
         "speech": _speech_state(),
         "vision": _vision_state(),
         "database": _database_state(),

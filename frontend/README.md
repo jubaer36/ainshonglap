@@ -48,7 +48,18 @@ read instead of permanently under the input box.
   at the foot of the sidebar, and a guest prompt in the same place
 - conversations listed in the sidebar for signed-in users, loaded from the API;
   reopening one restores the messages, the context each answer was produced
-  against, and any page images
+  against, and any page images. A row is retitled in place — pencil icon or
+  double-click, Enter or blur commits, Escape abandons — since the default
+  title is the first question asked and that is often the wrong label for a
+  conversation that moved on. After three answered turns the server proposes a
+  name of its own, unless the title has already been made the reader's — and
+  deleting asks first, in the row rather than in a browser dialog, with focus on
+  Cancel so a stray Enter cannot confirm it
+- **Try again appears only on the last message.** Retry re-asks the question and
+  replaces that answer in place, so offered mid-conversation it would rewrite an
+  answer later turns were already built on. The affordance is withheld rather
+  than disabled: a greyed-out button implies an action you can wait for, and
+  this one never returns
 - Enter sends, Shift+Enter inserts a newline, and Enter is ignored while an IME
   is composing (typing Bangla would otherwise fire mid-word)
 
@@ -92,6 +103,7 @@ components/layout/StatuteBrowser.tsx corpus navigation
 components/layout/ReferencesDrawer.tsx citation/source preview
 components/chat/ModelPicker.tsx      generator selection
 components/chat/ThinkingBubble.tsx   stage-phased waiting message
+components/layout/ConversationList.tsx sidebar rows, rename and delete
 lib/api.ts                           all backend calls and normalization
 lib/conversations.ts                 saved conversations, via the API
 lib/supabase.ts                      Supabase client — authentication only

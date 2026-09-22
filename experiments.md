@@ -753,6 +753,84 @@ separate budgets.
 not been re-run on Gemini — the numbers in E13 describe a planner that is no
 longer the default. That is a real gap, and the suite exists to close it.
 
+**Superseded by E18.** Gemini is now the planner's *fallback*; the gap above was
+closed the expensive way, by a misclassification in ordinary use.
+
+---
+
+## E18 — the planner moves to its own key, and what the move exposed
+
+**Objective.** A refused question that should have been trivial: "state five
+laws from the top five sections of The Evidence Act and the Code of Criminal
+Procedure". Sections 1-5 of two Acts, straight out of the catalog, no retrieval
+and no generator involved. Gemini planned it as `out_of_scope`.
+
+**Two defects, and only one was the model's.**
+
+*The classification.* `out_of_scope` exists for a legal question about law the
+corpus does not hold, and the prompt's tie-break says so plainly: "if it is
+legal but not plainly inside the three Acts, choose out_of_scope." The question
+**names two of the three Acts**. Nothing in the prompt or the validator says
+that naming an in-scope Act makes `out_of_scope` impossible, so nothing caught
+it.
+
+*The schema.* `act` was a single string: `"crpc"`, `"penal"`, `"evidence"`, or
+`""`. A question naming two Acts had nowhere to put the second. There was no
+valid structural plan the model could have emitted, and no prompt wording fixes
+an unrepresentable plan.
+
+The second defect had already been failing silently, which is worse. An earlier
+turn — "in both cases, it should be the first section" — returned Evidence s.1
+and dropped CrPC s.1 **without saying so**. A refusal is visible; that is not.
+
+**The move.** `PLANNER_MODEL=planner` — `gpt-oss-120b` on
+`GROQ_API_KEY_PLANNER`, a key nothing else draws on. `keyring` matches the bare
+prefix plus numeric suffixes, so a `_PLANNER` suffix is never swept into the
+generators' rotation: the planner runs before anything else on every question,
+and a burst of answers must not leave the classifier rate-limited.
+`PLANNER_FALLBACK=gemini2`, still a different provider, and now the model that
+held the job before — measured on it rather than guessed at.
+
+**Result.** The same question, on the new planner:
+
+```
+category=structural  op='fetch'  acts=['evidence','crpc']  range=1-5   2.3s
+```
+
+Latency 1.0-2.3s, comparable to Gemini's 1.3-1.8s. Before the schema change it
+planned `structural` with `range=1-5` but `act=None`, and the validator turned
+that into "Sections 1 to 5 — which Act?" — the right question to ask about a
+plan that could not express the request, and the wrong thing to say to a reader
+who had named both Acts.
+
+**The schema change.** `acts: list[str]` is the model-facing field; `act` stays
+as the first element so the semantic hint, overviews and chapter resolution work
+untouched. The structural executor runs one catalog query per Act and merges,
+in the order named. The catalog takes a single slug per call by design — it is
+the exact-coordinate read model, and a query spanning Acts is a merge of exact
+queries rather than a looser one.
+
+End to end, the question now returns 11 sections across both Acts. Eleven and
+not ten because CrPC has a s.4A between 1 and 5, which is the catalog being
+literal about statutory numbering rather than counting to five.
+
+**Regressions checked offline**, since the change relaxes a guard: a range with
+no Act named still asks which; an unknown Act is dropped with a note; the same
+Act named twice is deduplicated to one fetch; an ambiguous section number and a
+chapter number without an Act both still ask. The relaxation applies only when
+Acts are actually named.
+
+**What this says about E13.** Its 42/42 was measured on Groq Qwen, and two
+planners have served since. The first concrete evidence that the number no
+longer describes the system was a user hitting a misclassification, not the
+suite. Re-running `plan_cases.py` on the current planner is now the first item
+in `plan.md` phase 7 for a reason.
+
+**Not measured.** Whether `gpt-oss-120b` plans more accurately than Gemini in
+general. One question is not a result — E17 is the standing warning about
+reading n=1 as a rate. What is established is that the schema could not express
+a two-Act request, and now can.
+
 ---
 
 ## E17 — a false refusal on material the retriever found (n=1, DIAGNOSTIC)
@@ -867,7 +945,7 @@ what made it eligible to be the default generator.
 
 ---
 
-## What E2-E17 together establish
+## What E2-E18 together establish
 
 Both chunk-formatting knobs are flat — retrieval on this corpus is not limited
 by how chunks are labelled or sized. Ranking is where the gains were, exactly as

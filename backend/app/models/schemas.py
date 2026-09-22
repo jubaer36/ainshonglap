@@ -129,6 +129,12 @@ class ConversationMemory(BaseModel):
     summary: str = ""
     sections: list[str] = Field(default_factory=list)
     turns: int = 0
+    # Turns that produced an answer, as opposed to `turns`, which counts
+    # refusals too. It has to be declared here and not merely tolerated: the
+    # client echoes this object back each turn, and a field absent from the
+    # model is dropped on the way in, which would reset the count to zero every
+    # turn and mean the conversation is never named.
+    answered: int = 0
     error: str | None = None
 
 
@@ -212,6 +218,18 @@ class ImportedConversation(BaseModel):
     title: str = ""
     memory: dict | None = None
     messages: list[dict] = Field(default_factory=list)
+
+
+class NameRequest(BaseModel):
+    """The memory a conversation should be named from."""
+
+    memory: ConversationMemory | None = None
+
+
+class RenameRequest(BaseModel):
+    """A new title for a saved conversation."""
+
+    title: str = Field(default="", max_length=200)
 
 
 class ImportRequest(BaseModel):

@@ -80,7 +80,7 @@ operation (structural only; "" otherwise):
 - enumerate: list the sections of a chapter or Act
 - overview: describe what a whole Act covers
 
-act: "crpc", "penal", "evidence", or "" if none is named.
+acts: every Act the question names, as a list of "crpc", "penal", "evidence" - ["evidence"] for one, ["evidence","crpc"] when two are named ("the first five sections of the Evidence Act AND the Code of Criminal Procedure"), [] if none is named. Never drop one because the request mentions two: listing both is exactly what was asked for.
 
 chapter: the chapter number given ("XVI", "16"), or, if the chapter was described by subject, those subject words copied from the question ("the murder chapter" -> "murder"; "sections about documentary evidence" -> "documentary evidence"). "" if not chapter-scoped. Never invent a chapter number.
 
@@ -109,7 +109,7 @@ SCHEMA = {
         # accept it. One schema has to satisfy every provider, so the absent
         # case is spelled.
         "operation": {"type": "string", "enum": [*OPERATIONS, "none"]},
-        "act": {"type": "string"},
+        "acts": {"type": "array", "items": {"type": "string"}},
         "chapter": {"type": "string"},
         "sections": {"type": "array", "items": {"type": "string"}},
         "section_from": {"type": "string"},
@@ -121,7 +121,7 @@ SCHEMA = {
         "follow_up": {"type": "boolean"},
         "resolved_question": {"type": "string"},
     },
-    "required": ["category", "operation", "act", "chapter", "sections",
+    "required": ["category", "operation", "acts", "chapter", "sections",
                  "section_from", "section_to", "search_query", "terms",
                  "needs_clarification", "clarification",
                  "follow_up", "resolved_question"],
@@ -135,6 +135,12 @@ class Plan:
     question: str
     category: str = "semantic"
     operation: str = ""
+    # Every Act the question named. `act` is the first of them, kept because
+    # most coordinates concern one Act and every consumer but the structural
+    # fetch reads it: on a semantic plan it is a hint, on an overview it is the
+    # subject. `acts` is what a request naming two Acts needs, and dropping the
+    # second was answering a different question — quietly, which is worse.
+    acts: list[str] = field(default_factory=list)
     act: str | None = None
     chapter: str | None = None
     sections: list[str] = field(default_factory=list)
@@ -276,9 +282,17 @@ def validate(plan: Plan) -> Plan:
     if plan.operation not in OPERATIONS:
         plan.operation = ""
 
-    if plan.act and plan.act not in slugs:
-        plan.notes.append(f"no such act {plan.act!r}")
-        plan.act = None
+    unknown = [a for a in plan.acts if a not in slugs]
+    if unknown:
+        plan.notes.append("no such act " + ", ".join(repr(a) for a in unknown))
+    # Deduplicated, because "the Evidence Act and the Evidence Act 1872" is one
+    # Act asked for twice and would otherwise be fetched twice.
+    seen: list[str] = []
+    for a in plan.acts:
+        if a in slugs and a not in seen:
+            seen.append(a)
+    plan.acts = seen
+    plan.act = plan.acts[0] if plan.acts else None
 
     if plan.chapter:
         if not plan.act:
@@ -288,6 +302,7 @@ def validate(plan: Plan) -> Plan:
             hits = [a for a in slugs if catalog.chapter(a, plan.chapter)]
             if len(hits) == 1:
                 plan.act = hits[0]
+                plan.acts = [hits[0]]
                 plan.notes.append(f"chapter {plan.chapter} only in {hits[0]}")
             elif len(hits) > 1:
                 plan.needs_clarification = True
@@ -435,7 +450,7 @@ def make_plan(question: str, *, backend: str | None = None,
         # code checks for an empty operation.
         operation=("" if _clean(raw.get("operation")).lower() in ("none", "")
                    else _clean(raw.get("operation")).lower()),
-        act=_clean(raw.get("act")).lower() or None,
+        acts=[_clean(a).lower() for a in (raw.get("acts") or []) if _clean(a)][:3],
         chapter=_clean(raw.get("chapter")).upper() or None,
         sections=[_clean(s).upper() for s in (raw.get("sections") or []) if _clean(s)][:20],
         section_from=_clean(raw.get("section_from")).upper() or None,
@@ -447,6 +462,10 @@ def make_plan(question: str, *, backend: str | None = None,
         follow_up=bool(raw.get("follow_up")),
         resolved_question=_clean(raw.get("resolved_question")),
     )
+    # `act` is the first named Act, so every existing consumer keeps working
+    # unchanged while `acts` carries the rest.
+    plan.act = plan.acts[0] if plan.acts else None
+
     # A follow-up with nothing to follow is a hallucinated referent: the model
     # inventing context it was never given. Demote it rather than executing a
     # rewrite built out of nothing.

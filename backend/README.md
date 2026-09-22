@@ -31,8 +31,10 @@ and the configured models, so a degraded start is visible without reading logs).
 
 `.env.local` (gitignored) holds `GROQ_API_KEY`, and optionally `GROQ_API_KEY_2`
 and `_3`, which are discovered automatically and used in turn.
-`GEMINI_API_KEY_2` runs the planner and the conversation summariser on their own
-quota; `INCEPTION_API_KEY` and `OPENROUTER_API_KEY` are fallbacks.
+`GROQ_API_KEY_PLANNER` runs the planner alone; `GEMINI_API_KEY_2` its fallback
+and the conversation summariser; `GEMINI_API_KEY_3` conversation naming.
+`INCEPTION_API_KEY` and `OPENROUTER_API_KEY` are generator fallbacks. Full table
+in `API.md`.
 
 ```bash
 curl -X POST http://localhost:8000/api/query \
@@ -82,8 +84,10 @@ validated against the corpus, and ambiguous section numbers require an Act.
 collapses the six intents into six categories — `meta`, `structural`
 (lookup/browse/summarize, differing by operation), `semantic`, `document`,
 `out_of_scope`, `general` — with a strict-JSON call returning coordinates only.
-The planner runs on Gemini 3.5 Flash Lite with a Groq fallback (E16), and is
-marked `internal` so it never appears as a selectable answer model.
+The planner runs on Groq `gpt-oss-120b` on `GROQ_API_KEY_PLANNER` — its own key,
+outside the generators' rotation — with Gemini 3.5 Flash Lite as the fallback
+(E16). Both are marked `internal` so neither appears as a selectable answer
+model.
 `app/rag/catalog.py` executes them against `Laws/main/catalog.sqlite` with
 parameterized SQL, and `app/rag/execute.py` holds one executor per category.
 The old pattern router survives behind `RAG_PLAN=0` as an outage switch.

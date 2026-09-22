@@ -117,6 +117,68 @@ export async function getConversation(id: string): Promise<SavedConversation | n
   }
 }
 
+/**
+ * Ask the server to name a conversation from its summary.
+ *
+ * A separate request on purpose: naming is not on the path to an answer, so it
+ * runs after one has already been rendered rather than delaying it. The server
+ * decides whether the conversation has earned a name and whether its title is
+ * still the system's to change, so this is safe to call more than once and
+ * usually returns null.
+ *
+ * Returns the refreshed list when the title changed, and null when it did not,
+ * so the caller can skip a re-render it does not need.
+ */
+export async function nameConversation(
+  id: string,
+  memory: ConversationMemory | null,
+): Promise<SavedConversation[] | null> {
+  const headers = await authHeaders();
+  if (!headers.Authorization) return null;
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/conversations/${id}/name`, {
+      method: "POST",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ memory }),
+    });
+    if (!response.ok) return null;
+    // `null` body means the title was left alone, which is the common case.
+    const named = (await response.json()) as Record<string, unknown> | null;
+    if (!named) return null;
+  } catch {
+    // A name is cosmetic; a failure here must not disturb the conversation.
+    return null;
+  }
+  return listConversations();
+}
+
+/**
+ * Retitle one conversation.
+ *
+ * Returns the refreshed list, like `deleteConversation`, so the caller sets
+ * state once instead of patching a row locally and hoping it matches what the
+ * server stored — the title is normalised server-side (trimmed, length-capped,
+ * blank falling back to the default), so the local guess can differ.
+ */
+export async function renameConversation(
+  id: string,
+  title: string,
+): Promise<SavedConversation[]> {
+  const headers = await authHeaders();
+  if (headers.Authorization) {
+    try {
+      await fetch(`${API_BASE_URL}/api/conversations/${id}`, {
+        method: "PATCH",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({ title }),
+      });
+    } catch {
+      /* the list is re-read below regardless */
+    }
+  }
+  return listConversations();
+}
+
 export async function deleteConversation(id: string): Promise<SavedConversation[]> {
   const headers = await authHeaders();
   if (headers.Authorization) {

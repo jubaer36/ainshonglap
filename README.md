@@ -36,7 +36,8 @@ the nearest match, so a wrong chapter fails visibly instead of quietly returning
 different law. Measured at 42/42 category and 27/27 scope on a pinned 41-case
 set (`experiments.md` E13).
 
-Gemini 3.5 Flash Lite plans (1.3-1.8s) with Groq Qwen as an automatic fallback;
+`gpt-oss-120b` plans on a key nothing else uses, with Gemini 3.5 Flash Lite as
+an automatic fallback;
 Groq Qwen writes the answers, with Mercury, OpenRouter and Gemini routes
 selectable per request. Every request logs one line per step, so which stage
 produced a given answer is readable rather than guessed.

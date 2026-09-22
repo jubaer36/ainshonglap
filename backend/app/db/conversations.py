@@ -137,6 +137,59 @@ def _images(user_id: str, conversation_id: str) -> dict[str, list[dict]]:
     return grouped
 
 
+def name_conversation(user_id: str, conversation_id: str,
+                      memory: dict | None) -> dict | None:
+    """Give a conversation a name of its own, once it has earned one.
+
+    Returns the conversation row when the title changed, None when it did not —
+    which is the ordinary outcome, since this is safe to call more than once.
+
+    **A title the reader typed is never overwritten.** The guard is that the
+    stored title still equals the one derived from the first question. If it
+    does not, either they renamed it or naming already ran, and both outcomes
+    are theirs to keep. No extra column is needed to know that, which matters
+    because the last migration is still waiting to be applied by hand.
+
+    Never raises. A conversation with the wrong name is a much smaller problem
+    than the request it was called from.
+    """
+    from app.rag import memory as mem
+    from app.rag import naming
+
+    parsed = mem.Memory.from_dict(memory)
+    if not naming.earned(parsed):
+        return None
+    try:
+        row = (client().table("conversations").select("*")
+               .eq("user_id", user_id).eq("id", conversation_id)
+               .limit(1).execute())
+        if not row.data:
+            return None
+        current = row.data[0].get("title") or ""
+
+        first = (client().table("messages").select("content")
+                 .eq("user_id", user_id).eq("conversation_id", conversation_id)
+                 .eq("role", "user").order("seq").limit(1).execute())
+        if not first.data:
+            return None
+        opening = _title((first.data[0].get("content") or {}).get("text", ""))
+        if current != opening:
+            trace.step("name", "title is the reader's, left alone")
+            return None
+
+        chosen = naming.suggest(parsed.summary)
+        if not chosen or _title(chosen) == current:
+            return None
+        updated = (client().table("conversations")
+                   .update({"title": _title(chosen)})
+                   .eq("user_id", user_id).eq("id", conversation_id).execute())
+        trace.step("supabase", f"named conversation «{chosen}»")
+        return updated.data[0] if updated.data else None
+    except Exception:                               # pragma: no cover - defensive
+        log.warning("naming failed; the title is unchanged", exc_info=True)
+        return None
+
+
 def save_turn(user_id: str, conversation_id: str | None, question: dict,
               answer: dict, memory: dict | None) -> str:
     """Persist one exchange. Returns the conversation id.
@@ -245,6 +298,28 @@ def _next_seq(user_id: str, conversation_id: str) -> int:
             .eq("user_id", user_id).eq("conversation_id", conversation_id)
             .order("seq", desc=True).limit(1).execute())
     return (rows.data[0]["seq"] + 1) if rows.data else 0
+
+
+def rename_conversation(user_id: str, conversation_id: str,
+                        title: str) -> dict | None:
+    """Give one conversation a new title. None when it is not this user's.
+
+    Filtered by `user_id` as well as `id`, like every other statement here: the
+    service-role key bypasses RLS, so the id alone would let anyone holding a
+    uuid retitle a stranger's conversation.
+
+    The title is passed through `_title`, so a renamed conversation obeys the
+    same length cap as an auto-titled one and an empty rename falls back to the
+    default rather than writing a blank row into the sidebar.
+    """
+    updated = (client().table("conversations")
+               .update({"title": _title(title)})
+               .eq("user_id", user_id).eq("id", conversation_id)
+               .execute())
+    if not updated.data:
+        return None
+    trace.step("renamed", conversation_id)
+    return updated.data[0]
 
 
 def delete_conversation(user_id: str, conversation_id: str) -> bool:

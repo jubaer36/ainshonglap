@@ -252,7 +252,12 @@ def plan_only(q: str = Query(..., min_length=1),
         "question": p.question,
         "category": p.category,
         "operation": p.operation or None,
+        # `act` is the first named Act, kept because most coordinates concern
+        # one. `acts` is every Act named, which is what a request spanning two
+        # of them needs — "the first five sections of the Evidence Act and the
+        # CrPC" is one plan, not a choice between them.
         "act": p.act,
+        "acts": p.acts,
         "chapter": p.chapter,
         "sections": p.sections,
         "range": ([p.section_from, p.section_to]

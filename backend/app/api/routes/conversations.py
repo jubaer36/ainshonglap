@@ -18,7 +18,7 @@ from fastapi import APIRouter, Header, HTTPException
 
 from app.db import supabase
 from app.models.schemas import (ConversationDetail, ConversationSummary,
-                                ImportRequest)
+                                ImportRequest, NameRequest, RenameRequest)
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/conversations", tags=["conversations"])
@@ -58,6 +58,49 @@ def get_conversation(conversation_id: str, authorization: str | None = Header(No
         # exist. Distinguishing them would confirm that a given id is real.
         raise HTTPException(404, "no such conversation")
     return ConversationDetail(**found)
+
+
+@router.post("/{conversation_id}/name", response_model=ConversationSummary | None)
+def name_conversation(conversation_id: str, payload: NameRequest,
+                      authorization: str | None = Header(None)):
+    """Name a conversation from its summary, if it has earned one.
+
+    Its own request, not part of `POST /api/query`, because naming is not on the
+    path to an answer. Folding it in would put a second model call between the
+    reader and an answer they are already waiting for, for a label they are not
+    looking at yet. Its own model and key too — see `app/rag/naming.py`.
+
+    Returns the updated conversation, or `null` when the title is unchanged,
+    which is the ordinary outcome: too few answered turns, or a title the reader
+    has already made their own. Safe to call more than once.
+    """
+    from app.db import conversations as store
+
+    user = _caller(authorization)
+    memory = payload.memory.model_dump() if payload.memory else None
+    named = store.name_conversation(user, conversation_id, memory)
+    return ConversationSummary(**named) if named else None
+
+
+@router.patch("/{conversation_id}", response_model=ConversationSummary)
+def rename_conversation(conversation_id: str, payload: RenameRequest,
+                        authorization: str | None = Header(None)):
+    """Retitle a conversation.
+
+    Titles are the reader's, not the system's. The default is the first question
+    asked, which is a reasonable guess and often the wrong label for a
+    conversation that moved on.
+    """
+    from app.db import conversations as store
+
+    user = _caller(authorization)
+    renamed = store.rename_conversation(user, conversation_id, payload.title)
+    if not renamed:
+        # 404 for someone else's conversation as well as for one that does not
+        # exist, for the same reason as the read: distinguishing them would
+        # confirm that a given id is real.
+        raise HTTPException(404, "no such conversation")
+    return ConversationSummary(**renamed)
 
 
 @router.delete("/{conversation_id}")

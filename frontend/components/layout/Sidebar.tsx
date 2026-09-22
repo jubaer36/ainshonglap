@@ -11,6 +11,7 @@ interface SidebarProps {
   activeConversationId: string | null;
   onOpenConversation: (id: string) => void;
   onDeleteConversation: (id: string) => void;
+  onRenameConversation: (id: string, title: string) => void;
 }
 
 export function Sidebar({
@@ -21,6 +22,7 @@ export function Sidebar({
   activeConversationId,
   onOpenConversation,
   onDeleteConversation,
+  onRenameConversation,
 }: SidebarProps) {
   return (
     <aside
@@ -52,6 +54,7 @@ export function Sidebar({
               activeId={activeConversationId}
               onOpen={onOpenConversation}
               onDelete={onDeleteConversation}
+              onRename={onRenameConversation}
             />
           </div>
         )}

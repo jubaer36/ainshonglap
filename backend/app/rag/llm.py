@@ -86,10 +86,20 @@ class GroqLLM:
     LABEL = "groq"
 
     def __init__(self, model: str = DEFAULT_GROQ, temperature: float = 0.0,
-                 max_tokens: int = 4096, timeout: int = 120):
-        if not keyring.count(self.KEY_ENV):
+                 max_tokens: int = 4096, timeout: int = 120,
+                 key_env: str | None = None):
+        # `key_env` overrides the shared pool for a route that should not draw
+        # on it. The planner runs before anything else on every question, so it
+        # is given its own key: a burst of answers must not leave the classifier
+        # rate-limited, which degrades every later question to plain retrieval.
+        #
+        # A dedicated prefix resolves to exactly one slot — `keyring` matches
+        # the bare name plus numeric suffixes, so `GROQ_API_KEY_PLANNER` is
+        # never swept into `GROQ_API_KEY`'s rotation.
+        self.key_env = key_env or self.KEY_ENV
+        if not keyring.count(self.key_env):
             raise RuntimeError(
-                f"{self.KEY_ENV} not set (expected in backend/.env.local)")
+                f"{self.key_env} not set (expected in backend/.env.local)")
         self.name = model
         self.temperature = temperature
         self.max_tokens = max_tokens
@@ -101,8 +111,8 @@ class GroqLLM:
 
     @property
     def fleet(self) -> int:
-        """How many keys this provider currently has configured."""
-        return max(keyring.count(self.KEY_ENV), 1)
+        """How many keys this route currently has configured."""
+        return max(keyring.count(self.key_env), 1)
 
     def _post(self, body: dict, attempts: int = 4):
         """POST, rotating keys first and only then waiting.
@@ -122,10 +132,10 @@ class GroqLLM:
         """
         import requests
 
-        order = keyring.rotation(self.KEY_ENV)
+        order = keyring.rotation(self.key_env)
         if not order:
             raise RuntimeError(
-                f"{self.KEY_ENV} not set (expected in backend/.env.local)")
+                f"{self.key_env} not set (expected in backend/.env.local)")
         fresh = [s for s in order if quota.slot_available(self.name, s.env)]
         spent = [s for s in order if not quota.slot_available(self.name, s.env)]
         order = fresh + spent
@@ -339,7 +349,7 @@ def get_llm(backend: str | None = None, model: str | None = None) -> Any:
         backend = backend or resolved_backend
         model = resolved_model
     if backend == "groq":
-        return GroqLLM(model or DEFAULT_GROQ)
+        return GroqLLM(model or DEFAULT_GROQ, key_env=key_env)
     if backend == "openrouter":
         return OpenRouterLLM(model or DEFAULT_OPENROUTER)
     if backend == "gemini":
