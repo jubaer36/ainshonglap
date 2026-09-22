@@ -135,7 +135,8 @@ Set `RAG_PLAN=0` to fall back to the older pattern router in `app/rag/refine.py`
 so it does not share a quota with anything else), with Groq Qwen as an automatic
 fallback. A different *provider*, not just a different model: Groq's per-minute
 and daily limits are per-account, so a second Groq route waits behind the same
-wall. Measured 1.3-1.8s against 43s on a rate-limited Groq.
+wall. Measured 1.3-1.8s against 43s on a rate-limited Groq. `gemini2` is marked
+`internal` in the registry and so never appears in the model picker.
 
 This matters more than it looks. The planner is the first step, so its failures
 do not present as planner failures — a failed plan degrades the question to
@@ -231,11 +232,22 @@ the page beside it is the only way to check that reading later.
 Selectable generators, with availability:
 
 ```json
-{"alias": "qwen", "backend": "groq", "model": "qwen/qwen3.8-27b",
+{"alias": "oss120", "backend": "groq", "model": "openai/gpt-oss-120b",
  "enforces_schema": true, "default": true, "fallback": false,
  "available": false, "unavailable_reason": "daily token limit reached",
  "seconds_remaining": 760}
 ```
+
+Ordered best-first (`config.PICKER_ORDER`): `oss120`, `qwen`, `oss`, `gemini`,
+then the rest in registry order. The registry itself is grouped by provider,
+which is the right shape for reading it and the wrong one for choosing from it.
+
+**Internal routes are not listed.** `gemini2` runs the planner and the
+conversation summariser on `GEMINI_API_KEY_2`; offering it as an answer model
+would let a reader spend the classifier's quota and then wonder why the next
+question stopped being routed. It stays resolvable by alias — it is simply not
+advertised. `config.selectable()` is the filter, and the 422 "unknown model"
+message lists the same set.
 
 Two different things make a route unusable, and they are reported separately.
 `enforces_schema: false` is permanent and about correctness — the pipeline needs
@@ -243,10 +255,16 @@ a verbatim quote per claim, and a route answering in prose parses as "no claims"
 and surfaces as a false refusal. `available: false` is temporary and about
 budget.
 
-Quota is tracked **per model**: Groq's daily token cap named
-`qwen/qwen3.8-27b` specifically, and `openai/gpt-oss-20b` has its own. The
-cooldown is parsed from the provider's own "try again in 12m40s". Only genuine
-quota errors count — a 500 or a timeout says nothing about budget.
+Quota is tracked **per (model, key)**. Groq's daily cap is named for one model
+on one key: `openai/gpt-oss-120b` on `GROQ_API_KEY` says nothing about the same
+model on `GROQ_API_KEY_2`, and nothing about `qwen/qwen3.8-27b` on either. A
+model reports `available: false` only once **every** key it has is blocked, and
+comes back when the **first** of them does — so `seconds_remaining` is the
+soonest expiry, not the longest. Tracking it per model alone would have greyed
+out a route still holding two thirds of its capacity.
+
+The cooldown is parsed from the provider's own "try again in 12m40s". Only
+genuine quota errors count — a 500 or a timeout says nothing about budget.
 
 When the chosen generator is out, `POST /api/query` answers on
 `RAG_FALLBACK_GENERATOR` (default `mercury`, deliberately a *different
@@ -261,13 +279,37 @@ served and measured numbers cannot drift.
 ## Configuration
 
 `backend/.env.local` (gitignored) holds the keys: `GROQ_API_KEY`,
-`INCEPTION_API_KEY` (Mercury), `GEMINI_API_KEY`, `GEMINI_API_KEY_2` (the
-conversation summariser, on its own key so it never competes for quota),
-`DEEPGRAM_API_KEY` (voice), `OPENROUTER_API_KEY`.
+`GROQ_API_KEY_2`, `GROQ_API_KEY_3` (see **Groq key rotation** below),
+`INCEPTION_API_KEY` (Mercury), `GEMINI_API_KEY`, `GEMINI_API_KEY_2` (the planner
+and the conversation summariser, on their own key so they never compete for
+quota), `DEEPGRAM_API_KEY` (voice), `OPENROUTER_API_KEY`.
+
+### Groq key rotation
+
+Groq's free tier is capped per key *and* per model, so more keys mean more
+budget — but only if requests actually spread across them. `app/rag/keyring.py`
+discovers them by convention: `GROQ_API_KEY`, then `GROQ_API_KEY_2`,
+`GROQ_API_KEY_3`, stopping at the first gap. Adding a fourth is an `.env.local`
+edit and nothing else.
+
+Two mechanisms, and they are not the same thing:
+
+| | |
+|---|---|
+| **rotation** | every call starts at the next key, so a stream of questions divides roughly evenly instead of burning key 1 to its daily cap while 2 and 3 sit untouched |
+| **failover** | a 429 on one key is retried on the next *immediately*, because a per-minute ceiling on one key is not a ceiling on another. Sleeping on `retry-after` is what happens only after every key has refused |
+
+Keys already recorded as out of budget are tried **last, not skipped** — that
+record is a cached 429, not a fact about the account.
+
+A provider with one key (Inception, OpenRouter) yields a single slot and behaves
+exactly as it did before. `RAG_TRACE` logs each switch (`key GROQ_API_KEY_2 429
+-> next key`), and `/health` names which keys are down rather than only that the
+model is.
 
 | var | default | |
 |---|---|---|
-| `RAG_GENERATOR` | `qwen` | alias returned by `GET /api/models` |
+| `RAG_GENERATOR` | `oss120` | alias returned by `GET /api/models` |
 | `RAG_GROQ_MODEL` | `qwen/qwen3.8-27b` | direct Groq model id |
 | `RAG_LLM_BACKEND` | `groq` | `groq`, `openrouter`, `gemini`, `inception` |
 | `RAG_INCEPTION_MODEL` | `mercury-2.5` | Inception Mercury default |
@@ -276,7 +318,7 @@ conversation summariser, on its own key so it never competes for quota),
 | `RAG_TRACE` | `1` | one concise log line per pipeline step; `0` silences |
 | `RAG_PLAN` | `1` | `0` falls back to the old pattern router |
 | `RAG_ROUTER_MODEL` | `lfm` | old router's model, used only when `RAG_PLAN=0` |
-| `RAG_DENSE_K` / `RAG_FINAL_K` | `20` / `5` | candidates reranked / sections returned |
+| `RAG_DENSE_K` / `RAG_FINAL_K` | `20` / `8` | candidates reranked / sections returned |
 | `RAG_FALLBACK_GENERATOR` | `mercury` | used when the chosen generator is out of quota |
 | `RAG_MEMORY_MODEL` | `gemini-3.5-flash-lite` | rolling conversation summariser |
 | `RAG_MEMORY_CHARS` | `700` | ceiling on the summary, so context stays bounded |
@@ -318,7 +360,8 @@ app/rag/
   speech.py     Deepgram STT — audio -> transcript, never an answer
   memory.py     rolling conversation summary; prose from a model, section keys
                 from code
-  quota.py      per-model exhaustion and cooldown, for fallback and the picker
+  keyring.py    several API keys per provider: rotation, and failover on 429
+  quota.py      per (model, key) exhaustion and cooldown, for fallback and the picker
   present.py    Answer -> AssistantMessage
 ```
 

@@ -154,7 +154,7 @@ measured completely.
 - What relevance threshold gives useful comprehensive discovery without flooding
   the result with adjacent but immaterial provisions?
 
-These now sit inside `query-routing-plan.md`, which separates the five-section
+These now sit inside `query-routing-plan.md`, which separates the fixed-count
 focused answer path from broad, thresholded and paginated discovery. Parsing the
 remaining Acts remains a corpus-expansion task, not a prerequisite for measuring
 the current three-Act pipeline.

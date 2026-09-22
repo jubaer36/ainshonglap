@@ -121,7 +121,7 @@ def query(payload: QueryRequest,
         # on purpose (config.resolve_generator), so this is where a typo
         # surfaces — including Swagger UI's own "string" placeholder.
         if _unknown_model(exc):
-            known = ", ".join(sorted(config.GENERATORS))
+            known = ", ".join(sorted(config.selectable()))
             raise HTTPException(
                 422, f"unknown model {model!r} — use an alias from "
                      f"GET /api/models ({known}), a 'backend:model' pair, or "
@@ -234,7 +234,7 @@ def plan_only(q: str = Query(..., min_length=1),
         p = make_plan(q.strip(), model=model)
     except Exception as exc:                        # pragma: no cover - defensive
         if _unknown_model(exc):
-            known = ", ".join(sorted(config.GENERATORS))
+            known = ", ".join(sorted(config.selectable()))
             raise HTTPException(422, f"unknown model {model!r} — use one of "
                                      f"{known}, or omit the field") from exc
         log.exception("planning failed")
@@ -244,7 +244,7 @@ def plan_only(q: str = Query(..., min_length=1),
     # and records why in `error`. So a bad model id arrives here as a fallback
     # plan rather than an exception, and has to be caught on the way out.
     if p.error and _unknown_model(Exception(p.error)):
-        known = ", ".join(sorted(config.GENERATORS))
+        known = ", ".join(sorted(config.selectable()))
         raise HTTPException(422, f"unknown model {model!r} — use one of "
                                  f"{known}, or omit the field")
 

@@ -755,7 +755,119 @@ longer the default. That is a real gap, and the suite exists to close it.
 
 ---
 
-## What E2-E16 together establish
+## E17 — a false refusal on material the retriever found (n=1, DIAGNOSTIC)
+
+**Objective.** Trace one refusal end to end. "If I can't prove myself innocent
+in a court then am I guilty, and which law talks about this" was refused; the
+question is whether that was a corpus gap, a retrieval miss, or the generator.
+
+**This is n=1 and proves nothing about rates.** It is recorded because it
+isolates a *mechanism*, and because the mechanism turned out not to be the one
+predicted.
+
+**The corpus has the answer.** Checked against `catalog.sqlite` before running
+anything: Evidence ss.101, 102, 103 (burden lies on the asserter), s.105 and
+s.106 (the two carve-outs where it shifts to the accused), CrPC s.245 and s.265H
+(acquittal). s.101 illustration (a) states it outright — *"A must prove that B
+has committed the crime."*
+
+One real gap, and it is the right kind:
+
+```
+'presumption of innocence' -> NOT PRESENT
+'presumed innocent'        -> NOT PRESENT
+'reasonable doubt'         -> NOT PRESENT
+'benefit of doubt'         -> NOT PRESENT
+```
+
+Not a parser miss. Those phrases are not in the 1872/1860/1898 texts; the
+doctrine is judicial and constitutional, and the Constitution is out of scope.
+The system can only reach it through the operative rule in ss.101-103, and must
+never produce a section named for it.
+
+**Retrieval was right.** The planner classified `semantic`, act `evidence`, and
+rewrote to `burden of proof accused innocence`. Retrieval returned exactly
+ss.101/102/103/105/106. The predicted failure — Act drift toward Penal Code
+"guilt" vocabulary — did not happen.
+
+**The generator refused anyway**, with `sufficient=false`: its own judgement,
+not the citation gates and not the score threshold. The cause is the prompt in
+`app/rag/answer.py`:
+
+> 1. ...do not reason from general legal principles.
+> 2. ...A section that is merely related is not an answer. Refusing is the
+>    correct outcome far more often than it feels like it is.
+
+No section *states* "failing to prove innocence does not make you guilty."
+s.101 allocates the burden; the answer is the inference from that allocation,
+and rule 1 forbids exactly that step. The model obeyed the prompt correctly and
+produced the wrong outcome.
+
+**This is a question class, not a one-off.** The prompt is tuned for "what is
+the punishment for X", where the answer sits verbatim in the text. It fails for
+"is it true that Y", where the law answers by allocating a burden elsewhere and
+the proposition never appears literally.
+
+**Two further findings from the same trace.**
+
+*The reranker put the exception above the rule.* On the planner's query,
+`evidence-s105` (burden **on** the accused) scored top and `evidence-s101` (the
+rule that it is not) placed fifth. The query's surface wording — "prove myself",
+"accused" — matches the carve-out's language better than the rule's. The refusal
+masked this: had the generator answered, its best-ranked evidence pointed the
+opposite way, which is a worse failure than the refusal that was actually
+returned.
+
+*The planner's terms cost the CrPC sections.* Retrieval on each query alone is
+near-disjoint:
+
+| query | top hits |
+|---|---|
+| rewrite alone | Evidence ss.105, 102, 101, 103, 109, 104, 106 — **no CrPC** |
+| raw question alone | CrPC ss.245, 244, 497, 265E, **265H** — almost no Evidence |
+| concatenated (`plan.query`, what runs) | Evidence sweeps the top 7; **265H absent from the top 20** |
+
+`plan.query` concatenates the two precisely to stop a rewrite losing provisions,
+and it lost them anyway: the statutory register of the rewrite dominates the
+embedding. CrPC s.265H is the one *quotable* answer in the corpus — "the Court
+considers that there is no evidence that the accused committed the offence, the
+Court shall record an order of acquittal" — and it never reaches the generator.
+
+Note also that the planner emitted the term `presumption of innocence`, a phrase
+with zero occurrences in the corpus. It contributes nothing retrievable and
+still shifts the embedding.
+
+**`RAG_FINAL_K` 5 -> 8 does not fix it.** Raised and re-run. The three new slots
+went to `evidence-s104`, `evidence-s110`, `crpc-s361` — noise. 265H is outside
+the `DENSE_K=20` candidate pool entirely, so no value of `FINAL_K` reaches it.
+
+**Stability.** Two runs of the same question produced different orderings
+(`s106` top at 1.04, then `s105` top at 0.06), because Gemini's `terms` vary
+between calls. The retrieval for this question is not reproducible run to run.
+
+**Decision.** `FINAL_K=8` is left in place at the user's direction but is
+**unmeasured on the 608-question set** and costs ~60% more generator input
+tokens per semantic query. It is a pending measurement, not an adopted result —
+the standing rule is that nothing is adopted without moving a number, and this
+moved none.
+
+The real candidates, in order of expected value:
+
+1. **Retrieve the rewrite and the raw question separately and merge.** They are
+   near-disjoint here, and the union contains the answer. Measurable offline.
+2. **Drop planner terms with no lexical support in the catalog.** Cheap to check
+   against FTS5 before embedding.
+3. **Loosen prompt rule 1** for burden/allocation questions. Riskiest: it trades
+   false refusals for over-answering, which is what E8 measures and E8 is
+   unfinished.
+
+**Also probed here.** `openai/gpt-oss-120b` on Groq: strict schema honoured,
+2.10s, 285 in / 728 out. That closes the "oss120 unprobed" item from E11 and is
+what made it eligible to be the default generator.
+
+---
+
+## What E2-E17 together establish
 
 Both chunk-formatting knobs are flat — retrieval on this corpus is not limited
 by how chunks are labelled or sized. Ranking is where the gains were, exactly as

@@ -1,3 +1,4 @@
+import { normalizeAssistantMessage } from "./api";
 import { accessToken } from "./supabase";
 import type { ChatMessage, ConversationMemory, UserMessage } from "./types";
 
@@ -55,6 +56,28 @@ export function titleFor(messages: ChatMessage[]): string {
   return text.length > 60 ? `${text.slice(0, 57)}…` : text;
 }
 
+/**
+ * Stored messages come back in the API's own shape — `quick_actions`, not
+ * `quickActions` — because the server persists the response exactly as it sent
+ * it. Reopening a conversation therefore has to run them through the same
+ * normaliser a live answer goes through; skipping it left `quickActions`
+ * undefined and crashed the renderer on the first reloaded session.
+ */
+function restoreMessages(raw: unknown): ChatMessage[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((entry) => {
+    const row = entry as Record<string, unknown>;
+    if (row.role === "user") {
+      return {
+        id: (row.id as string) ?? `u-${Math.random().toString(36).slice(2)}`,
+        role: "user",
+        text: (row.text as string) ?? "",
+      } as ChatMessage;
+    }
+    return normalizeAssistantMessage(row) as ChatMessage;
+  });
+}
+
 function toSaved(row: Record<string, unknown>, messages: ChatMessage[] = []): SavedConversation {
   return {
     id: row.id as string,
@@ -88,7 +111,7 @@ export async function getConversation(id: string): Promise<SavedConversation | n
     const response = await fetch(`${API_BASE_URL}/api/conversations/${id}`, { headers });
     if (!response.ok) return null;
     const row = (await response.json()) as Record<string, unknown>;
-    return toSaved(row, (row.messages as ChatMessage[]) ?? []);
+    return toSaved(row, restoreMessages(row.messages));
   } catch {
     return null;
   }

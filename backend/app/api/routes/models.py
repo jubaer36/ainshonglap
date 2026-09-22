@@ -38,7 +38,10 @@ async def list_models() -> list[GeneratorInfo]:
     from app.rag import quota
 
     out: list[GeneratorInfo] = []
-    for alias, spec in config.GENERATORS.items():
+    # `config.selectable()` and not `config.GENERATORS`: internal routes run the
+    # planner and the summariser, and a reader who picked one for an answer
+    # would be spending the quota the classifier depends on.
+    for alias, spec in config.selectable().items():
         blocked = quota.status(spec["model"])
         out.append(GeneratorInfo(
             alias=alias,
@@ -47,6 +50,9 @@ async def list_models() -> list[GeneratorInfo]:
             available=blocked is None,
             unavailable_reason=blocked["reason"] if blocked else None,
             seconds_remaining=blocked["seconds_remaining"] if blocked else None,
-            **spec,
+            backend=spec["backend"],
+            model=spec["model"],
+            enforces_schema=spec.get("enforces_schema"),
+            note=spec.get("note"),
         ))
     return out

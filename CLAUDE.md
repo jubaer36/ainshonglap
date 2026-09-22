@@ -50,9 +50,17 @@ uvicorn app.main:app --reload            # API on :8000
 
 Secrets live in `backend/.env.local` (gitignored): `GEMINI_API_KEY_2` (the
 planner and the conversation summariser, on their own key), `GROQ_API_KEY`
-(default generator, planner fallback), `INCEPTION_API_KEY` (Mercury, the quota
-fallback), `DEEPGRAM_API_KEY` (voice), `OPENROUTER_API_KEY` (vision, OpenRouter
-routes), `SUPABASE_*` (accounts and storage), plus optional `GEMINI_API_KEY`.
+plus `GROQ_API_KEY_2` and `_3` (default generator `oss120`, planner fallback —
+used in rotation, see below), `INCEPTION_API_KEY` (Mercury, the quota fallback),
+`DEEPGRAM_API_KEY` (voice), `OPENROUTER_API_KEY` (vision, OpenRouter routes),
+`SUPABASE_*` (accounts and storage), plus optional `GEMINI_API_KEY`.
+
+`app/rag/keyring.py` discovers every `GROQ_API_KEY*` and uses them in turn:
+rotation per call so the daily caps drain evenly, immediate failover to the next
+key on a 429, and sleeping only when every key has refused. Groq's budget is per
+key *and* per model, so `quota.py` records exhaustion per (model, key) and a
+model greys out only when all of its keys are spent. Adding a fourth key is an
+`.env.local` edit and nothing else.
 
 Every request logs one line per step — planner in and out, retrieval hits,
 generator claims kept and dropped, memory, Supabase writes. `RAG_TRACE=0`
@@ -62,11 +70,12 @@ declined on the right ones, or the citation gates killed every claim, and those
 look identical from outside.
 
 **Free-tier budgets are a real constraint.** Groq's daily token cap is per model
-and has been exhausted once by verification runs. Prefer offline checks —
-imports, `tsc --noEmit`, eslint, direct tests of pure logic — and use
+and per key, and has been exhausted once by verification runs. Three keys triple
+it; they do not make it infinite. Prefer offline checks — imports,
+`tsc --noEmit`, eslint, direct tests of pure logic — and use
 `plan_cases.py --only` rather than re-running a whole suite to confirm a narrow
-fix. `app/rag/quota.py` records exhaustion per model so the picker can grey a
-route out and `/api/query` can fall back.
+fix. `app/rag/quota.py` records exhaustion per (model, key) so the picker can
+grey a route out once every key is spent, and `/api/query` can fall back.
 
 ## The pipeline
 

@@ -148,7 +148,7 @@ def main() -> None:
         if a.sources:
             print("  sources " + ", ".join(
                 f"{s.key} (score {s.score:.2f})" if s.score else s.key
-                for s in a.sources[:6]))
+                for s in a.sources))
         print(f"  ({dt:.1f}s)\n")
 
         if i < len(questions):

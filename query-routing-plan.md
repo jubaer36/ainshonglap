@@ -14,17 +14,20 @@ different operation:
 
 | request | current limitation | correct operation |
 |---|---|---|
-| “Someone kills/steals…” | generator sees only the final five sections | focused or comprehensive semantic retrieval |
+| “Someone kills/steals…” | generator sees only a fixed top-k of sections | focused or comprehensive semantic retrieval |
 | “Give an overview of the Penal Code” | top-k retrieval cannot represent a whole Act | hierarchical outline/summary |
 | “List important Penal Code laws” | “important” is subjective and top-k similarity is not importance | clarification or an explicit selection policy |
 | “Show Chapter XVI / section 379” | semantic ranking is unnecessary and can miss the named coordinate | exact catalog query |
 | “Who are you / what can you do?” | no legal source is required | capability response |
 | “Show that section” | history is currently ignored | plan using typed conversation scope |
 
-The five-section behavior is not a mysterious model limitation. It is configured
-by `RAG_FINAL_K=5`, and only sections surviving into generated claims are shown.
-Simply increasing that number would add distractors, latency and prompt tokens
-without defining what “all relevant laws” means.
+The narrow-answer behavior is not a mysterious model limitation. It is
+configured by `RAG_FINAL_K` (5 originally, now 8), and only sections surviving
+into generated claims are shown. Simply increasing that number adds distractors,
+latency and prompt tokens without defining what “all relevant laws” means — E17
+raised it 5 → 8 on a traced refusal and the three new slots took noise, while
+the section that would have answered the question sat outside the candidate pool
+entirely.
 
 ## Design decision
 
@@ -144,7 +147,7 @@ completeness.
 
 ### 3. Whole-Act overview
 
-Do not retrieve five sections. Fetch the full hierarchy from the catalog:
+Do not retrieve a top-k of sections. Fetch the full hierarchy from the catalog:
 chapter titles, parts, section counts and optionally representative section
 titles. The model may turn that verified outline into prose, but it must not add
 penalties or rules absent from the outline.
@@ -179,6 +182,21 @@ than changing the focused answer's `FINAL_K` globally:
 5. Apply a fitted absolute relevance threshold rather than an arbitrary top N.
 6. Expand explicit cross-references by one hop, marking why each was included.
 7. Group results by Act/chapter and paginate them.
+
+**E17 supplies evidence that step 2 matters more than it looks.** `plan.query`
+already concatenates the raw question with the planner's rewrite and terms,
+specifically so a rewrite cannot lose a provision the plain question would have
+found. On the traced question it lost them anyway: the rewrite's statutory
+register dominated the embedding, and retrieval on each half alone returned
+near-disjoint sets — the rewrite gave Evidence ss.101-110 and no CrPC, the raw
+question gave CrPC ss.245/265H and almost no Evidence. Only the union contains
+the answer. Concatenating into one embedding is not the same as retrieving twice
+and merging, and the difference is a provision.
+
+Worth guarding at the same time: the planner emitted `presumption of innocence`
+as a search term, a phrase with **zero** occurrences anywhere in the three Acts.
+Terms with no lexical support in the catalog can be dropped before embedding —
+FTS5 answers that in microseconds.
 
 The response should separate:
 
@@ -297,8 +315,8 @@ been three ways of spelling "ask the database".
 **2. `coverage: focused | comprehensive` was dropped.** The design had the
 planner choose between a focused answer and a broad one. That choice does not
 belong to the planner: how many provisions are relevant is a property of the
-retrieval scores, not of the question's phrasing. `FINAL_K=5` is replaced by a
-fitted relevance threshold instead (`plan.md` phase 4) — at most 10 sections to
+retrieval scores, not of the question's phrasing. The fixed `FINAL_K` is replaced
+by a fitted relevance threshold instead (`plan.md` phase 4) — at most 10 sections to
 the generator, every section above the threshold shown to the reader as catalog
 records. A question that touches two provisions shows two; one that touches
 eighteen shows eighteen, with no planner field involved.

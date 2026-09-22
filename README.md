@@ -50,9 +50,12 @@ question) and **conversation memory** (a rolling summary from Gemini Flash Lite;
 the planner rewrites a follow-up into a standalone question so nothing
 downstream knows a conversation happened).
 
-Generators are selectable per request and quota-aware: exhaustion is tracked per
-model, an exhausted route is greyed out in the picker, and `/api/query`
-substitutes a different provider and says so.
+Generators are selectable per request and quota-aware. Groq's free tier caps
+usage per key *and* per model, so every `GROQ_API_KEY*` in `.env.local` is used
+in turn and a 429 fails over to the next key immediately rather than waiting.
+Exhaustion is tracked per (model, key); a model is greyed out in the picker only
+once every one of its keys is spent, and `/api/query` then substitutes a
+different provider and says so.
 
 Accounts are optional, and the first screen makes the choice explicit. As a
 **guest** nothing is written anywhere — not to the server, not to the browser —
@@ -64,10 +67,11 @@ model that produced it, and any page images with their transcriptions.
 The required disclaimer is appended server-side from a constant to every answer,
 including refusals, so it travels with the answer rather than sitting as chrome.
 
-Focused answers still cap at five sections. That cap is the largest known
-weakness — a two-issue scenario collapses into one embedding query and the
-dominant wording takes every slot — and the fitted threshold plus facet
-retrieval that replaces it is `plan.md` phase 4.
+Focused answers cap at a fixed number of sections (currently eight, raised
+from five and unmeasured). That cap is the largest known weakness — a two-issue
+scenario collapses into one embedding query and the dominant wording takes every
+slot — and the fitted threshold plus facet retrieval that replaces it is
+`plan.md` phase 4.
 
 ## Repository layout
 
@@ -91,7 +95,7 @@ conda activate ainshonglap
 cd backend
 pip install -r requirements.txt
 cp .env.example .env.local
-# add GROQ_API_KEY and OPENROUTER_API_KEY to .env.local
+# add GROQ_API_KEY (and optionally _2, _3) and OPENROUTER_API_KEY to .env.local
 uvicorn app.main:app --reload
 ```
 
@@ -163,12 +167,18 @@ See `backend/API.md` for the request/response contract and configuration.
 ## Current limitations
 
 - Only three Acts are ingested; amendments, case law and remaining PDFs are not served.
-- The answer path sends at most five reranked sections to the generator. A
+- The answer path sends at most eight reranked sections to the generator. A
   scenario raising two legal issues collapses into one embedding query, so the
   dominant wording takes every slot — "three men beat a man and he died"
   retrieves *hurt* sections and never reaches culpable homicide, and the
   generator then refuses, correctly, on what it was given. Facet retrieval plus
-  a fitted threshold is the fix (`plan.md` phase 4).
+  a fitted threshold is the fix (`plan.md` phase 4). Raising the budget from 5 to
+  8 did **not** fix a traced instance of this and is itself unmeasured (E17).
+- A question whose answer is a burden *allocation* rather than a stated rule is
+  refused even when retrieval finds the right sections. "If I can't prove myself
+  innocent, am I guilty?" retrieves Evidence ss.101-106 correctly, and the
+  generator declines because its prompt forbids reasoning from a provision to
+  its consequence. Traced in E17.
 - The CrPC Second Schedule — which classifies offences as bailable or
   cognizable — is **not in the corpus**, so "is house theft bailable?" is
   refused. No Bangladesh source for it exists in the repo; the copy that

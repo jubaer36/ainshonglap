@@ -58,7 +58,8 @@ GENERATORS: dict[str, dict] = {
                   "enforces_schema": True,
                   "note": "Groq; separate daily token budget from qwen"},
     "oss120":    {"backend": "groq",       "model": "openai/gpt-oss-120b",
-                  "enforces_schema": None,  "note": "Groq; larger, unprobed"},
+                  "enforces_schema": True,
+                  "note": "Groq; default. Strict schema, 2.1s on the probe"},
     "lfm":       {"backend": "openrouter", "model": "liquid/lfm-2.5-2.6b:free",
                   "enforces_schema": True,  "note": "2.6B, ~2s/call"},
     "super":     {"backend": "openrouter", "model": "nvidia/nemotron-3-super-120b-a12b:free",
@@ -70,13 +71,32 @@ GENERATORS: dict[str, dict] = {
                   "enforces_schema": True,  "note": "previous generation, 128K ctx"},
     "gemini2":   {"backend": "gemini",     "model": "gemini-3.5-flash-lite",
                   "key_env": "GEMINI_API_KEY_2", "enforces_schema": True,
-                  "note": "second Gemini key; planner fallback, own quota"},
+                  "internal": True,
+                  "note": "second Gemini key; planner and conversation summariser"},
     "gemini":    {"backend": "gemini",     "model": "gemini-3.5-flash-lite",
                   "enforces_schema": True,
                   "note": "E1 scored 5/5, but on gemini-2.5-flash"},
 }
 
-DEFAULT_GENERATOR = os.getenv("RAG_GENERATOR", "qwen")
+# `internal` routes are machinery, not choices. gemini2 runs the planner and the
+# conversation summariser on their own key; offering it in the picker would let
+# a reader spend the planner's quota on an answer and then wonder why the next
+# question stopped being classified. Resolvable by alias, just not advertised.
+# The order the picker offers them in, best first. The registry above is grouped
+# by provider, which is the right shape for reading and the wrong one for
+# choosing: it opens on qwen and buries the 120B behind it. Anything not named
+# here keeps its registry position, after these.
+PICKER_ORDER = ("oss120", "qwen", "oss", "gemini")
+
+
+def selectable() -> dict[str, dict]:
+    """The generators a reader may pick, best first."""
+    offered = {a: g for a, g in GENERATORS.items() if not g.get("internal")}
+    ranked = [a for a in PICKER_ORDER if a in offered]
+    return {a: offered[a] for a in ranked + [a for a in offered if a not in ranked]}
+
+
+DEFAULT_GENERATOR = os.getenv("RAG_GENERATOR", "oss120")
 
 # Used when the chosen generator is out of quota. Wants a different PROVIDER
 # from the default, not just a different model: Groq's daily cap is per model,
@@ -174,7 +194,12 @@ RERANK_MODEL = os.getenv("RAG_RERANK_MODEL", "BAAI/bge-reranker-v2-m3")
 
 # Candidates fetched densely, then reranked down. 20 was what E4 measured.
 DENSE_K = int(os.getenv("RAG_DENSE_K", "20"))
-FINAL_K = int(os.getenv("RAG_FINAL_K", "5"))
+# 5 was E4's figure, chosen when every question was "what does s.X say". It is
+# too tight for a question whose answer is split across two Acts: "if I cannot
+# prove myself innocent, am I guilty" needs the Evidence Act burden rule AND the
+# CrPC acquittal provision, and the Evidence cluster alone fills all five slots.
+# 8 is below MAX_CONTEXT_SECTIONS (10), so the generator budget still binds.
+FINAL_K = int(os.getenv("RAG_FINAL_K", "8"))
 
 # E5 indexes sections AND their subsections. Children below this are too thin
 # to carry meaning on their own.

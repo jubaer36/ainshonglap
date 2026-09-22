@@ -62,7 +62,7 @@ export function UnsupportedAnswer({ message, onActivateCitation }: UnsupportedAn
         </span>
       </div>
       <div className={`text-sm leading-relaxed space-y-2 font-sans ${style.body}`}>
-        {message.blocks.map((block, index) => (
+        {(message.blocks ?? []).map((block, index) => (
           <p key={index}>
             <Segments
               segments={block.type === "paragraph" ? block.segments : []}

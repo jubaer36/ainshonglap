@@ -31,8 +31,17 @@ read instead of permanently under the input box.
 - a `context · N turns` chip opening the conversation memory: the running
   summary verbatim, the section keys kept exactly, a stale warning when the
   summariser failed, and a Forget button
-- the model picker greys out routes that are out of quota, with a countdown,
-  and moves a dead selection to the fallback
+- the model picker lists an alias and the provider's real model id and nothing
+  else, best first (`oss120`, `qwen`, `oss`, `gemini`, then the rest). It greys
+  out routes that are out of quota, with a countdown, and moves a dead selection
+  to the fallback. A Groq route is only out once **every** one of its API keys
+  is spent, so a per-minute limit on one key does not grey anything out
+- the waiting message follows the pipeline instead of claiming one thing for
+  every question: "Working out what you're asking…" while the planner
+  classifies, then "Finding the provisions that apply…", then "Reading them and
+  checking every citation…". These are timed from the measured stage latencies,
+  not observed — `POST /api/query` is one round trip, so the browser cannot see
+  the backend's stage
 - a welcome screen that makes the storage choice explicit before anything is
   typed: guest (nothing saved anywhere) or an account (conversations stored)
 - Supabase sign-in on its own page at `/signin`, with the account and a sign-out
@@ -82,6 +91,7 @@ components/chat/BlockRenderer.tsx    structured answer rendering
 components/layout/StatuteBrowser.tsx corpus navigation
 components/layout/ReferencesDrawer.tsx citation/source preview
 components/chat/ModelPicker.tsx      generator selection
+components/chat/ThinkingBubble.tsx   stage-phased waiting message
 lib/api.ts                           all backend calls and normalization
 lib/conversations.ts                 saved conversations, via the API
 lib/supabase.ts                      Supabase client — authentication only

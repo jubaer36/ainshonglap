@@ -2,8 +2,9 @@
 
 Answer generation: turn retrieved sections into a cited answer, or refuse.
 This began as the option survey; the `Status` section records what is now built.
-The focused path still supplies five sections, while `query-routing-plan.md`
-defines the planned separate comprehensive-discovery path.
+The focused path supplies a fixed number of sections (currently eight), while
+`query-routing-plan.md` defines the planned separate comprehensive-discovery
+path that replaces the fixed count with a fitted threshold.
 
 ---
 
@@ -48,7 +49,7 @@ Read that against our retrieval profile. Wrong-but-adjacent statute sections are
 *exactly* the misleading condition, and our pipeline produces them 41% of the
 time by construction. A prompt that says "abstain if the context is
 insufficient" is answering the wrong question: the context will not look
-insufficient, it will look like five sections of the Penal Code.
+insufficient, it will look like a handful of sections of the Penal Code.
 
 Two caveats before this is over-weighted: GRAB-RAG used 3.8–8B models, and
 Gemini 2.5 Flash may behave better; and their misleading passages were
@@ -83,12 +84,28 @@ Act s.25. Gemini 2.5 Flash answered 5/5 correctly.
 | **OpenRouter LFM / Nemotron Super** | schema-capable fallbacks; LFM is a small fast router | shared free-route latency and availability |
 | **Local baseline models** | useful historical comparison | removed from the production generator registry; unconstrained output and weak E1 result |
 
-**Current decision:** Groq `qwen/qwen3.8-27b` is the default behind the common
-LLM interface. Gemini and the two measured schema-capable OpenRouter routes are
-fallbacks. Schema compatibility is established, but legal quality is not: E11
-showed that fast, valid JSON can still contain wrong statutory content. The
-retrieved-section and verbatim-quote gates remain mandatory, and the shipping
-Groq model needs the unfinished generation evaluation.
+**Current decision:** Groq `openai/gpt-oss-120b` is the default behind the common
+LLM interface, probed for strict schema (honoured, 2.1s). `qwen/qwen3.8-27b` and
+`gpt-oss-20b` sit behind it on separate Groq budgets; Mercury on Inception is the
+cross-provider fallback. Schema compatibility is established, but legal quality
+is not: E11 showed that fast, valid JSON can still contain wrong statutory
+content, and the 120B's own probe answer cited Evidence s.24 where s.25 is the
+governing provision — with no retrieved context to check against, which is
+exactly the condition the gates exist for. The retrieved-section and
+verbatim-quote gates remain mandatory, and the shipping model still needs the
+unfinished generation evaluation.
+
+**A prompt limit found by tracing one refusal (E17).** Rules 1 and 2 of the
+system prompt — answer only from the provided sections, do not reason from
+general legal principles, a merely related section is not an answer — are what
+make the pipeline refuse rather than improvise. They also make it refuse a whole
+class of answerable question: one whose answer is a burden *allocation* rather
+than a stated rule. "If I can't prove myself innocent, am I guilty?" retrieves
+Evidence ss.101-106 correctly and is declined, because no section states the
+proposition; s.101 allocates the burden and the answer is the inference from it.
+Loosening rule 1 is the obvious fix and the risky one — it trades false refusals
+for over-answering, which is what E8 measures and E8 is unfinished. Retrieval-side
+fixes are cheaper and are tried first.
 
 ---
 
@@ -271,7 +288,7 @@ Built and serving (`backend/app/rag/`, `backend/API.md`):
 
 | decision | shipped |
 |---|---|
-| A model | pluggable hosted backend; Groq Qwen is the default and passed the strict-schema probe. OpenRouter fallbacks pin routing to providers that enforce schemas |
+| A model | pluggable hosted backend; Groq `gpt-oss-120b` is the default and passed the strict-schema probe. OpenRouter fallbacks pin routing to providers that enforce schemas |
 | B answer shape | JSON schema, one claim per assertion, each with section number and verbatim quote |
 | C citations | **C2 + C3 live.** C2 resolves the act too, not just the number — all three acts have a s.25. Failing claims dropped; none surviving becomes a refusal. C4 (NLI) not built |
 | D abstention | prompt + gates. D2 threshold now **fitted** (E10): AUC 0.727, weak separation. Still no default — refusing 70% of failed retrievals costs 35% of answerable questions. `min_score` is opt-in with a published curve; -3.00 is the least-bad point if one is wanted |

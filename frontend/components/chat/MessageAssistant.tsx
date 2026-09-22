@@ -142,7 +142,7 @@ export function MessageAssistant({
         ) : (
           <>
             <div className="text-sm leading-relaxed text-slate-800 space-y-3 font-sans">
-              {message.blocks.map((block, index) => (
+              {(message.blocks ?? []).map((block, index) => (
                 <BlockRenderer
                   key={index}
                   block={block}
@@ -151,9 +151,9 @@ export function MessageAssistant({
               ))}
             </div>
 
-            {message.quickActions.length > 0 && (
+            {(message.quickActions?.length ?? 0) > 0 && (
               <div className="flex items-center gap-2 pt-1 text-xs text-slate-500">
-                {message.quickActions.map((action, index) => (
+                {(message.quickActions ?? []).map((action, index) => (
                   <QuickActionButton
                     key={index}
                     action={action}

@@ -376,7 +376,7 @@ function normalizeSectionSummary(raw: Record<string, unknown>): SectionSummary {
 
 // The backend's Pydantic models serialize as snake_case; the frontend types
 // are camelCase. This is the single conversion point.
-function normalizeAssistantMessage(raw: Record<string, unknown>): AssistantMessage {
+export function normalizeAssistantMessage(raw: Record<string, unknown>): AssistantMessage {
   return {
     id: raw.id as string,
     role: "assistant",

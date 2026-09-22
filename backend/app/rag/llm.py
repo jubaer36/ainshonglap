@@ -20,7 +20,7 @@ import pathlib
 import time
 from typing import Any, Protocol
 
-from app.rag import quota
+from app.rag import keyring, quota, trace
 
 DEFAULT_GEMINI = os.getenv("RAG_GEMINI_MODEL", "gemini-3.5-flash-lite")
 DEFAULT_GROQ = os.getenv("RAG_GROQ_MODEL", "qwen/qwen3.8-27b")
@@ -87,46 +87,78 @@ class GroqLLM:
 
     def __init__(self, model: str = DEFAULT_GROQ, temperature: float = 0.0,
                  max_tokens: int = 4096, timeout: int = 120):
-        from dotenv import load_dotenv
-
-        load_dotenv(ENV_FILE, override=True)
-        key = os.environ.get(self.KEY_ENV)
-        if not key:
+        if not keyring.count(self.KEY_ENV):
             raise RuntimeError(
                 f"{self.KEY_ENV} not set (expected in backend/.env.local)")
         self.name = model
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.timeout = timeout
-        self._key = key
+        # Which key actually answered. Read after the call, for the quota record
+        # and the trace line — a rotation nobody can see is a rotation nobody
+        # can debug.
+        self.used_key: str | None = None
+
+    @property
+    def fleet(self) -> int:
+        """How many keys this provider currently has configured."""
+        return max(keyring.count(self.KEY_ENV), 1)
 
     def _post(self, body: dict, attempts: int = 4):
-        """POST with backoff on 429.
+        """POST, rotating keys first and only then waiting.
 
-        Groq's free tier limits input tokens per minute, and the planner runs on
-        every question — a burst hits the ceiling and every call after it fails
-        instantly. Retrying on the header Groq sends turns that into latency
-        rather than a planning failure, which would otherwise degrade to plain
-        semantic search and answer a listing request with five ranked guesses.
+        Groq's free tier limits input tokens per minute per key, and the planner
+        runs on every question — a burst hits the ceiling and every call after it
+        fails instantly. With one key the only remedy was to sleep on Groq's
+        retry-after header, which turned a rate limit into latency.
+
+        With several keys there is a better move available first: a 429 on key 1
+        says nothing about key 2, so the request moves to the next key
+        immediately and costs nothing. Sleeping is what happens after every key
+        has refused, which is the only situation where waiting is the real
+        answer. Keys already recorded as out of budget are tried last rather than
+        skipped outright, since that record can be stale — it is a cache of a
+        429, not a fact about the account.
         """
         import requests
 
+        order = keyring.rotation(self.KEY_ENV)
+        if not order:
+            raise RuntimeError(
+                f"{self.KEY_ENV} not set (expected in backend/.env.local)")
+        fresh = [s for s in order if quota.slot_available(self.name, s.env)]
+        spent = [s for s in order if not quota.slot_available(self.name, s.env)]
+        order = fresh + spent
+
         response = None
         for i in range(attempts):
-            response = requests.post(
-                self.API,
-                timeout=self.timeout,
-                headers={"Authorization": f"Bearer {self._key}",
-                         "Content-Type": "application/json"},
-                json=body,
-            )
-            if response.status_code != 429 or i == attempts - 1:
-                return response
-            raw = response.headers.get("retry-after")
+            for slot in order:
+                self.used_key = slot.env
+                response = requests.post(
+                    self.API,
+                    timeout=self.timeout,
+                    headers={"Authorization": f"Bearer {slot.value}",
+                             "Content-Type": "application/json"},
+                    json=body,
+                )
+                if response.status_code != 429:
+                    return response
+                # This key is at its ceiling. Record it against (model, key) so
+                # the next question starts elsewhere, then try the next key now.
+                quota.mark_exhausted(self.name, response.text[:300],
+                                     slot=slot.env, fleet=self.fleet)
+                if len(order) > 1:
+                    trace.step("key", f"{slot.env} 429 -> next key")
+            if i == attempts - 1:
+                break
+            # Every key refused. Now waiting is the only thing left.
+            raw = response.headers.get("retry-after") if response else None
             try:
                 delay = float(raw) if raw else 2.0 * (2 ** i)
             except ValueError:
                 delay = 2.0 * (2 ** i)
+            trace.step("key", f"all {len(order)} keys at limit, waiting "
+                              f"{min(delay, 30.0):.0f}s")
             time.sleep(min(delay, 30.0))
         return response
 
@@ -150,9 +182,10 @@ class GroqLLM:
             # so the model picker can grey this route out and /api/query can
             # fall back instead of handing the caller a 502.
             if response.status_code == 429 or quota.looks_like_quota(detail):
-                quota.mark_exhausted(self.name, detail)
+                quota.mark_exhausted(self.name, detail, slot=self.used_key,
+                                     fleet=self.fleet)
             raise RuntimeError(detail)
-        quota.clear(self.name)
+        quota.clear(self.name, slot=self.used_key)
         data = response.json()
         if data.get("error"):
             raise RuntimeError(f"{self.LABEL}: {json.dumps(data['error'])[:300]}")

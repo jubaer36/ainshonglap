@@ -3,9 +3,13 @@
 FastAPI service over the retrieval + generation pipeline. Endpoints and
 configuration: **`API.md`**.
 
-The default generator is `qwen/qwen3.8-27b` served directly by Groq with strict
-JSON-schema output. OpenRouter LFM currently handles intent routing; Gemini and
-the remaining schema-capable OpenRouter models are optional fallbacks.
+The default generator is `openai/gpt-oss-120b` served directly by Groq with
+strict JSON-schema output (probed: schema honoured, 2.1s). Qwen and gpt-oss-20b
+sit behind it on their own Groq budgets; Mercury on Inception is the
+cross-provider fallback when a Groq route is out of quota.
+
+Groq traffic is spread over every `GROQ_API_KEY*` in `.env.local` — rotation per
+call, immediate failover on 429. See **Groq key rotation** in `API.md`.
 
 ## Run locally
 
@@ -25,8 +29,10 @@ scripts need — one env, one file.
 Docs at http://localhost:8000/docs · health at `/health` (reports index stats
 and the configured models, so a degraded start is visible without reading logs).
 
-`.env.local` (gitignored) holds `GROQ_API_KEY` for the default Qwen generator.
-`OPENROUTER_API_KEY` is used by the default router; Gemini is an optional fallback.
+`.env.local` (gitignored) holds `GROQ_API_KEY`, and optionally `GROQ_API_KEY_2`
+and `_3`, which are discovered automatically and used in turn.
+`GEMINI_API_KEY_2` runs the planner and the conversation summariser on their own
+quota; `INCEPTION_API_KEY` and `OPENROUTER_API_KEY` are fallbacks.
 
 ```bash
 curl -X POST http://localhost:8000/api/query \
@@ -76,15 +82,16 @@ validated against the corpus, and ambiguous section numbers require an Act.
 collapses the six intents into six categories — `meta`, `structural`
 (lookup/browse/summarize, differing by operation), `semantic`, `document`,
 `out_of_scope`, `general` — with a strict-JSON call returning coordinates only.
-The planner runs on Gemini 3.5 Flash Lite with a Groq fallback (E16).
+The planner runs on Gemini 3.5 Flash Lite with a Groq fallback (E16), and is
+marked `internal` so it never appears as a selectable answer model.
 `app/rag/catalog.py` executes them against `Laws/main/catalog.sqlite` with
 parameterized SQL, and `app/rag/execute.py` holds one executor per category.
 The old pattern router survives behind `RAG_PLAN=0` as an outage switch.
 
 The legal path retrieves 20 distinct section candidates, cross-encoder reranks
-them, and sends the best five to the generator. This is appropriate for a
-focused answer but is not yet an exhaustive “show every related provision”
-mode. Conversation history is accepted by the API but not yet used.
+them, and sends the best eight to the generator (`RAG_FINAL_K`, raised from 5;
+unmeasured on the 608-question set — see E17). This is appropriate for a focused
+answer but is not yet an exhaustive “show every related provision” mode.
 
 ## Pipeline
 
@@ -126,8 +133,8 @@ local-model baseline scripts.
 ```bash
 python scripts/plan_demo.py                         # planner, question by question
 python scripts/experiments/plan_cases.py            # planner, graded (E13)
-python scripts/groq_chat.py                         # default Qwen REPL
-python scripts/groq_chat.py --json                  # strict-schema probe
+python scripts/groq_chat.py --model gpt-oss-120b    # default generator REPL
+python scripts/groq_chat.py --json --model gpt-oss-120b   # strict-schema probe
 python scripts/openrouter_chat.py --model lfm       # router/fallback probe
 python scripts/inception_chat.py --json             # Mercury schema probe (E14)
 python scripts/gemini_chat.py                       # optional Gemini fallback
@@ -140,7 +147,9 @@ inside the pipeline would surface as a false refusal. Requests pin
 ## Current limitations
 
 - only the CrPC, Penal Code and Evidence Act are served
-- legal generation sees five reranked sections, limiting broad coverage
+- legal generation sees eight reranked sections, limiting broad coverage
+- a question answered by a burden *allocation* rather than a stated rule is
+  refused: the generator prompt forbids reasoning from the provisions (E17)
 - follow-up detection varies by model and is not pinned by a regression set
 - voice transcription accuracy on real speech is unmeasured
 - citation gates validate the source and quote, not semantic entailment

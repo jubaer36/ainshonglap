@@ -156,9 +156,6 @@ export function ModelPicker({ value, onChange, disabled }: ModelPickerProps) {
                     {m.enforcesSchema === false && (
                       <span className="text-[10px] text-rose-600">no JSON schema</span>
                     )}
-                    {m.enforcesSchema === null && (
-                      <span className="text-[10px] text-amber-600">unverified</span>
-                    )}
                     {!m.available && (
                       <span className="text-[10px] text-rose-600">
                         {m.secondsRemaining && m.secondsRemaining > 60
@@ -166,18 +163,17 @@ export function ModelPicker({ value, onChange, disabled }: ModelPickerProps) {
                           : "out of quota"}
                       </span>
                     )}
-                    {m.fallback && m.available && (
-                      <span className="text-[10px] text-emerald-600">fallback</span>
-                    )}
                   </span>
                 </div>
+                {/* Alias and the provider's real model id, and nothing else.
+                    `note` carries parameter counts and tokens/sec, which read
+                    as a spec sheet next to a choice nobody makes on those
+                    grounds. It stays on the API for /docs and /health. */}
                 <div className="text-[11px] text-slate-500 truncate">{m.model}</div>
-                {!m.available && m.unavailableReason ? (
+                {!m.available && m.unavailableReason && (
                   <div className="text-[10px] text-rose-500 truncate">
                     {m.unavailableReason}
                   </div>
-                ) : (
-                  m.note && <div className="text-[10px] text-slate-400 truncate">{m.note}</div>
                 )}
               </button>
             );

@@ -220,9 +220,9 @@ export function ChatShell() {
       });
       const nextMessages = [...historyForRequest, assistantMessage];
       setMessages(nextMessages);
-      // Carry the updated summary into the next turn. Left untouched on error,
-      // so a failed request does not erase the conversation's memory.
-      const nextMemory = assistantMessage.memory ?? memory;
+      // Carry the updated summary into the next turn. Left untouched when the
+      // answer carries none, so a failed summarisation does not erase what the
+      // conversation already remembered.
       if (assistantMessage.memory) setMemory(assistantMessage.memory);
       // Storage happens server-side inside /api/query for a signed-in user, so
       // nothing is written here. Refresh the list so a new conversation appears
