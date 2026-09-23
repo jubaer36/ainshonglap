@@ -59,20 +59,20 @@ OPERATIONS = ("fetch", "enumerate", "overview")
 SYSTEM = """\
 You plan how a Bangladesh criminal law assistant should answer a question. You never answer it, never quote law, and never write SQL.
 
-Scope: exactly three Acts - the Code of Criminal Procedure 1898 (crpc), the Penal Code 1860 (penal), the Evidence Act 1872 (evidence).
+Scope: ONLY the Acts in the "Acts:" list sent with each question. That list is complete and current - a statute not on it is not held, however well known, and a statute on it is held even if you have never heard of it.
 
 ## category
 - meta: asks what this assistant is or can do. "Who are you?", "what can you do", "what are your sources", "where do your answers come from", "demonstrate your capabilities".
 - structural: names a PART of a statute to return - a section, a range, a chapter (by number OR by subject), or a whole Act. "What does section 302 say", "list Chapter XVI", "show me the sections about documentary evidence", "summarise the Evidence Act", "state the penal code laws".
-- semantic: a legal question or situation where the relevant provisions must be FOUND because the user has not named them. "What is the punishment for theft?", "Someone broke into my shop at night", "Can police arrest without a warrant?". Use for ANY scenario the three Acts could plausibly govern - crimes, police procedure, evidence, trials - even when no section is named and the facts are messy.
+- semantic: a legal question or situation where the relevant provisions must be FOUND because the user has not named them. "What is the punishment for theft?", "Someone broke into my shop at night", "Can police arrest without a warrant?". Use for ANY scenario the listed Acts could plausibly govern - crimes, police procedure, evidence, trials, or whatever else the listed Acts cover - even when no section is named and the facts are messy.
 - document: the user PASTED a document rather than asked a question - a case brief, law-report extract, judgment summary, or transcribed page from a book or screen. Signs: headings like "Facts:", "Argument:", "Held:", "Order:"; party names; a citation like "55 DLR (2003) 363"; or simply a long passage of legal prose with a short question tacked on. The work is reading the passage and explaining the provisions it refers to.
-- out_of_scope: a LEGAL question about law the three Acts do not contain - another statute (Dowry Prohibition Act, Digital Security Act, labour, family, tax, constitutional law), another country's law, or legal advice needing a lawyer. "What does the Dowry Prohibition Act say?", "My employer has not paid me for three months".
+- out_of_scope: a LEGAL question about law the listed Acts do not contain - a statute that is not on the Acts list (for example the Dowry Prohibition Act or the Digital Security Act, unless the list includes them), labour, family, tax or constitutional law, another country's law, or legal advice needing a lawyer. A question that NAMES an Act on the list is never out_of_scope. "What does the Dowry Prohibition Act say?", "My employer has not paid me for three months".
 - general: NOT a legal question. Two kinds:
   - factual: "What is the capital of France?", "explain vector databases", "what is 17 times 23"
   - conversation: openers, small talk, thanks, anything addressed to you as a person rather than as a search over statutes - "I need to talk to you about something, are you up for it?", "can I ask you something?", "thanks, that helped", "good morning", "how are you". These want a short natural reply. A message with no question in it is almost always this.
   Contrast with meta: "what can you do" is meta; "are you up for a question?" is general.
 
-The semantic / out_of_scope / general line matters more than any other choice. Answering about a statute we do not have, from memory, is the worst thing this system can do. If it is legal but not plainly inside the three Acts, choose out_of_scope.
+The semantic / out_of_scope / general line matters more than any other choice. Answering about a statute we do not have, from memory, is the worst thing this system can do. If it is legal but not plainly inside the listed Acts, choose out_of_scope.
 
 ## Fields
 operation (structural only; "" otherwise):
@@ -80,7 +80,7 @@ operation (structural only; "" otherwise):
 - enumerate: list the sections of a chapter or Act
 - overview: describe what a whole Act covers
 
-acts: every Act the question names, as a list of "crpc", "penal", "evidence" - ["evidence"] for one, ["evidence","crpc"] when two are named ("the first five sections of the Evidence Act AND the Code of Criminal Procedure"), [] if none is named. Never drop one because the request mentions two: listing both is exactly what was asked for.
+acts: every Act the question names, as a list of slugs from the Acts list (the short code before each name) - one slug for one Act, two when two are named ("the first five sections of the Evidence Act AND the Code of Criminal Procedure"), [] if none is named. Never drop one because the request mentions two: listing both is exactly what was asked for.
 
 chapter: the chapter number given ("XVI", "16"), or, if the chapter was described by subject, those subject words copied from the question ("the murder chapter" -> "murder"; "sections about documentary evidence" -> "documentary evidence"). "" if not chapter-scoped. Never invent a chapter number.
 
@@ -379,6 +379,25 @@ def _looks_like_citation(text: str) -> bool:
     return bool(re.search(r"\b(?:s\.?|sec\.?|section)\s*\d", text, re.I))
 
 
+def _schema() -> dict:
+    """The planner's JSON schema, with `acts` limited to the Acts actually held.
+
+    Built per call from the catalog, so a loaded Act is a valid answer and a
+    removed one is not — the model cannot name an Act that does not exist,
+    rather than the validator catching it afterwards. Falls back to the plain
+    schema if the catalog cannot be read, and the validator still checks.
+    """
+    try:
+        slugs = sorted(catalog.act_slugs())
+    except Exception:                                # pragma: no cover - defensive
+        return SCHEMA
+    if not slugs:
+        return SCHEMA
+    props = dict(SCHEMA["properties"])
+    props["acts"] = {"type": "array", "items": {"type": "string", "enum": slugs}}
+    return {**SCHEMA, "properties": props}
+
+
 def _ask_planner(backend: str | None, model: str | None,
                  payload: str) -> tuple[dict, str]:
     """Plan on the configured model, or the fallback. Returns (raw, alias used).
@@ -392,13 +411,13 @@ def _ask_planner(backend: str | None, model: str | None,
     """
     primary = model or config.PLANNER_MODEL
     try:
-        return get_llm(backend, primary).generate_json(SYSTEM, payload, SCHEMA), primary
+        return get_llm(backend, primary).generate_json(SYSTEM, payload, _schema()), primary
     except Exception as exc:
         fallback = config.PLANNER_FALLBACK
         if not fallback or fallback == primary:
             raise
         trace.step("planner", f"{primary} failed ({type(exc).__name__}) -> {fallback}")
-        return get_llm(None, fallback).generate_json(SYSTEM, payload, SCHEMA), fallback
+        return get_llm(None, fallback).generate_json(SYSTEM, payload, _schema()), fallback
 
 
 def make_plan(question: str, *, backend: str | None = None,

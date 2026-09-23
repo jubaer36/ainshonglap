@@ -4,12 +4,14 @@ import { useEffect, useState } from "react";
 import { fetchActs, fetchSections } from "@/lib/api";
 import type { Act, SectionSummary } from "@/lib/types";
 
-const ACT_ICONS: Record<string, string> = {
-  crpc: "balance",
-  penal: "gavel",
-  evidence: "fact_check",
-};
-
+// One icon per Act, assigned from its slug rather than listed per Act, so an
+// Act loaded later gets one too. Stable: the same slug always gets the same.
+const ICON_SET = ["balance", "gavel", "fact_check", "menu_book", "policy", "article"];
+function actIcon(slug: string): string {
+  let h = 0;
+  for (const ch of slug) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return ICON_SET[h % ICON_SET.length];
+}
 interface StatuteBrowserProps {
   onActivateCitation: (key: string) => void;
 }
@@ -97,7 +99,7 @@ export function StatuteBrowser({ onActivateCitation }: StatuteBrowserProps) {
             >
               <span className="flex items-center gap-2 min-w-0 flex-1">
                 <span className="material-symbols-outlined text-[16px] text-slate-400 flex-shrink-0">
-                  {ACT_ICONS[act.slug] ?? "description"}
+                  {actIcon(act.slug)}
                 </span>
                 <span className="truncate">{act.name}</span>
               </span>

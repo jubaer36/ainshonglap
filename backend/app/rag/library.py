@@ -244,11 +244,7 @@ def match_chapter(question: str, act_slug: str | None = None) -> tuple[str, str]
 
 
 def resolve_act(text: str) -> str | None:
-    """Act slug named anywhere in a question, or None."""
-    t = text.lower()
-    for slug, needles in (("crpc", ("criminal procedure", "crpc", "cr.p.c", "crpc")),
-                          ("penal", ("penal",)),
-                          ("evidence", ("evidence",))):
-        if any(n in t for n in needles):
-            return slug
-    return None
+    """The one Act a question names, or None — from the catalog's own list."""
+    from app.rag import acts
+
+    return acts.hint_slug(text)

@@ -1,10 +1,12 @@
 "use client";
 
+import { actListing, useActs } from "@/lib/useActs";
 interface FirstTimeNoticeProps {
   onDismiss: () => void;
 }
 
 export function FirstTimeNotice({ onDismiss }: FirstTimeNoticeProps) {
+  const acts = useActs();
   return (
     <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/90 flex items-start gap-3">
       <div className="w-6 h-6 rounded-md bg-slate-200/80 flex items-center justify-center flex-shrink-0 text-slate-700 mt-0.5">
@@ -23,8 +25,10 @@ export function FirstTimeNotice({ onDismiss }: FirstTimeNoticeProps) {
           </button>
         </div>
         <p className="text-slate-600 leading-relaxed">
-          Answers come only from the Code of Criminal Procedure 1898, the Penal Code 1860 and
-          the Evidence Act 1872. Click any section pill to read the statute it cites.
+          {acts && acts.length
+            ? `Answers come only from ${actListing(acts)}.`
+            : "Answers come only from the Acts indexed here."}{" "}
+          Click any section pill to read the statute it cites.
         </p>
       </div>
     </div>

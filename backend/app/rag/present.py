@@ -16,7 +16,8 @@ from app.models.schemas import (AssistantMessage, BulletsBlock, Citation,
                                 CitationSegment, ParagraphBlock, StrongSegment,
                                 TextSegment)
 from app.rag.answer import DISCLAIMER, Answer
-from app.rag.citations import SHORT_NAMES, to_citations
+from app.rag import acts
+from app.rag.citations import to_citations
 
 
 def _para(*segments) -> ParagraphBlock:
@@ -37,8 +38,7 @@ def to_message(a: Answer) -> AssistantMessage:
             if para.strip():
                 blocks.append(_para(TextSegment(text=para.strip())))
         blocks.append(_para(StrongSegment(text="Note. "), TextSegment(
-            text="This question is outside the Code of Criminal Procedure 1898, "
-                 "the Penal Code 1860 and the Evidence Act 1872, so this answer "
+            text=f"This question is outside {acts.listing()}, so this answer "
                  "is not drawn from them and carries no citations.")))
     elif a.kind == "lookup":
         # The reader named the section, so show it verbatim.
@@ -100,8 +100,7 @@ def to_message(a: Answer) -> AssistantMessage:
         heading = "Not covered by the indexed Acts"
         subheading = "No answer given"
         blocks.append(_para(TextSegment(
-            text="I could not answer this from the Code of Criminal Procedure 1898, "
-                 "the Penal Code 1860 or the Evidence Act 1872 as indexed. "
+            text=f"I could not answer this from {acts.listing('or')} as indexed. "
                  f"Reason: {a.reason}.")))
         if a.ambiguous and a.clarification:
             blocks.append(_para(StrongSegment(text="To narrow it down: "),
@@ -112,7 +111,7 @@ def to_message(a: Answer) -> AssistantMessage:
         # acts have a section 5.
         if a.sources:
             considered = ", ".join(
-                f"{SHORT_NAMES.get(h.act.strip().lower(), h.act)} s.{h.section}"
+                f"{acts.short_for_name(h.act)} s.{h.section}"
                 for h in a.sources[:5]
             )
             blocks.append(_para(TextSegment(

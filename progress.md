@@ -207,6 +207,47 @@ prompts or full answers.
 - The model picker returned `null` on an empty list, so a failing `/api/models`
   looked identical to a feature that did not exist.
 
+## The Act list is data
+
+A fourth Act loaded and searched correctly — and still could not be answered
+from. Its sections came back keyed `act-s13` (a fixed three-entry list mapped
+Act names to keys), and the planner was told "Scope: exactly three Acts" while
+being shown four. Ten places in the backend and three in the frontend named the
+three Acts outright.
+
+`app/rag/acts.py` now answers all of it from the catalog: keys, short names, the
+planner's scope and the `acts` values its schema allows, the "outside …"
+messages, and which Act a sentence names — strictly for a question (so "the
+evidence shows" names no Act) and nearest-first in a pasted document (so "s.54
+of the CrPC and s.25 of the Evidence Act" gives each number its own Act). The
+frontend reads the same list. Short names are derived from titles, so "CrPC"
+is now shown as "Code of Criminal Procedure".
+
+Checked end to end on the Arms Act: "what does section 13 of the Arms Act say"
+plans to `acts=['arms']` and quotes s.13; "is it an offence to go armed without
+a license" is answered from `arms-s13` with its citation verified.
+`scripts/remove_act.py` takes an Act out of Supabase and the local fallback.
+
+## Adding a document: a person chooses the parser
+
+The statute parser finds sections by their numbers. On a judgment, on Rules
+("Rule 3."), or on a Bangla Act ("৩।") it found none and put the whole text in
+`preamble` — without an error, and where nothing downstream reads it. The
+verifier would have passed it, since all the text was "recovered".
+
+`scripts/ingest_document.py` makes it a decision instead of a guess: it parses
+with PyMuPDF, samples four pages spread through the document, runs Docling on
+just those, and writes a review page — each page's image beside both parsers'
+output. The person picks; choosing Docling parses the whole document by layout
+(`parse_docling_document.py`) into heading-led passages, in the same JSON shape,
+so chunking, the catalog and the load take it unchanged. PyMuPDF is refused
+outright when it found no sections at all.
+
+Checked on the Arms Act (PyMuPDF: 32 sections, all text inside them, numbering
+in order; the review showed Docling turning its contents page into passages)
+and on test documents in the three formats that had failed. The three served
+Acts still chunk byte-identically.
+
 ## Corpus served from Supabase
 
 The statute text is moving from local files into Postgres with pgvector

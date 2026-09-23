@@ -100,9 +100,13 @@ python scripts/verify/verify_catalog.py         #   check vs the parsed JSON
 python scripts/load_supabase.py --all    # read models -> Supabase law_* tables (002)
 python scripts/verify/verify_supabase.py        #   check vs the local read models
 
-# any legal PDF, not just the three acts; --backend auto OCRs scans via Docling
-python scripts/parse_law_pdf.py --pdf "Laws/The Arms Act, 1878.pdf" \
-    --name "The Arms Act, 1878" --act-no "XI of 1878" --slug arms
+# adding a NEW document: parse, review 4 sampled pages as image vs PyMuPDF vs
+# Docling (Laws/review/<slug>/review.html), then choose. PyMuPDF = numbered
+# statute; Docling = anything else, cited by passage. The person decides.
+python scripts/ingest_document.py --pdf "Laws/main/The Arms Act, 1878.pdf" \
+    --slug arms --name "The Arms Act, 1878" --act-no "XI of 1878"
+# removing one: Supabase first (live within a minute), then the local fallback
+python scripts/remove_act.py --act arms
 
 python scripts/plan_demo.py          # walk the planner question by question
 python scripts/experiments/plan_cases.py         #   graded: category + scope (E13)
@@ -131,6 +135,12 @@ locally, then `load_supabase.py` + `verify_supabase.py`. A model names coordinat
 (`app/rag/plan.py`); `app/rag/catalog.py` fetches them with parameterized SQL.
 The model never writes SQL, and a coordinate the catalog does not have comes
 back empty rather than as the nearest match.
+
+**Which Acts exist is data, not code.** `app/rag/acts.py` answers every
+"which Acts do we hold?" from the catalog: citation keys, short names, the
+planner's scope and its allowed `acts` values, the "outside …" messages, and
+spotting an Act named in text. Nothing lists Acts by name — add or remove one
+and all of that follows within a minute, with no code change.
 
 Handlers that do blocking work (retrieval, generator calls) are plain `def`, not
 `async def`: FastAPI runs an `async` handler on the event loop, and one blocking

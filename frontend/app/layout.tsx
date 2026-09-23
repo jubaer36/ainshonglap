@@ -20,10 +20,11 @@ const jetbrainsMono = JetBrains_Mono({
 
 export const metadata: Metadata = {
   title: "আইনসংলাপ",
-  // No "verified precedents" — there is no case law in the corpus, only the
-  // three Acts.
+  // Generic on purpose: this is fixed at build time, and the Acts held change
+  // whenever one is loaded or removed. The pages that name them read the live
+  // list. No "verified precedents" — there is no case law in the corpus.
   description:
-    "Answers on Bangladesh criminal law, cited to the Code of Criminal Procedure 1898, the Penal Code 1860 and the Evidence Act 1872.",
+    "Answers on Bangladesh law, each claim cited to the section of the Act it comes from.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

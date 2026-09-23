@@ -41,7 +41,7 @@ def ntok(s: str) -> int:
     return int(len(s.split()) * TOK_PER_WORD)
 
 
-def hierarchy_path(act: str, sec: dict) -> str:
+def hierarchy_path(act: str, sec: dict, unit: str = "Section") -> str:
     """Act + section + title only.
 
     E2 (experiments.md) A/B'd five prefix shapes and found a 3.0pp total spread
@@ -51,8 +51,13 @@ def hierarchy_path(act: str, sec: dict) -> str:
     nominally best on every metric; that lead is NOT significant, it is simply
     the cheapest of the equals. Part and chapter remain in metadata for
     filtering and citation display.
+
+    `unit` is "Section" for a statute and "Passage" for a document parsed by
+    Docling (parse_docling_document.py), whose numbered units are passages in
+    reading order, not provisions — "State v. Rahim, Section 1" would claim a
+    structure the document does not have.
     """
-    t = f"{act}, Section {sec['section_number']}"
+    t = f"{act}, {unit} {sec['section_number']}"
     if sec.get("section_title"):
         t += f": {sec['section_title']}"
     return t
@@ -134,7 +139,8 @@ def chunk_act(act_key: str, max_tokens: int) -> dict:
         for sec in ch["sections"]:
             seen_numbers[sec["section_number"]] += 1
             occurrence = seen_numbers[sec["section_number"]]
-            path = hierarchy_path(act_name, sec)
+            path = hierarchy_path(act_name, sec,
+                                  "Passage" if doc.get("doc_type") == "document" else "Section")
             body = sec["text"]
             parts = [(body, None)]
             if ntok(body) > max_tokens:

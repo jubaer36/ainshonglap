@@ -33,11 +33,6 @@ from app.rag.store import load_store
 # sections.
 OVERFETCH = 3
 
-ACT_SLUGS = {
-    "the code of criminal procedure, 1898": "crpc",
-    "the penal code, 1860": "penal",
-    "the evidence act, 1872": "evidence",
-}
 
 
 @dataclass
@@ -56,7 +51,12 @@ class Retrieved:
     @property
     def key(self) -> str:
         """Stable citation key, e.g. `crpc-s154`."""
-        return f"{ACT_SLUGS.get(self.act.strip().lower(), 'act')}-s{self.section}"
+        # The slug comes from the catalog, so an Act loaded later is keyed
+        # correctly without a code change (a fixed list once keyed the Arms
+        # Act's sections `act-s13`, which nothing could resolve).
+        from app.rag import acts
+
+        return f"{acts.slug_for_name(self.act) or 'act'}-s{self.section}"
 
 
 def _collapse(chunks, scores, ids, dense_k):

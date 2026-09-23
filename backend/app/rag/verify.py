@@ -80,21 +80,22 @@ def resolve(cited: str, retrieved) -> object | None:
     if not cands:
         return None
     hay = norm(cited)
-    named = [r for r in cands if norm(r.act) in hay or _act_hint(r.act) in hay]
+    named = [r for r in cands if norm(r.act) in hay or _names(r.act, cited)]
     return named[0] if len(named) == 1 else None
 
 
-def _act_hint(act: str) -> str:
-    """A short distinguishing token per act, for when the model writes
-    "CrPC s.154" rather than the full statutory title."""
-    a = norm(act)
-    if "criminal procedure" in a:
-        return "criminal procedure"
-    if "penal" in a:
-        return "penal"
-    if "evidence" in a:
-        return "evidence"
-    return a
+def _names(act: str, cited: str) -> bool:
+    """Does a model-written citation ("CrPC s.154", "Evidence s.25") name `act`?
+
+    Loose matching (`acts.needles(strict=False)`): the string is already a
+    citation, so a bare "Penal" or "Evidence" is safe here and often all the
+    model wrote. The phrases come from the catalog, so an Act loaded later is
+    recognised without a code change.
+    """
+    from app.rag import acts
+
+    return acts.by_name(act) is not None and \
+        acts.by_name(act)["slug"] in acts.mentioned(cited, strict=False)
 
 
 @dataclass

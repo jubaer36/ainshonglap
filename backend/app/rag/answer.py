@@ -44,8 +44,8 @@ DISCLAIMER = (
 
 SYSTEM = (
     "You are a legal information assistant for Bangladesh criminal law. You are "
-    "given numbered excerpts from the Code of Criminal Procedure 1898, the Penal "
-    "Code 1860 and the Evidence Act 1872.\n\n"
+    "given numbered excerpts from the Acts it holds, each labelled with its Act "
+    "and section.\n\n"
     "Rules:\n"
     "1. Answer ONLY from the provided sections. Do not use your own knowledge of "
     "Bangladeshi law, and do not reason from general legal principles.\n"

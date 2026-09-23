@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useAuth } from "./AuthProvider";
+import { actListing, useActs } from "@/lib/useActs";
 import { BrandMark } from "@/components/brand/BrandMark";
 
 interface WelcomeGateProps {
@@ -22,6 +23,7 @@ interface WelcomeGateProps {
  * verification.
  */
 export function WelcomeGate({ onContinueAsGuest }: WelcomeGateProps) {
+  const acts = useActs();
   const { configured } = useAuth();
 
   return (
@@ -31,8 +33,11 @@ export function WelcomeGate({ onContinueAsGuest }: WelcomeGateProps) {
           <BrandMark size={96} variant="full" eager className="mx-auto rounded-2xl shadow-sm" />
           <h1 className="font-serif text-lg font-semibold text-slate-900">আইনসংলাপ</h1>
           <p className="text-xs text-slate-500">
-            Answers on Bangladesh criminal law, cited to the Code of Criminal
-            Procedure 1898, the Penal Code 1860 and the Evidence Act 1872.
+            {/* From the Acts actually held, so loading or removing one updates
+                this line rather than leaving it promising the old set. */}
+            {acts && acts.length
+              ? `Answers on Bangladesh law, cited to ${actListing(acts)}.`
+              : "Answers on Bangladesh law, cited to the Acts indexed here."}
           </p>
         </div>
 

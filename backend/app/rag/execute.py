@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import re
 
-from app.rag import catalog, config, trace
+from app.rag import acts, catalog, config, trace
 from app.rag.answer import (
     SCHEMA, SYSTEM, Answer, build_context, general_answer, outline_answer,
 )
@@ -431,9 +431,8 @@ def document_like(text: str) -> bool:
 DOCUMENT_SYSTEM = (
     "You are a legal information assistant for Bangladesh criminal law. The user "
     "has pasted a DOCUMENT — a case brief, a law-report extract, a transcribed "
-    "page — and you are given the statutory sections it refers to, taken from "
-    "the Code of Criminal Procedure 1898, the Penal Code 1860 and the Evidence "
-    "Act 1872.\n\n"
+    "page — and you are given the statutory sections it refers to, each labelled "
+    "with the Act it comes from.\n\n"
     "Explain what the provisions the document relies on actually SAY, using only "
     "the sections provided.\n\n"
     "Rules:\n"
@@ -460,9 +459,6 @@ CITED_RE = re.compile(
     r"(\d{1,3}[A-Z]{0,2}(?:\s*(?:,|and|&|to|-)\s*\d{1,3}[A-Z]{0,2})*)",
     re.I)
 NUM_RE = re.compile(r"\d{1,3}[A-Z]{0,2}", re.I)
-ACT_HINTS = ((("criminal procedure", "crpc", "cr.p.c", "cr. p. c"), "crpc"),
-             (("penal code",), "penal"),
-             (("evidence act",), "evidence"))
 
 
 def cited_sections(text: str, default_act: str | None = None) -> list[dict]:
@@ -481,12 +477,12 @@ def cited_sections(text: str, default_act: str | None = None) -> list[dict]:
 
     for match in CITED_RE.finditer(body):
         # Which Act this citation belongs to, read from the words around it.
-        window = lowered[max(0, match.start() - 90): match.end() + 90]
-        act = default_act
-        for needles, slug in ACT_HINTS:
-            if any(n in window for n in needles):
-                act = slug
-                break
+        lo = max(0, match.start() - 90)
+        window = lowered[lo: match.end() + 90]
+        # The Act named NEAREST the number, from the catalog's own list — so
+        # "s.54 of the CrPC and s.25 of the Evidence Act" gives each number its
+        # own Act, and an Act loaded later is recognised with no code change.
+        act = acts.nearest(window, match.start() - lo) or default_act
         for number in NUM_RE.findall(match.group(1)):
             number = number.upper()
             candidates = ([catalog.section(act, number)] if act
