@@ -212,7 +212,7 @@ export interface GeneratorInfo {
 export interface QueryPlan {
   question: string;
   category: "meta" | "structural" | "semantic" | "out_of_scope" | "general";
-  operation: "fetch" | "enumerate" | "overview" | null;
+  operation: "fetch" | "enumerate" | "overview" | "explain" | null;
   act: string | null;
   chapter: string | null;
   sections: string[];

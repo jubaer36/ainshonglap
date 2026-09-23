@@ -125,6 +125,7 @@ grounded answer", which makes "which Act did you mean?" indistinguishable from
 | `lookup` | false | 1 | one named section, quoted verbatim from the catalog. No model touched the text. |
 | `outline` | false | 0–80 | a chapter or range listing, or a whole-Act summary, from the parsed hierarchy |
 | `legal` | false | 1+ | retrieved and generated, every claim through C2/C3 below |
+| `legal` (explain) | false | 1+ | "explain section 302", "what does s.300 mean": the named sections fetched exactly, then broken down element by element, every point quoting the section (C2/C3). If no point survives, the section is quoted instead (`lookup`). |
 | `meta` | false | 0 | about the assistant, assembled from the catalog manifest |
 | `general` | false | 0 | **not** a legal question; the model's own knowledge, uncited and unchecked |
 | `out_of_scope` | true | 0 | a legal question about law outside the Acts held. Nothing was searched. |

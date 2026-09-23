@@ -52,6 +52,11 @@ measured = served. The Docker image went from ~6 GB to ~435 MB.
   survives only if the section was retrieved and the quote is in it word for
   word. No claims left → refusal. This removes invented citations by
   construction.
+- **Explaining a section**: "explain section 302" or "what does s.300 mean"
+  fetches the named section exactly, then breaks it down element by element
+  (conduct, conditions, punishment, exceptions), each point quoting the text.
+  "What does section 302 say" still returns the text itself. A pasted law gets
+  the same breakdown.
 - **Which Acts exist** is read from the catalog, so adding a source needs no
   code change.
 

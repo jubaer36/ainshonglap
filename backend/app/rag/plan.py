@@ -45,6 +45,7 @@ checked first.
 from __future__ import annotations
 
 import functools
+import re
 from dataclasses import dataclass, field
 
 from app.rag import catalog, config, trace
@@ -54,7 +55,16 @@ CATEGORIES = ("meta", "structural", "semantic", "document", "out_of_scope",
               "general")
 
 # What a structural request wants done with the coordinates it named.
-OPERATIONS = ("fetch", "enumerate", "overview")
+OPERATIONS = ("fetch", "enumerate", "overview", "explain")
+
+# Asking for a named section to be EXPLAINED rather than shown. Checked in code
+# as well as asked of the planner: "explain section 302" planned as `fetch`
+# returns the statute verbatim, which is exactly the complaint this fixes.
+EXPLAIN_RE = re.compile(
+    r"\b(explain\w*|break\s*(?:it|this|that)?\s*down|breakdown|interpret\w*|"
+    r"mean|meaning|simplif\w*|in\s+(?:simple|plain|easy)\s+(?:terms|words|language|english)|"
+    r"elaborate|elements?\s+of|ingredients?\s+of|what\s+does\s+(?:it|this|that)\s+imply)\b",
+    re.I)
 
 SYSTEM = """\
 You plan how a Bangladesh criminal law assistant should answer a question. You never answer it, never quote law, and never write SQL.
@@ -63,7 +73,7 @@ Scope: ONLY the Acts in the "Acts:" list sent with each question. That list is c
 
 ## category
 - meta: asks what this assistant is or can do. "Who are you?", "what can you do", "what are your sources", "where do your answers come from", "demonstrate your capabilities".
-- structural: names a PART of a statute to return - a section, a range, a chapter (by number OR by subject), or a whole Act. "What does section 302 say", "list Chapter XVI", "show me the sections about documentary evidence", "summarise the Evidence Act", "state the penal code laws".
+- structural: names a PART of a statute to return - a section, a range, a chapter (by number OR by subject), or a whole Act. "What does section 302 say", "explain section 379 of the Penal Code", "list Chapter XVI", "show me the sections about documentary evidence", "summarise the Evidence Act", "state the penal code laws".
 - semantic: a legal question or situation where the relevant provisions must be FOUND because the user has not named them. "What is the punishment for theft?", "Someone broke into my shop at night", "Can police arrest without a warrant?". Use for ANY scenario the listed Acts could plausibly govern - crimes, police procedure, evidence, trials, or whatever else the listed Acts cover - even when no section is named and the facts are messy.
 - document: the user PASTED a document rather than asked a question - a case brief, law-report extract, judgment summary, or transcribed page from a book or screen. Signs: headings like "Facts:", "Argument:", "Held:", "Order:"; party names; a citation like "55 DLR (2003) 363"; or simply a long passage of legal prose with a short question tacked on. The work is reading the passage and explaining the provisions it refers to.
 - out_of_scope: a LEGAL question about law the listed Acts do not contain - a statute that is not on the Acts list (for example the Dowry Prohibition Act or the Digital Security Act, unless the list includes them), labour, family, tax or constitutional law, another country's law, or legal advice needing a lawyer. A question that NAMES an Act on the list is never out_of_scope. "What does the Dowry Prohibition Act say?", "My employer has not paid me for three months".
@@ -76,7 +86,8 @@ The semantic / out_of_scope / general line matters more than any other choice. A
 
 ## Fields
 operation (structural only; "" otherwise):
-- fetch: specific sections named ("section 302", "sections 378 to 382")
+- fetch: specific sections named, to be SHOWN ("section 302", "what does section 302 say", "sections 378 to 382")
+- explain: specific sections named, to be EXPLAINED - "explain section 302", "what does section 300 mean", "break down section 420", "section 54 of the CrPC in simple terms", "what are the elements of theft under section 378"
 - enumerate: list the sections of a chapter or Act
 - overview: describe what a whole Act covers
 
@@ -282,6 +293,13 @@ def validate(plan: Plan) -> Plan:
         plan.category = "semantic"
     if plan.operation not in OPERATIONS:
         plan.operation = ""
+    # Named sections plus "explain / what does it mean / break down": explain,
+    # whatever the planner chose. Showing the text verbatim to someone who
+    # asked what it means answers a different question.
+    if (plan.category == "structural" and plan.operation in ("fetch", "")
+            and (plan.sections or plan.section_from) and EXPLAIN_RE.search(plan.asked)):
+        plan.operation = "explain"
+        plan.notes.append("asked to explain named sections -> explain")
 
     # A question that NAMES an Act we hold is never out of scope. The prompt
     # says so, but a prompt is a request: the fallback planner (gpt-oss-20b)

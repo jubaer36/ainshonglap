@@ -197,23 +197,99 @@ def structural_answer(plan: Plan, *, backend: str | None = None,
                       reason=_nothing_found(plan))
     trace.step("fetch", f"{total} section(s) from the catalog")
 
+    if plan.operation == "explain":
+        return _explain(plan, total, rows, backend=backend, model=model)
+
     # One section, asked for by name: quote it in full. This is the path where
     # the text is correct by construction — it came from the catalog and no
     # model touched it.
     if total == 1 and len(rows) == 1:
-        rec = rows[0]
-        title = f"{rec['act']}, Section {rec['number']}"
-        if rec.get("title"):
-            title += f": {rec['title']}"
-        return Answer(
-            plan.question, refused=False, reason=None, kind="lookup", plan=plan,
-            summary=title,
-            claims=[{"text": rec["text"], "section": str(rec["number"]),
-                     "quote": rec["text"]}],
-            sources=[_as_retrieved(rec)],
-        )
+        return _lookup(plan, rows[0])
 
     return _enumerate(plan, total, rows)
+
+
+def _lookup(plan: Plan, rec: dict) -> Answer:
+    """One named section, quoted in full from the catalog."""
+    title = f"{rec['act']}, Section {rec['number']}"
+    if rec.get("title"):
+        title += f": {rec['title']}"
+    return Answer(
+        plan.question, refused=False, reason=None, kind="lookup", plan=plan,
+        summary=title,
+        claims=[{"text": rec["text"], "section": str(rec["number"]),
+                 "quote": rec["text"]}],
+        sources=[_as_retrieved(rec)],
+    )
+
+
+EXPLAIN_SYSTEM = (
+    "You are a legal information assistant for Bangladesh criminal law. The user "
+    "named one or more sections and asked you to EXPLAIN them. You are given "
+    "exactly those sections, each labelled with its Act and section number.\n\n"
+    "Do not just repeat the section. Break it down so a non-lawyer understands "
+    "it, using only the words of the sections provided.\n\n"
+    "Rules:\n"
+    "1. summary: one or two plain sentences saying what the provision is about "
+    "and what it does.\n"
+    "2. claims: one per element, in the order a reader needs them - what "
+    "conduct it covers; each condition that must be met (including any intent, "
+    "knowledge or circumstance it requires); who it applies to; the "
+    "punishment, if it states one; then each Explanation, Exception, proviso "
+    "and Illustration it contains. Say each in plain words.\n"
+    "3. Every claim must carry its section number and a VERBATIM quote - the "
+    "exact words of that section that establish the point. Quotes are checked "
+    "automatically; a paraphrase inside the quote fails.\n"
+    "4. Explain only what the text says. Do not add case law, other statutes, "
+    "or how courts apply it, and do not answer questions the user did not ask.\n"
+    "5. Set sufficient=true: the sections are exactly the ones asked about.\n"
+    "6. Do not add a disclaimer; one is attached automatically."
+)
+
+
+def _explain(plan: Plan, total: int, rows: list[dict], *,
+             backend: str | None = None, model: str | None = None) -> Answer:
+    """Named sections, fetched exactly, then explained element by element.
+
+    The fetch is the same as `fetch` — by number, from the catalog, so the
+    section explained is the one asked about, never a nearest match. Only the
+    presentation differs: the generator breaks it down, and every point it makes
+    carries a quote that is checked against the section like any other claim.
+    If that produces nothing usable, the reader still gets the text they named
+    rather than a refusal.
+    """
+    shown = rows[:MAX_CONTEXT_SECTIONS]
+    hits = [_as_retrieved(rec, i) for i, rec in enumerate(shown, 1)]
+    llm = get_llm(backend, model)
+    trace.sent(_short(llm.name),
+               f"explain {' '.join(h.key for h in hits[:5])}  «{plan.asked}»")
+    generating = trace.timer()
+    raw = llm.generate_json(
+        EXPLAIN_SYSTEM, f"Sections:\n\n{build_context(hits)}\n\n---\n\n"
+                        f"Question: {plan.asked}", SCHEMA)
+
+    checked = check_claims(raw.get("claims") or [], hits)
+    kept = [{"text": c.text, "section": c.resolved_section, "quote": c.quote}
+            for c in checked.claims if c.ok]
+    dropped = [f"s.{c.section}: {c.failure}" for c in checked.failures]
+    trace.recv(_short(llm.name),
+               f"{len(checked.claims)} points -> {len(kept)} kept, {len(dropped)} dropped",
+               generating())
+
+    if not kept:
+        # Nothing survived the quote check: show what was named instead.
+        trace.step("explain", "no point survived — showing the text instead")
+        if total == 1 and len(rows) == 1:
+            return _lookup(plan, rows[0])
+        return _enumerate(plan, total, rows)
+
+    cited = {c["section"] for c in kept}
+    return Answer(
+        plan.question, refused=False, reason=None, plan=plan,
+        summary=raw.get("summary") or "", claims=kept, dropped=dropped,
+        sources=[h for h in hits if str(h.section) in cited],
+        verification=checked, model=llm.name,
+    )
 
 
 def _nothing_found(plan: Plan) -> str:
@@ -447,7 +523,13 @@ DOCUMENT_SYSTEM = (
     "automatically.\n"
     "4. If the provided sections do not cover what is being asked, set "
     "sufficient=false.\n"
-    "5. Do not add a disclaimer; one is attached automatically."
+    "5. Do not add a disclaimer; one is attached automatically.\n"
+    "6. If the user asks you to explain, interpret or break down a provision - by "
+    "number, or by pasting its text - do not just repeat it. Explain it element "
+    "by element in plain words: what conduct it covers, each condition it "
+    "requires (including any intent or knowledge), the punishment, and any "
+    "Explanation, Exception or Illustration - one claim per element, each "
+    "quoting the exact words that establish it.\n"
 )
 
 # Every section number a passage cites: "Section 54", "sections 54 and 167",
