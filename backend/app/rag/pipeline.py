@@ -1,28 +1,25 @@
-"""retrieve(question) -> ranked sections. The whole of E4 + E5 in one call.
+"""retrieve(question) -> ranked sections, on OpenRouter only.
 
-Three stages, each one an experiment that moved a number on the 608-question
-eval set:
-
-  1. dense search over a dual-granularity index (E5). Sections AND their
-     subsections both have vectors, which lifted Recall@20 from 66.6% to 70.4%
-     — the ceiling stage 3 cannot raise for itself.
+  1. embed the question with nemotron-3-embed (OpenRouter), then an exact
+     inner-product search over the chunk vectors — sections AND subsections
+     (E5) — in Supabase (`law_alt_chunks`), or the local copy if Supabase fails.
   2. collapse to distinct sections. Several vectors can point at one section, so
-     the top-20 *vectors* can be far fewer than 20 sections. Over-fetching then
-     de-duplicating is what makes the candidate set 20 sections deep again.
-  3. cross-encoder rerank of those candidates (E4, +9.2pp Recall@1).
+     over-fetching then de-duplicating keeps the candidate set 20 sections deep.
+  3. optionally rerank those candidates with the Nemotron reranker (profile
+     `nemotron-embed+rerank`); the default takes the search order (E21: R@1
+     48.4, R@20 86.5 on the 608 questions — above the local BGE pipeline).
 
 A child vector carries its PARENT section's metadata, so a subsection hit is a
 section hit and the citation still points at the section.
 
-`retrieve_many` exists so the eval scripts run this exact code rather than
-their own copy of it — the previous split is how the logged numbers came to
-describe a pipeline nothing could actually serve.
+No model runs in this process. When OpenRouter cannot embed the question —
+the free-model daily cap, an outage, a timeout — there is nothing to fall back
+to, and `SearchUnavailable` says so; the API turns it into a 503 with a plain
+message. Exact lookups by section, range, chapter or Act never come here.
 
-Which embedder and reranker run is a **retrieval profile** (E21,
-`config.RETRIEVAL_PROFILES`): the server default, `profile=` here, or
-`use_profile()` for the rest of one request. The stages above are the same for
-every profile; only the models change. A profile that needs OpenRouter falls
-back to the local one when OpenRouter cannot serve it, and says so in the log.
+`retrieve_many` exists so the eval scripts run this exact code rather than
+their own copy of it — a split once made the logged numbers describe a pipeline
+nothing could serve.
 """
 
 from __future__ import annotations
@@ -32,11 +29,14 @@ import logging
 from dataclasses import dataclass, field
 
 from app.rag import config
-from app.rag.encoder import embed
-from app.rag.reranker import rerank_scores
-from app.rag.store import AltMissing, load_alt, load_store
+from app.rag.store import AltMissing, search_alt
 
 log = logging.getLogger("ainshonglap")
+
+
+class SearchUnavailable(RuntimeError):
+    """Meaning search cannot run right now (OpenRouter or the vectors)."""
+
 
 # The profile for the rest of this request, when the caller chose one. A context
 # variable rather than a parameter threaded through the planner, the executors
@@ -117,20 +117,17 @@ def _to_results(cands, k):
     return out
 
 
-def _search(qemb, n: int, embedder: str = "bge-m3") -> list[tuple[list[dict], list[float], list[int]]]:
-    """Nearest chunks per query vector — from Supabase, or the local FAISS index
-    if Supabase fails.
+def _search(qemb, n: int, embedder: str) -> list[tuple[list[dict], list[float], list[int]]]:
+    """Nearest chunks per query vector — Supabase, or the local copy if it fails.
 
-    Returns, per query, (chunks, scores, ids) in the shape `_collapse` takes, so
-    grouping into sections, reranking and everything after are the same code
-    whichever answered. Both are the same exact inner-product scan over the same
-    vectors (`verify_supabase.py` checks it), so a fallback changes where the
-    result came from, not what it is — unless an Act was loaded to Supabase and
-    not rebuilt locally, which is why every fallback is logged.
+    Returns, per query, (chunks, scores, ids) in the shape `_collapse` takes.
+    Both are the same exact inner-product scan over the same vectors
+    (`verify_supabase.py` checks it), so a fallback changes where the result
+    came from, not what it is — and every fallback is logged.
     """
     from app.rag import corpus_db, fallback
 
-    source = "vector search" if embedder == "bge-m3" else f"vector search ({embedder})"
+    source = f"vector search ({embedder})"
     try:
         out = []
         for q in qemb:
@@ -141,17 +138,10 @@ def _search(qemb, n: int, embedder: str = "bge-m3") -> list[tuple[list[dict], li
         return out
     except corpus_db.Unavailable as exc:
         fallback.used(source, str(exc))
-
-    # Raises AltMissing when this embedder has no vectors for the current
-    # corpus; the caller then drops to the local profile.
-    index, chunks = load_alt(embedder) if embedder != "bge-m3" else load_store()[:2]
-    scores, ids = index.search(qemb, min(n, index.ntotal))
-    return [(chunks, list(scores[i]), list(ids[i])) for i in range(len(qemb))]
-
-
-def _fell_back(what: str, why: object) -> None:
-    log.warning("FALLBACK  retrieval: %s failed (%s); using %s",
-                what, str(why)[:160], config.LOCAL_PROFILE)
+    try:
+        return search_alt(embedder, qemb, n)
+    except AltMissing as exc:
+        raise SearchUnavailable(f"no {embedder} vectors to search: {exc}") from exc
 
 
 def retrieve_many(questions: list[str], k: int | None = None, *,
@@ -160,7 +150,8 @@ def retrieve_many(questions: list[str], k: int | None = None, *,
                   profile: str | None = None) -> list[list[Retrieved]]:
     """Same pipeline as `retrieve`, batched over many questions.
 
-    `rerank=False` skips the reranking stage whatever the profile says.
+    `rerank=False` skips the reranker whatever the profile says. `batch` is
+    accepted for the eval scripts' signature and ignored.
     """
     from app.rag import remote_retrieval, trace
 
@@ -172,45 +163,36 @@ def retrieve_many(questions: list[str], k: int | None = None, *,
     embedder = spec["embedder"]
     reranker = spec["reranker"] if rerank else None
 
-    hits = None
-    if embedder != "bge-m3":
-        try:
-            qemb = remote_retrieval.embed(questions, embedder, "query")
-            hits = _search(qemb, dense_k * OVERFETCH, embedder)
-        except (remote_retrieval.Unavailable, AltMissing) as exc:
-            _fell_back(f"{embedder} search", exc)
-            name, embedder = config.LOCAL_PROFILE, "bge-m3"
-            reranker = "bge" if rerank else None
-    if hits is None:
-        qemb = embed(questions, batch=batch)
-        hits = _search(qemb, dense_k * OVERFETCH)
+    try:
+        qemb = remote_retrieval.embed(questions, embedder, "query")
+    except remote_retrieval.Unavailable as exc:
+        log.warning("SEARCH UNAVAILABLE  %s could not embed the question: %s",
+                    embedder, str(exc)[:160])
+        raise SearchUnavailable(f"{embedder} could not embed the question "
+                                f"({str(exc)[:120]})") from exc
+    hits = _search(qemb, dense_k * OVERFETCH, embedder)
     trace.step("retrieve", f"profile {name}")
 
     results = []
     for i in range(len(questions)):
         chunks, scores, ids = hits[i]
         cands = _collapse(chunks, scores, ids, dense_k)
+        for c in cands:
+            c["score"] = c["dense"]
         if reranker == "nemotron" and cands:
             try:
                 got = remote_retrieval.rerank(questions[i],
                                               [c["chunk"]["text"] for c in cands])
             except remote_retrieval.Unavailable as exc:
-                # This question and the rest of the batch: one failure is
-                # enough to know, and 600 failing calls would say nothing more.
-                _fell_back("nemotron rerank", exc)
-                reranker = "bge"
+                # The search order is already a measured answer (E21); the
+                # reranker is an extra, so losing it costs nothing but itself.
+                log.warning("FALLBACK  retrieval: nemotron rerank failed (%s); "
+                            "using the search order", str(exc)[:160])
+                reranker = None
             else:
                 for c, s in zip(cands, got):
                     c["score"] = s
                 cands.sort(key=lambda c: -c["score"])
-        if reranker == "bge" and cands:
-            pairs = [(questions[i], c["chunk"]["text"]) for c in cands]
-            for c, s in zip(cands, rerank_scores(pairs)):
-                c["score"] = s
-            cands.sort(key=lambda c: -c["score"])
-        elif reranker is None:
-            for c in cands:
-                c["score"] = c["dense"]
         results.append(_to_results(cands, k))
         if progress and (i + 1) % 100 == 0:
             print(f"  {i+1}/{len(questions)}", flush=True)
@@ -220,12 +202,7 @@ def retrieve_many(questions: list[str], k: int | None = None, *,
 def retrieve(question: str, k: int | None = None, *,
              dense_k: int | None = None, rerank: bool = True,
              profile: str | None = None) -> list[Retrieved]:
-    """Top-k sections for a question, best first.
-
-    `rerank=False` gives the dense-only ordering — kept so the two can be
-    compared on one code path rather than across two scripts, which is how the
-    eval numbers and the served numbers diverged in the first place.
-    """
+    """Top-k sections for a question, best first. Raises `SearchUnavailable`."""
     if not question.strip():
         return []
     return retrieve_many([question], k, dense_k=dense_k, rerank=rerank,
@@ -233,16 +210,8 @@ def retrieve(question: str, k: int | None = None, *,
 
 
 def warmup() -> None:
-    """Build the catalog and load both models up front.
-
-    Called at API startup so the first user query does not pay ~30s of model
-    load, and so a missing index fails at boot instead of inside a request.
-    """
-    # The vectors stay in Postgres, so nothing is loaded from disk; the local
-    # FAISS index is read only if a fallback ever needs it. Building the
-    # in-memory catalog here moves its one-off cost off the first question.
+    """Build the in-memory catalog up front, so the first question does not pay
+    for it. No model to load: retrieval runs on OpenRouter."""
     from app.rag import catalog
 
     catalog.connect()
-    embed(["warmup"])
-    rerank_scores([("warmup", "warmup")])

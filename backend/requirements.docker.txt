@@ -1,9 +1,8 @@
-# Runtime dependencies for the CPU-only API container.
+# Runtime dependencies for the API container.
 #
-# requirements.txt remains the broad local experiment environment. This file
-# deliberately excludes CUDA, torchvision, accelerate, qwen-vl-utils,
-# sentence-transformers, Docling and the offline PDF parsing toolchain.
---extra-index-url https://download.pytorch.org/whl/cpu
+# No model runs in the container — retrieval is on OpenRouter, generation on
+# Groq/Gemini — so no PyTorch, Transformers, FAISS or Hugging Face. requirements.txt
+# remains the full local environment (ingestion, Docling, experiments).
 
 # FastAPI service
 fastapi==0.141.1
@@ -13,16 +12,8 @@ python-dotenv==1.2.3
 python-multipart==0.0.32
 requests==2.34.2
 
-# Served retrieval and reranking. Match the tested local versions while using
-# CPU PyTorch so the image contains no CUDA runtime it cannot use.
-torch==2.11.0+cpu
-transformers==5.17.0
+# Vector maths for the local fallback search (an exact scan over the file).
 numpy==2.5.3
-safetensors==0.8.0
-huggingface-hub==1.31.0
-
-# Local vector search is the deployed fallback when Supabase is unavailable.
-faiss-cpu==1.15.1
 
 # Hosted generator fallback plus corpus, authentication and conversation data.
 google-genai==2.23.0

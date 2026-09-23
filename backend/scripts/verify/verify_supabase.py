@@ -1,6 +1,6 @@
 """Check the Supabase corpus against the local read models it was loaded from.
 
-    catalog.sqlite, index/chunks.json, index/embeddings.npy, chunks.faiss
+    catalog.sqlite, index/chunks.json, index/embeddings.<embedder>.npy
                           │   read independently
                           ▼
     law_* tables in Supabase, read back over the API
@@ -83,7 +83,6 @@ def main() -> None:
     db.row_factory = sqlite3.Row
     acts = {r["id"]: r["slug"] for r in db.execute("select id, slug from acts")}
     chunks = json.loads((config.INDEX_DIR / "chunks.json").read_text(encoding="utf-8"))
-    emb = np.load(config.INDEX_DIR / "embeddings.npy")
 
     print("\nload records")
     loads = {r["act_slug"]: r for r in fetch_all(client, "law_loads", "*", "act_slug")}
@@ -152,9 +151,23 @@ def main() -> None:
     check("cross-references", local_x == remote_x,
           f"{sum(remote_x.values())} remote / {sum(local_x.values())} local")
 
-    print("\nvectors")
+    # Vectors: the embedder's (law_alt_chunks) against the local copy. BGE-M3's
+    # law_chunks is `main`'s and is not read by this build.
+    from app.rag.store import alt_paths
+
+    name = config.EMBEDDER
+    emb_path = alt_paths(name)[0]
+    print(f"\nvectors ({name})")
+    emb = np.load(emb_path) if emb_path.exists() else None
+    check("local vector file present", emb is not None and len(emb) == len(chunks),
+          f"{emb_path.name}: {0 if emb is None else len(emb)} rows / {len(chunks)} chunks")
+    if emb is None:
+        failed = [n for n, ok, _ in results if not ok]
+        print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")
+        raise SystemExit(1)
     remote_ck = {r["vec_id"]: r for r in fetch_all(
-        client, "law_chunks", "vec_id,chunk_id,text,metadata,embedding", "vec_id")}
+        client, "law_alt_chunks", "vec_id,chunk_id,text,metadata,embedding,model", "vec_id")
+        if r["model"] == name}
     check("every vector present", set(remote_ck) == set(range(len(chunks))),
           f"{len(remote_ck)} remote / {len(chunks)} local")
     text_bad, meta_bad, vec_bad = [], [], []
@@ -176,9 +189,6 @@ def main() -> None:
           else f"{len(emb)} x {emb.shape[1]}")
 
     print(f"\nsearch parity (top {TOP}, {args.queries} probes)")
-    import faiss
-
-    index = faiss.read_index(str(config.INDEX_DIR / "chunks.faiss"))
     rng = np.random.default_rng(0)
     # Half the probes are stored vectors (a known best match, then 59 real
     # neighbours); half are blends of two, so the top result is not simply the
@@ -193,12 +203,14 @@ def main() -> None:
 
     exact, tie_only, broken, worst = 0, 0, 0, 0.0
     for q in probes:
-        f_scores, f_ids = index.search(q.reshape(1, -1), TOP)
-        f_ids, f_scores = list(f_ids[0]), list(f_scores[0])
+        sims = emb @ q
+        f_ids = [int(i) for i in np.argsort(-sims, kind="stable")[:TOP]]
+        f_scores = [float(sims[i]) for i in f_ids]
         lit = "[" + ",".join(np.format_float_positional(x, unique=True, trim="-")
                              for x in q) + "]"
-        rows = client.rpc("law_match_chunks",
-                          {"query_embedding": lit, "match_count": TOP}).execute().data
+        rows = client.rpc("law_match_alt_chunks",
+                          {"query_embedding": lit, "model_name": name,
+                           "match_count": TOP}).execute().data
         p_ids = [r["vec_id"] for r in rows]
         p_scores = {r["vec_id"]: r["score"] for r in rows}
         f_by = dict(zip(f_ids, f_scores))
@@ -209,8 +221,6 @@ def main() -> None:
             continue
         # Differences are acceptable only where the scores are equal to within
         # float noise: then the order between them is arbitrary in both stores.
-        # The comparison is on the score sequence, and a set difference is
-        # tolerated only at the cut-off, where a tie can push one in or out.
         seq_ok = len(p_ids) == len(f_ids) and all(
             abs(a - b) <= TIE for a, b in zip(f_scores, [p_scores[i] for i in p_ids]))
         if seq_ok:

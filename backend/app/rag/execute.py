@@ -524,9 +524,20 @@ def document_answer(plan: Plan, *, backend: str | None = None,
     hits = [_as_retrieved(rec, i) for i, rec in enumerate(cited, 1)]
 
     room = MAX_CONTEXT_SECTIONS - len(hits)
+    extra = []
+    if room > 0:
+        from app.rag.pipeline import SearchUnavailable
+        try:
+            extra = retrieve(plan.query, k=k or config.FINAL_K)
+        except SearchUnavailable:
+            # The sections the document cites are already fetched by number;
+            # the extra search is a bonus, and without it the answer still
+            # stands on what the document named.
+            if not hits:
+                raise
     if room > 0:
         have = {h.key for h in hits}
-        for hit in retrieve(plan.query, k=k or config.FINAL_K):
+        for hit in extra:
             if hit.key not in have:
                 hits.append(hit)
                 if len(hits) >= MAX_CONTEXT_SECTIONS:

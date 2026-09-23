@@ -61,11 +61,11 @@ def main() -> None:
     args = ap.parse_args()
 
     from app.rag.pipeline import retrieve_many
-    from app.rag.store import load_store
+    from app.rag.store import load_alt
 
-    index, _, _ = load_store()
+    emb, _ = load_alt(config.EMBEDDER)
     rows = load_eval(None)
-    cache = config.INDEX_DIR / f"threshold_scores_k{args.k}_{index.ntotal}.json"
+    cache = config.INDEX_DIR / f"threshold_scores_k{args.k}_{config.EMBEDDER}_{len(emb)}.json"
 
     if cache.exists() and not args.no_cache:
         data = json.loads(cache.read_text(encoding="utf-8"))

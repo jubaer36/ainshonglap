@@ -1,12 +1,11 @@
-"""Embedding and reranking on OpenRouter (E21).
+"""Embedding and reranking on OpenRouter (E21) — the only retrieval models.
 
-The retrieval profiles `nemotron-embed` and `bge+nemotron-rerank` call out
-here; the local profile never does. Keys are every `OPENROUTER_API_KEY*`, in
-rotation with failover (`keyring`), the same way the Groq generators use theirs.
-
-Anything that goes wrong raises `Unavailable`, and the pipeline answers with
-the local profile instead — logged, never silent. That includes the free-model
-daily cap: 1,000 requests a day, shared by every `:free` model on an account.
+Keys are every `OPENROUTER_API_KEY*`, in rotation with failover (`keyring`),
+the same way the Groq generators use theirs. Anything that goes wrong raises
+`Unavailable`: for embedding that means meaning search cannot run (there is no
+local model), and the pipeline says so; for reranking, the search order is used.
+That includes the free-model daily cap — 1,000 requests a day per account with
+credits bought, 50 without, shared by every `:free` model.
 """
 
 from __future__ import annotations

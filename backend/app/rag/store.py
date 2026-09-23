@@ -1,7 +1,12 @@
-"""The FAISS index and the chunk records that sit behind it.
+"""The local copy of the vectors — the fallback when Supabase cannot search.
 
-Loaded lazily and kept for the process lifetime: the index is a few MB and
-re-reading it per request would dominate query latency.
+Only the remote embedder's vectors (`embeddings.<name>.npy`, row for row with
+`chunks.json`). No model and no FAISS: the question's vector comes from
+OpenRouter either way, and an exact scan of ~2,300 rows is one matrix product.
+
+`meta.<name>.json` records a digest of the chunk texts the vectors were built
+from: add a source without rebuilding them and the digest stops matching, so
+they are refused rather than searched with the new Act silently missing.
 """
 
 from __future__ import annotations
@@ -11,44 +16,6 @@ import json
 
 from app.rag import config
 
-
-@functools.lru_cache(maxsize=1)
-def load_store():
-    """(faiss index, chunks, meta).
-
-    Chunk order is the vector order — `chunks[i]` is the record for vector `i`.
-    build_index.py writes both from the same list, so the only way they can
-    disagree is if one is rebuilt without the other.
-    """
-    import faiss
-
-    idx_path = config.INDEX_DIR / "chunks.faiss"
-    if not idx_path.exists():
-        raise FileNotFoundError(
-            f"no index at {idx_path} — run `python scripts/build_index.py` first"
-        )
-    index = faiss.read_index(str(idx_path))
-    chunks = json.loads((config.INDEX_DIR / "chunks.json").read_text(encoding="utf-8"))
-    meta = json.loads((config.INDEX_DIR / "meta.json").read_text(encoding="utf-8"))
-    if index.ntotal != len(chunks):
-        raise RuntimeError(
-            f"index/chunks mismatch: {index.ntotal} vectors vs {len(chunks)} records "
-            "— rebuild with scripts/build_index.py"
-        )
-    if meta.get("model") != config.EMBED_MODEL:
-        raise RuntimeError(
-            f"index was built with {meta.get('model')} but config says "
-            f"{config.EMBED_MODEL}; query and document vectors must match"
-        )
-    return index, chunks, meta
-
-
-# ── alternate embedders (E21) ───────────────────────────────────────────────
-# A remote embedder's vectors for the SAME chunks.json, row for row, in
-# `embeddings.<name>.npy`. `meta.<name>.json` records a digest of the chunk
-# texts they were built from: add a source without rebuilding these and the
-# digest stops matching, so they are refused rather than searched with the new
-# Act silently missing.
 
 def alt_paths(name: str):
     return (config.INDEX_DIR / f"embeddings.{name}.npy",
@@ -71,8 +38,7 @@ class AltMissing(RuntimeError):
 
 @functools.lru_cache(maxsize=4)
 def load_alt(name: str):
-    """(faiss index, chunks) for a remote embedder, checked against chunks.json."""
-    import faiss
+    """(unit vectors, chunks) for an embedder, checked against chunks.json."""
     import numpy as np
 
     emb_path, meta_path = alt_paths(name)
@@ -84,7 +50,19 @@ def load_alt(name: str):
     if meta.get("texts_digest") != texts_digest(chunks):
         raise AltMissing(f"{emb_path.name} was built for a different corpus — "
                          f"rebuild with `build_index.py --embedder {name}`")
-    emb = np.load(emb_path).astype("float32")
-    index = faiss.IndexFlatIP(emb.shape[1])
-    index.add(emb)
-    return index, chunks
+    return np.load(emb_path).astype("float32"), chunks
+
+
+def search_alt(name: str, qemb, n: int):
+    """Per query: (chunks, scores, ids), best first — exact inner product."""
+    import numpy as np
+
+    emb, chunks = load_alt(name)
+    sims = np.asarray(qemb, dtype="float32") @ emb.T
+    n = min(n, len(chunks))
+    out = []
+    for row in sims:
+        top = np.argpartition(-row, n - 1)[:n]
+        top = top[np.argsort(-row[top], kind="stable")]
+        out.append((chunks, [float(row[i]) for i in top], [int(i) for i in top]))
+    return out

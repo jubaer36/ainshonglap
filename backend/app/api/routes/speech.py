@@ -9,7 +9,8 @@ from fastapi.concurrency import run_in_threadpool
 
 from app.models.schemas import ImageReading, Transcription
 from app.rag.speech import SpeechUnavailable, transcribe
-from app.rag.vision import UnsupportedImage, VisionUnavailable, read_image
+from app.rag.vision import (MAX_BYTES as IMAGE_MAX_BYTES, ImageTooLarge,
+                             UnsupportedImage, VisionUnavailable, read_image)
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["assistant"])
@@ -70,7 +71,7 @@ async def read_image_endpoint(
 ) -> ImageReading:
     """Read the text off **one page image**. This does not answer anything.
 
-    Accepts a single PNG, JPEG or WebP, up to 5 MB. **PDFs and documents are
+    Accepts a single PNG, JPEG or WebP, up to 3 MB (413 above that). **PDFs and documents are
     refused**, not converted: a PDF carries a text layer that
     `scripts/parse_law_pdf.py` reads with page numbers, fonts and column
     positions, and routing it through a vision model would swap verified
@@ -83,10 +84,17 @@ async def read_image_endpoint(
     produces is ever cited — an answer about this text is still retrieved from
     the indexed Acts and verified against them.
     """
-    raw = await image.read()
+    # Read one byte past the limit and no further: an oversized upload is
+    # refused without holding the whole file in memory.
+    raw = await image.read(IMAGE_MAX_BYTES + 1)
+    if len(raw) > IMAGE_MAX_BYTES:
+        raise HTTPException(413, f"image is larger than {IMAGE_MAX_BYTES // (1024 * 1024)} MB "
+                                 "— send a smaller photo or a screenshot of the page")
     try:
         result = await run_in_threadpool(
             read_image, raw, image.content_type, image.filename)
+    except ImageTooLarge as exc:
+        raise HTTPException(413, str(exc)) from exc
     except UnsupportedImage as exc:
         # 415, not 400: the request was well-formed, the media type is the
         # problem, and the message says exactly what to send instead.

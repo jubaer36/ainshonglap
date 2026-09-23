@@ -113,13 +113,12 @@ def main() -> None:
     args = ap.parse_args()
 
     from app.rag.pipeline import retrieve_many
-    from app.rag.store import load_store
+    from app.rag.store import load_alt
 
-    index, _, meta = load_store()
+    emb, _ = load_alt(config.EMBEDDER)
     rows = load_eval(args.split)
     kmax = max(args.k)
-    print(f"index: {index.ntotal} vectors ({meta['model']}, "
-          f"granularity={meta.get('granularity','section')})   "
+    print(f"index: {len(emb)} vectors ({config.EMBEDDER})   "
           f"eval: {len(rows)} questions   rerank={'off' if args.no_rerank else 'on'}   "
           f"profile={config.retrieval_profile(args.profile)[0]}")
 

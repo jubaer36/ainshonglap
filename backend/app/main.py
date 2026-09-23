@@ -55,20 +55,11 @@ STATE: dict[str, object] = {"ready": False, "error": None, "index": None,
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Start serving immediately; load the retrieval models in the background.
+    """Start serving immediately; build the in-memory catalog in the background.
 
-    Cold-loading BGE-M3 and the cross-encoder costs ~30s. Doing that *before*
-    yielding meant the socket was bound but nothing was answered for half a
-    minute, so a browser that loaded the page in 368ms asked for the model list
-    and timed out — the failure looked like a broken backend rather than one
-    that was still waking up.
-
-    Warmup now runs in a worker thread. Requests that need the index block only
-    until it is ready (the catalog and the encoders are cached, so they wait on
-    the same load rather than starting a second one), while everything that does
-    not — the model list, the catalog, the statute browser, /health — answers at
-    once. `/health` reports `warming` until it finishes, so "not ready yet" is
-    visible rather than inferred from a hang.
+    No retrieval model is loaded — search runs on OpenRouter — so warmup only
+    pulls the catalog from Supabase. It still runs in a worker thread so the
+    socket answers at once, and `/health` reports `warming` until it is done.
     """
     # The catalog is SQLite and opens in milliseconds, so it is checked here:
     # a missing catalog should surface at boot, and /health can report the
@@ -90,7 +81,7 @@ async def lifespan(app: FastAPI):
 
 
 def _warmup() -> None:
-    """Build the catalog from Supabase and load both models. Off the event loop."""
+    """Build the catalog from Supabase. Off the event loop."""
     try:
         from app.rag import config
         from app.rag.pipeline import warmup
@@ -100,7 +91,7 @@ def _warmup() -> None:
             # Counted from the load records, not a local file: this reports
             # what the app actually searches, which is the database.
             "vectors": _vector_count(),
-            "embedder": config.EMBED_MODEL,
+            "embedder": config.REMOTE_EMBEDDERS[config.EMBEDDER]["model"],
         })
     except Exception as exc:                       # noqa: BLE001 - reported, not raised
         log.exception("warmup failed")
@@ -148,11 +139,13 @@ def _quota_state() -> dict:
 
 
 def _vector_count() -> int | None:
-    """Vectors in Supabase, from the commit markers. None if unreachable."""
+    """Searchable vectors in Supabase, from the embedder's commit markers."""
     try:
         from app.db import supabase
+        from app.rag import config
 
-        rows = supabase.client().table("law_loads").select("n_chunks").execute().data
+        rows = (supabase.client().table("law_alt_loads").select("n_chunks")
+                .eq("model", config.EMBEDDER).execute().data)
         return sum(r["n_chunks"] for r in rows)
     except Exception:                              # noqa: BLE001 - reported as None
         return None
@@ -214,7 +207,7 @@ async def health() -> dict:
         "error": STATE["error"],
         "index": STATE["index"],
         "catalog": STATE["catalog"],
-        "reranker": config.RERANK_MODEL,
+        "reranker": config.REMOTE_RERANK_MODEL,
         "retrieval": {"default": config.RETRIEVAL_PROFILE,
                       "profiles": config.RETRIEVAL_PROFILES},
         "planner": {"model": config.PLANNER_MODEL,

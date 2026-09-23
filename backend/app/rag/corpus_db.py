@@ -17,7 +17,7 @@ built from, and rebuilds when an Act was loaded, reloaded or removed. That is
 what lets a new Act go live without a restart.
 
 **Meaning search** — the vectors. Not cached. Each question's embedding goes to
-`law_match_chunks`, an exact inner-product scan in Postgres, so a newly loaded
+`law_match_alt_chunks`, an exact inner-product scan in Postgres, so a newly loaded
 Act is searchable on the very next question and there is no index file to ship.
 
 Only Acts with a commit marker in `law_loads` are used. The loader writes that
@@ -241,41 +241,35 @@ def _alt_missing(embedder: str) -> list[str]:
     return [a for a in acts if a not in got[1]]
 
 
-def match(query: np.ndarray, k: int, embedder: str = "bge-m3") -> list[dict]:
+def match(query: np.ndarray, k: int, embedder: str) -> list[dict]:
     """Exact nearest chunks for one query vector, best first.
 
-    Rows carry `text`, `metadata` and `score` — the shape the pipeline groups
-    into sections. `score` is the inner product, the same number FAISS returns.
-    Raises `Unavailable` on any failure, or at once while the breaker is open.
+    Searches `law_alt_chunks` (migration 003) for `embedder`'s vectors. Rows
+    carry `text`, `metadata` and `score` — the shape the pipeline groups into
+    sections; `score` is the inner product. Raises `Unavailable` on any failure,
+    or at once while the breaker is open.
 
-    `embedder` other than BGE-M3 searches `law_alt_chunks` (migration 003) for
-    that model's vectors. A failure there does NOT open the breaker: a missing
-    migration or an unloaded model says nothing about whether the catalog can
-    be served, and tripping it would push every lookup onto the local files.
+    A failure here does NOT open the breaker: a missing migration or an unloaded
+    model says nothing about whether the catalog can be served, and tripping it
+    would push every lookup onto the local files.
     """
     if why := _open():
         raise Unavailable(why)
     literal = "[" + ",".join(np.format_float_positional(x, unique=True, trim="-")
                              for x in np.asarray(query, dtype=np.float32)) + "]"
-    if embedder != "bge-m3":
-        try:
-            if missing := _alt_missing(embedder):
-                raise Unavailable(f"no {embedder} vectors in Supabase for {', '.join(missing)}")
-            rows = _client().rpc("law_match_alt_chunks",
-                                 {"query_embedding": literal, "model_name": embedder,
-                                  "match_count": k}).execute().data
-        except Unavailable:
-            raise
-        except Exception as exc:
-            raise Unavailable(f"{type(exc).__name__}: {exc}"[:160]) from exc
-        if not rows:
-            raise Unavailable(f"no {embedder} vectors loaded in Supabase")
-        return rows
     try:
-        return _client().rpc("law_match_chunks",
-                             {"query_embedding": literal, "match_count": k}).execute().data
+        if missing := _alt_missing(embedder):
+            raise Unavailable(f"no {embedder} vectors in Supabase for {', '.join(missing)}")
+        rows = _client().rpc("law_match_alt_chunks",
+                             {"query_embedding": literal, "model_name": embedder,
+                              "match_count": k}).execute().data
+    except Unavailable:
+        raise
     except Exception as exc:
-        raise Unavailable(_trip(exc)) from exc
+        raise Unavailable(f"{type(exc).__name__}: {exc}"[:160]) from exc
+    if not rows:
+        raise Unavailable(f"no {embedder} vectors loaded in Supabase")
+    return rows
 
 
 def status() -> dict:

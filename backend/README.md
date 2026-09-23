@@ -45,25 +45,26 @@ curl -X POST http://localhost:8000/api/query \
   -d '{"question": "What is the punishment for theft?"}'
 ```
 
-Startup loads BGE-M3 and the cross-encoder (~30s). `RAG_WARMUP=0` skips it when
-only the corpus endpoints are needed.
+No model is loaded: retrieval runs on OpenRouter (`OPENROUTER_API_KEY` is
+required). Startup only builds the in-memory catalog from Supabase, in seconds.
 
 ### Docker
 
-`Dockerfile` (built from the repo root) makes a CPU-only image of about 6 GB:
-`requirements.docker.txt` (CPU PyTorch, no Docling or experiment deps), both
-models baked in and loaded offline, the local fallbacks, one Uvicorn worker on
-`$PORT`. It cannot add or remove sources (no `scripts/`, PyMuPDF or Docling).
+`Dockerfile` (built from the repo root) makes an image of about 435 MB that uses
+~90 MB of memory: `requirements.docker.txt` (no PyTorch, Transformers or FAISS),
+the local fallbacks (catalog, chunk records, nemotron vectors), one Uvicorn
+worker on `$PORT`. It cannot add or remove sources (no `scripts/`, PyMuPDF or
+Docling).
 
 ```bash
 # from the repository root
-docker build -f backend/Dockerfile -t ainshonglap-backend .
-docker run -d --name ainshonglap-api -p 8000:8080 --env-file backend/.env.local ainshonglap-backend
+docker build -f backend/Dockerfile -t ainshonglap-backend:deployable .
+docker run -d --name ainshonglap-api -p 8000:8080 --env-file backend/.env.local ainshonglap-backend:deployable
 docker logs -f ainshonglap-api
 ```
 
 `--env-file` does not override the image's `RAG_RETRIEVAL`; pass
-`-e RAG_RETRIEVAL=...` for another profile. Deployment: `../gcp-deployment-plan.md`.
+`-e RAG_RETRIEVAL=nemotron-embed+rerank` to add the reranker.
 
 ## Structure
 
@@ -116,12 +117,11 @@ as the logged fallback — and `app/rag/execute.py` holds one executor per
 category. Which Acts exist comes from the catalog too (`acts.py`).
 The old pattern router survives behind `RAG_PLAN=0` as an outage switch.
 
-The legal path retrieves 20 distinct section candidates, reranks them, and
-sends the best eight to the generator. Which embedder and reranker do that is a
-**retrieval profile** (E21) — `RAG_RETRIEVAL`, default `bge+bge-rerank` (all
-local); `bge+nemotron-rerank` and `nemotron-embed` use OpenRouter, one request
-per question, and fall back to the default when it cannot serve. The best eight
-go to the generator (`RAG_FINAL_K`, raised from 5;
+The legal path embeds the question with nemotron-3-embed on OpenRouter (E21),
+retrieves 20 distinct section candidates, and sends the best eight to the
+generator. `RAG_RETRIEVAL=nemotron-embed+rerank` reorders them with the
+Nemotron reranker first. When OpenRouter cannot serve, meaning search answers
+503; exact lookups are unaffected. The best eight go to the generator (`RAG_FINAL_K`, raised from 5;
 unmeasured on the 608-question set — see E17). This is appropriate for a focused
 answer but is not yet an exhaustive “show every related provision” mode.
 
@@ -134,8 +134,7 @@ python scripts/parse_law_pdf.py --all    # PDFs   -> Laws/main/parsed/*.json
 python scripts/verify/verify_parsed.py          #   vs the PDF + the bdlaws oracle
 python scripts/chunk_sections.py         # parsed -> Laws/main/chunks/*.json
 python scripts/verify/verify_chunks.py          #   vs the parsed JSON
-python scripts/build_index.py            # chunks -> BGE-M3 vectors + FAISS (reuses known vectors)
-python scripts/build_index.py --embedder nemotron-3-embed   # E21 vectors, new chunks only (OpenRouter)
+python scripts/build_index.py            # chunks -> nemotron vectors via OpenRouter (new chunks only)
 python scripts/load_supabase.py --embedder nemotron-3-embed --all   # -> law_alt_chunks (migration 003)
 python scripts/build_catalog.py          # parsed -> Laws/main/catalog.sqlite
 python scripts/verify/verify_catalog.py         #   vs the parsed JSON

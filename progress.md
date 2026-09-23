@@ -7,11 +7,11 @@ What is built, and why. Measurements: `experiments.md`. Next: `plan.md`.
 | | |
 |---|---|
 | Corpus | 3 core Acts — CrPC 1898 (508 sections), Penal Code 1860 (557), Evidence Act 1872 (182). Others can be added from the app |
-| Storage | Supabase (Postgres + pgvector); local SQLite + FAISS as a logged fallback |
-| Retrieval | 3 profiles — best R@1 50.8%, best R@20 86.5% (E21) |
+| Storage | Supabase (Postgres + pgvector); local SQLite + a vector file as a logged fallback |
+| Retrieval | nemotron-3-embed on OpenRouter, no local model — R@1 48.4%, R@20 86.5% (E21) |
 | Answers | Planner → validated fetch → cited claims → quote check → answer or refusal |
 | App | FastAPI + Next.js; voice, images, memory, optional accounts, admin-managed sources |
-| Deploy | CPU Docker image (~6 GB), GCP Cloud Run plan |
+| Deploy | Docker image ~435 MB, ~90 MB memory, ready in ~5s |
 
 ## Parsing and verification
 
@@ -25,22 +25,22 @@ sections, no numbering gaps, 100% line recovery (CrPC 99.99%). Three early
 
 ## Retrieval
 
-Section chunks plus subsection chunks, embedded with BGE-M3.
+Section chunks plus subsection chunks. First built on local BGE-M3 + a
+cross-encoder reranker (+9.2pp R@1, E4; hierarchy prefixes and chunk size
+changed nothing, E2-E3). Then OpenRouter's free models were measured with the
+same harness (E21), and nemotron-3-embed alone beat the whole local pipeline:
 
-- The reranker was the first real gain: +9.2pp R@1 (E4).
-- Hierarchy prefixes and chunk size changed nothing (E2, E3).
-- The API and the eval scripts share one `retrieve()`, so measured = served.
-- Three profiles now (E21), picked with `RAG_RETRIEVAL`:
+| | R@1 | R@20 | right Act |
+|---|---|---|---|
+| local BGE-M3 + reranker (`main`) | 41.8 | 71.4 | 87.5 |
+| **nemotron-3-embed (this build)** | **48.4** | **86.5** | 88.5 |
 
-| profile | R@1 | R@20 | right Act | |
-|---|---|---|---|---|
-| `bge+bge-rerank` | 41.8 | 71.4 | 87.5 | default, all local |
-| `bge+nemotron-rerank` | 50.8 | 71.4 | 91.6 | reranker on OpenRouter |
-| `nemotron-embed` | 48.4 | 86.5 | 88.5 | search on OpenRouter, no reranker |
-
-The OpenRouter two cost one call per question against a daily cap, and fall
-back to the default when OpenRouter fails. Nemotron's vectors (2048-dim) live
-in their own Supabase table next to BGE-M3's (1024-dim).
+So this build runs no model at all: the question is embedded on OpenRouter
+and searched exactly over stored vectors (Supabase, or a local file with
+numpy). The cost is one request per question against a daily cap, and no local
+fallback — when OpenRouter cannot serve, meaning search answers 503 and exact
+lookups keep working. The API and the eval scripts share one `retrieve()`, so
+measured = served. The Docker image went from ~6 GB to ~435 MB.
 
 ## Answering
 
@@ -85,7 +85,8 @@ in their own Supabase table next to BGE-M3's (1024-dim).
   not a guess.
 - Only new text is embedded; the app picks the change up within a minute.
 - The Docker image cannot run the pipeline, so there the controls are hidden
-  and the API answers 503.
+  and the API answers 503. Embedding new text needs OpenRouter; if it refuses,
+  the add stops before anything is loaded.
 
 ## Supabase
 
@@ -98,7 +99,8 @@ local files answer, logged.
 
 Responsive from phone to laptop, with resizable side panels. The input grows
 with its text. Answer types look different (clarify, out-of-scope, refusal).
-Voice gives a transcript to check, never an automatic answer. The name is
+Voice and page images (Groq qwen3.8-27b, max 3 MB) give text to check, never an
+automatic answer. The name is
 আইনসংলাপ throughout.
 
 ## Known gaps

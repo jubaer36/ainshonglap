@@ -1,30 +1,19 @@
-"""Embed the chunks with BGE-M3 and build a FAISS index (retrieval-plan.md).
+"""Chunk index + vectors: chunks.json, and the embedder's vectors from OpenRouter.
 
-BGE-M3 because: its 8192-token window takes our oversized chunks without
-truncation, it runs locally so ingestion has no API dependency, and it is one
-of the two models the statute-retrieval literature actually evaluated. A paid
-legal-tuned model is an upgrade to be measured against this, not assumed.
+No model runs locally. Vectors come from nemotron-3-embed on OpenRouter
+(`config.EMBEDDER`, E21) and are written to `embeddings.<name>.npy`, row for row
+with `chunks.json`. Only chunks whose text has no vector yet are sent — each
+request counts against the free-model daily cap (1,000 per account with credits
+bought, 50 without), and adding one Act costs roughly its chunk count / 32.
 
-Dense-only, no BM25. For statutory corpora the evidence is that hybrid does not
-reliably help and can slightly hurt — a hypothesis to test against our own eval
-set, not a default.
-
-Index is inner-product over L2-normalised vectors, i.e. cosine similarity. Flat
-(exhaustive) rather than approximate: at this corpus size an ANN index would
-trade recall for a speedup we do not need.
+Exact inner product over unit vectors (cosine), no approximate index: at this
+size an exact scan costs milliseconds and keeps results reproducible.
 
 Run (from backend/, ainshonglap conda env active):
 
-    python scripts/build_index.py              # all acts into one index
-    python scripts/build_index.py --batch 8    # smaller batches if VRAM is tight
-    python scripts/build_index.py --granularity section   # E5 off, for A/B
-    python scripts/build_index.py --embedder nemotron-3-embed   # E21 vectors
-
-`--embedder` builds another model's vectors for the SAME chunks.json
-(`embeddings.<name>.npy`), for the `nemotron-embed` retrieval profile. That model
-runs on OpenRouter: each call counts against the free-model daily cap (1,000
-requests, shared by every :free model on the account), so only chunks without a
-vector are sent — adding one Act costs roughly its chunk count / 32 requests.
+    python scripts/build_index.py              # chunks + nemotron vectors (new text only)
+    python scripts/build_index.py --full       # re-embed every chunk (~73 requests)
+    python scripts/build_index.py --embedder nemotron-3-embed --seed X.npy   # reuse a cache
 """
 
 from __future__ import annotations
@@ -95,60 +84,50 @@ def load_chunks(granularity: str = "both") -> list[dict]:
 
 
 def build(granularity: str = "both", reuse: bool = True, log=print,
-          batch: int | None = None) -> dict:
-    """Write chunks.json, embeddings.npy, chunks.faiss and meta.json. Returns meta.
+          batch: int | None = None, embedder: str | None = None) -> dict:
+    """Write chunks.json and meta.json, then the embedder's vectors. Returns meta.
 
-    `reuse`: a chunk whose exact text already has a vector in the current index
-    keeps that vector; only new or changed text is embedded. Adding one Act then
-    embeds that Act alone instead of all ~2,300 chunks again, and removing one
-    embeds nothing. The order of the output is the same as a full rebuild —
-    Acts by slug, each Act's sections then its subsections — so a reused index
-    and a rebuilt one line up row for row.
+    No model runs here: the vectors come from OpenRouter (`build_alt`), for new
+    or changed text only — every known vector is reused — so adding one Act
+    costs roughly its chunk count / 32 requests, and removing one costs none.
+    The order is fixed — Acts by slug, each Act's sections then its
+    subsections — so a rebuild lines up row for row.
 
-    Embeds through `encoder.embed`, the same cached model the API loads, so
-    calling this from the running server does not load a second copy onto the
-    GPU.
+    `embeddings.npy` (BGE-M3, from `main`) is carried along row for row where a
+    chunk's text already has one, and NaN where it does not. Nothing here reads
+    it; it exists so `load_supabase.py` keeps `law_chunks` intact for `main`,
+    which shares the database. A new chunk has no BGE vector and is simply not
+    written there.
     """
-    import faiss
-
-    from app.rag.encoder import embed
-
     config.INDEX_DIR.mkdir(parents=True, exist_ok=True)
     chunks = load_chunks(granularity)
     n_child = sum(1 for c in chunks if c["metadata"].get("granularity") == "child")
     log(f"chunks: {len(chunks)}  ({len(chunks)-n_child} section, {n_child} child)")
 
-    known: dict[str, np.ndarray] = {}
-    if reuse and (config.INDEX_DIR / "embeddings.npy").exists():
-        old = json.loads((config.INDEX_DIR / "chunks.json").read_text(encoding="utf-8"))
-        old_emb = np.load(config.INDEX_DIR / "embeddings.npy")
+    bge_path = config.INDEX_DIR / "embeddings.npy"
+    old_path = config.INDEX_DIR / "chunks.json"
+    if bge_path.exists() and old_path.exists():
+        old = json.loads(old_path.read_text(encoding="utf-8"))
+        old_emb = np.load(bge_path)
         if len(old) == len(old_emb):
             known = {c["text"]: old_emb[i] for i, c in enumerate(old)}
+            dim = old_emb.shape[1]
+            emb = np.vstack([known.get(c["text"], np.full(dim, np.nan, "float32"))
+                             for c in chunks]).astype("float32")
+            np.save(bge_path, emb)
+            log(f"  BGE-M3 vectors carried for {int(np.isfinite(emb[:, 0]).sum())} "
+                f"of {len(chunks)} chunks (main's law_chunks only)")
 
-    texts = [c["text"] for c in chunks]
-    todo = [t for t in dict.fromkeys(texts) if t not in known]
-    log(f"  reusing {len(texts) - len(todo)} vectors, embedding {len(todo)} new")
-    t0 = time.time()
-    if todo:
-        fresh = embed(todo, batch=batch)
-        known.update(zip(todo, fresh))
-    emb = np.vstack([known[t] for t in texts]).astype("float32") if texts \
-        else np.zeros((0, 1024), dtype="float32")
-    log(f"  embedded in {time.time()-t0:.0f}s  dim={emb.shape[1]}")
-
-    index = faiss.IndexFlatIP(emb.shape[1])
-    index.add(emb)
-    faiss.write_index(index, str(config.INDEX_DIR / "chunks.faiss"))
-    np.save(config.INDEX_DIR / "embeddings.npy", emb)
+    embed_name = embedder or config.EMBEDDER
     (config.INDEX_DIR / "chunks.json").write_text(
         json.dumps(chunks, indent=2, ensure_ascii=False), encoding="utf-8"
     )
-    meta = {"model": config.EMBED_MODEL, "dim": int(emb.shape[1]),
-            "count": len(chunks), "sections": len(chunks) - n_child,
-            "children": n_child, "granularity": granularity,
-            "normalised": True, "metric": "inner_product"}
+    meta = {"embedder": embed_name, "count": len(chunks),
+            "sections": len(chunks) - n_child, "children": n_child,
+            "granularity": granularity, "normalised": True, "metric": "inner_product"}
     (config.INDEX_DIR / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
-    log(f"  -> {config.INDEX_DIR}  ({index.ntotal} vectors)")
+    # Reuses by text from its own meta file, so writing chunks.json first is safe.
+    build_alt(embed_name, reuse=reuse, log=log)
     return meta
 
 
@@ -215,7 +194,7 @@ def main() -> None:
     if args.embedder:
         build_alt(args.embedder, reuse=not args.full, seed=args.seed)
         return
-    build(args.granularity, reuse=not args.full, batch=args.batch)
+    build(args.granularity, reuse=not args.full)
 
 
 if __name__ == "__main__":

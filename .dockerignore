@@ -19,13 +19,9 @@ Laws/bangladesh-legal-qa-dataset
 Laws/main/*.pdf
 Laws/main/chunks
 
-# Keep only what the running API reads: the BGE-M3 FAISS fallback, and the
-# nemotron-3-embed vectors for the `nemotron-embed` retrieval profile (E21) —
-# its local fallback when Supabase cannot serve law_alt_chunks. embeddings.npy
-# is only needed to build or load indexes, which the container never does.
+# Keep only what the running API reads: the chunk records and the
+# nemotron-3-embed vectors — the local fallback for meaning search.
 Laws/main/index/*
-!Laws/main/index/chunks.faiss
 !Laws/main/index/chunks.json
-!Laws/main/index/meta.json
 !Laws/main/index/embeddings.nemotron-3-embed.npy
 !Laws/main/index/meta.nemotron-3-embed.json

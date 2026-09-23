@@ -19,8 +19,8 @@ router = APIRouter(tags=["assistant"])
 #
 # FastAPI runs an `async def` handler ON the event loop, so any blocking call
 # inside it freezes the whole server for its duration. This handler blocks for
-# seconds at a time — cross-encoder inference on the GPU, then a synchronous
-# HTTPS call to the generator — and while it did, every other request was
+# seconds at a time — synchronous HTTPS calls for the search and then the
+# generator — and while it did, every other request was
 # stuck behind it. The visible symptom was the model picker reporting
 # "unavailable": its 15s fetch timeout expired waiting for an event loop that
 # was busy answering someone's question.
@@ -131,6 +131,16 @@ def query(payload: QueryRequest,
 
         return to_message(answer(q, model=model, refine_query=payload.refine))
     except Exception as exc:
+        from app.rag.pipeline import SearchUnavailable
+
+        # Meaning search runs on OpenRouter and has no local fallback. Say
+        # what happened and what still works, rather than "generator
+        # unavailable", which would send the reader looking at the wrong thing.
+        if isinstance(exc, SearchUnavailable):
+            raise HTTPException(
+                503, "Search is unavailable right now — OpenRouter could not "
+                     "serve it (daily limit or outage). Asking for a section by "
+                     "number still works; try the question again later.") from exc
         # A model the provider does not have is the caller's mistake, not an
         # outage, and 502 "generator unavailable" sends whoever sees it looking
         # for a broken service. Unknown ids are allowed through to the provider
@@ -211,8 +221,10 @@ def _after_failure(exc: Exception, model: str | None) -> tuple[str | None, str |
     would hide it.
     """
     from app.rag import quota
+    from app.rag.pipeline import SearchUnavailable
 
-    if _unknown_model(exc):
+    # Search, not the generator, failed: another generator would fail the same.
+    if _unknown_model(exc) or isinstance(exc, SearchUnavailable):
         return None, None
     wanted = model or config.DEFAULT_GENERATOR
     fallback = config.FALLBACK_GENERATOR

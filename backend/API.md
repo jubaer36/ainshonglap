@@ -6,7 +6,7 @@ Base `http://localhost:8000` · OpenAPI at `/docs`.
 conda activate ainshonglap
 cd backend
 uvicorn app.main:app --reload
-RAG_WARMUP=0 uvicorn app.main:app --reload   # skip model load (corpus endpoints only)
+RAG_WARMUP=0 uvicorn app.main:app --reload   # skip building the catalog at startup
 ```
 
 ## Endpoints
@@ -341,6 +341,13 @@ Page images are private, served through one-hour signed URLs. The transcription
 that reaches the pipeline is a vision model's *reading* of the page — keeping
 the page beside it is the only way to check that reading later.
 
+**Reading a page** (`POST /api/read-image`): one PNG, JPEG or WebP, **at most
+3 MB** — refused in the browser, then 413 from the route, which reads no
+further than that. Read by Groq's `qwen/qwen3.8-27b` on the `GROQ_API_KEY*`
+pool with its thinking switched off; 3 MB is the largest file that fits Groq's
+4 MB base64 limit. OpenRouter's free vision models were dropped after one was
+withdrawn from the free tier (404).
+
 ### GET `/api/models`
 
 Selectable generators, with availability:
@@ -392,51 +399,44 @@ gives the dense-only ordering — the same code path the eval scripts measure, s
 served and measured numbers cannot drift. `profile` picks a retrieval profile
 (below); an unknown name is a 422.
 
-## Retrieval profiles
+## Retrieval
 
-Which embedder finds the 20 candidates and which reranker orders them
-(`config.RETRIEVAL_PROFILES`, E21):
+No model runs in the backend. The question is embedded with nemotron-3-embed
+on OpenRouter (E21) and searched exactly against the stored vectors; the local
+BGE-M3 + reranker pipeline is on `main` for comparison.
 
-| profile | search | reranker | R@1 | R@5 | R@20 | Act | API cost |
-|---|---|---|---|---|---|---|---|
-| `bge+nemotron-rerank` | BGE-M3, local | Nemotron rerank (OpenRouter) | **50.8** | 67.1 | 71.4 | **91.6** | 1 request / question |
-| `bge+bge-rerank` *(default)* | BGE-M3, local | bge-reranker-v2-m3, local | 41.8 | 59.0 | 71.4 | 87.5 | none |
-| `nemotron-embed` | nemotron-3-embed (OpenRouter) | none | 48.4 | **75.0** | **86.5** | 88.5 | 1 request / question |
+| profile (`RAG_RETRIEVAL`) | R@1 | R@5 | R@20 | Act | OpenRouter requests |
+|---|---|---|---|---|---|
+| `nemotron-embed` *(default)* | 48.4 | 75.0 | 86.5 | 88.5 | 1 / question |
+| `nemotron-embed+rerank` | not measured on 608 (equal on 119) | | | | 2 / question |
 
 **Choosing.** `RAG_RETRIEVAL` sets the server default (restart to apply). A
 single question can override it with `"retrieval": "<profile>"` on
-`POST /api/query`; everything that question retrieves — every executor, every
-facet — uses it. `/health` lists the profiles and the default.
+`POST /api/query`. `/health` lists the profiles and the default.
 
-**Two vector sets, one per embedder.** BGE-M3's live in `law_chunks`
-(`vector(1024)`); nemotron-3-embed's in `law_alt_chunks` (migration 003), whose
-`embedding` column has no fixed dimension and is always searched one model at a
-time through `law_match_alt_chunks(query_embedding, model_name, match_count)`.
-A question is embedded by one model and compared only with that model's
-vectors. Locally the same split: `embeddings.npy` and
-`embeddings.nemotron-3-embed.npy`, the latter tied to `chunks.json` by a digest
-of its texts so vectors built for an older corpus are refused rather than
-searched.
+**Vectors.** In `law_alt_chunks` (migration 003), whose `embedding` column has
+no fixed dimension and is searched one model at a time through
+`law_match_alt_chunks(query_embedding, model_name, match_count)`. The local copy
+is `embeddings.nemotron-3-embed.npy`, tied to `chunks.json` by a digest of its
+texts so vectors built for an older corpus are refused rather than searched.
+`law_chunks` (BGE-M3, `vector(1024)`) belongs to `main`, which shares the
+database: this build never reads it, and leaves the rows it has alone.
 
-**Cost and fallback.** The two remote profiles call OpenRouter once per
-question (a query embedding, or one rerank of 20 sections), on every
-`OPENROUTER_API_KEY*` in rotation with failover on a refusal. `:free` models
-share a daily cap per account — 1,000 requests with credits bought, 50 without.
-When OpenRouter cannot serve — the cap, an outage, a timeout
-(`RAG_REMOTE_TIMEOUT`), or no nemotron vectors for the current corpus — the
-question is answered with `bge+bge-rerank` and a WARNING is logged:
+**Cost and failure.** Calls go to every `OPENROUTER_API_KEY*` in rotation with
+failover on a refusal. `:free` models share a daily cap per account — 1,000
+requests with credits bought, 50 without. When the question cannot be embedded
+— the cap, an outage, a timeout (`RAG_REMOTE_TIMEOUT`) — there is no local model
+to fall back to: `/api/query` answers **503** "Search is unavailable right now
+… asking for a section by number still works", and the log says
+`SEARCH UNAVAILABLE`. Exact lookups by section, range, chapter or Act never
+need OpenRouter. If the reranker fails, the search order is used and
+`FALLBACK  retrieval: nemotron rerank failed` is logged.
 
-```
-FALLBACK  retrieval: nemotron-3-embed search failed (<reason>); using bge+bge-rerank
-FALLBACK  retrieval: nemotron rerank failed (<reason>); using bge+bge-rerank
-```
-
-**Keeping the nemotron vectors current.** `build_index.py --embedder
-nemotron-3-embed` embeds only chunks that have no vector yet (about one request
-per 32 chunks), then `load_supabase.py --embedder nemotron-3-embed --all`
-loads them. Adding or removing a source through the app does both itself; if
-the embedding step fails, the job still completes and `nemotron-embed` falls
-back until it is re-run. `ingest_document.py` prints both steps; `remove_act.py`
+**Keeping the vectors current.** `build_index.py` embeds only chunks that have
+no vector yet (about one request per 32 chunks), then `load_supabase.py
+--embedder nemotron-3-embed --all` loads them. Adding or removing a source
+through the app does both itself; if OpenRouter refuses, the add stops before
+anything is loaded — run it again once the cap resets. `ingest_document.py` prints both steps; `remove_act.py`
 runs them. Before each search, the backend checks that every loaded Act has
 nemotron vectors in Supabase (cached for a minute); if one is missing,
 `nemotron-embed` falls back rather than silently leaving that Act out.
@@ -495,9 +495,8 @@ scoped search otherwise.
 
 Supabase, always first. The catalog (exact lookups) is loaded from the `law_*`
 tables into memory at startup and rebuilt within a minute of an Act being
-loaded; meaning search runs `law_match_chunks` in Postgres on every question
-(or `law_match_alt_chunks` for the `nemotron-embed` profile — see Retrieval
-profiles).
+loaded; meaning search runs `law_match_alt_chunks` in Postgres on every
+question (see Retrieval).
 
 The local `catalog.sqlite` and FAISS index are **fallbacks only**. They answer
 when Supabase cannot, and each use is logged at WARNING — visible even with
@@ -534,7 +533,7 @@ not have any Act loaded to Supabase since it was last rebuilt.
 | `GEMINI_API_KEY` | optional generator |
 | `INCEPTION_API_KEY` | Mercury, a selectable generator |
 | `DEEPGRAM_API_KEY` | voice |
-| `OPENROUTER_API_KEY`, `_2` | vision, OpenRouter generators, the OpenRouter retrieval profiles (rotated) |
+| `OPENROUTER_API_KEY`, `_2` | retrieval (required), OpenRouter generators (rotated) |
 
 Each job that runs on *every* question gets a key nothing else draws on. A
 sidebar label must not be able to exhaust the quota the next follow-up depends
@@ -578,16 +577,19 @@ model is.
 | `RAG_PLAN` | `1` | `0` falls back to the old pattern router |
 | `RAG_ROUTER_MODEL` | `lfm` | old router's model, used only when `RAG_PLAN=0` |
 | `RAG_DENSE_K` / `RAG_FINAL_K` | `20` / `8` | candidates reranked / sections returned |
-| `RAG_RETRIEVAL` | `bge+bge-rerank` | retrieval profile: `bge+nemotron-rerank`, `bge+bge-rerank`, `nemotron-embed` |
-| `RAG_REMOTE_RERANK_MODEL` | `nvidia/llama-nemotron-rerank-vl-1b-v2:free` | reranker for `bge+nemotron-rerank` |
-| `RAG_REMOTE_TIMEOUT` | `15` | seconds before an OpenRouter retrieval call falls back to local |
+| `RAG_RETRIEVAL` | `nemotron-embed` | retrieval profile: `nemotron-embed`, `nemotron-embed+rerank` |
+| `RAG_REMOTE_RERANK_MODEL` | `nvidia/llama-nemotron-rerank-vl-1b-v2:free` | reranker for `nemotron-embed+rerank` |
+| `RAG_REMOTE_TIMEOUT` | `15` | seconds before an OpenRouter retrieval call gives up |
+| `RAG_VISION_MODEL` | `qwen/qwen3.8-27b` | reads an uploaded page image (Groq, `GROQ_API_KEY*` in rotation) |
+| `RAG_VISION_REASONING` | `none` | reasoning effort for that model (hidden); empty to leave it to the model |
+| `RAG_VISION_MAX_MB` | `3` | largest image accepted; cannot go above 3 (Groq's 4 MB base64 limit) |
 | `RAG_FALLBACK_GENERATOR` | `fallback` | gpt-oss-120b on its own key; used when any model call fails |
 | `RAG_GEMINI_TIMEOUT` | `20` | seconds before a Gemini call is abandoned for the fallback |
 | `RAG_MEMORY_MODEL` | *(auto)* | summariser alias; `summariser` when its key is set, else `oss120` |
 | `RAG_MEMORY_CHARS` | `800` | ceiling on the summary; the previous exchange is kept verbatim on top (up to 2,000 + 4,000 chars) |
 | `RAG_STT_MODEL` | `nova-3` | Deepgram model; Bengali needs nova-3 |
 | `RAG_STT_LANGUAGE` | `en` | `en`, `bn`, or `multi` (no Bengali in `multi`) |
-| `RAG_WARMUP` | `1` | `0` skips model loading at startup |
+| `RAG_WARMUP` | `1` | `0` skips building the catalog at startup |
 | `CORS_ORIGINS` | `http://localhost:3000` | comma-separated |
 | `SUPABASE_URL` | — | project URL; storage and auth are off without it |
 | `SUPABASE_SERVICE_ROLE_KEY` | — | **server only**; bypasses RLS |
@@ -608,12 +610,11 @@ app/rag/
   catalog_schema.py  the catalog's table layout, shared by the build and corpus_db
   corpus_db.py     the corpus from Supabase: catalog cached in memory, vector search by RPC
   fallback.py      logs every time the local files answer instead of Supabase
-  encoder.py       BGE-M3 query/document embedding
-  store.py         local FAISS index + chunk records — the fallback; also the
-                   nemotron vectors (`load_alt`), checked against chunks.json
-  remote_retrieval.py  OpenRouter embedding + reranking for the E21 profiles
-  reranker.py      cross-encoder (E4)
-  pipeline.py      retrieve() — search, collapse to sections, rerank
+  store.py         local copy of the vectors + chunk records — the fallback
+                   search (numpy), checked against chunks.json
+  remote_retrieval.py  OpenRouter embedding + reranking — the only retrieval models
+  pipeline.py      retrieve() — embed on OpenRouter, search, collapse to
+                   sections, optional rerank; SearchUnavailable when it cannot
   llm.py           Groq / Inception / OpenRouter / Gemini, JSON-schema output
   catalog.py       exact fetch by coordinates, parameterized SQL, empty on a bad
                    coordinate — same queries whether the catalog came from Supabase
@@ -627,7 +628,7 @@ app/rag/
   library.py       browsable corpus for the side panels, read from the catalog
   refine.py        the pattern router, used only when RAG_PLAN=0
   speech.py        Deepgram STT — audio -> transcript, never an answer
-  vision.py        OpenRouter vision — one page image -> text
+  vision.py        Groq qwen3.8-27b — one page image (max 3 MB) -> text
   memory.py        rolling conversation summary + previous exchange verbatim;
                    section keys from code
   pending_memory.py answers waiting for their context update (POST /api/memory),

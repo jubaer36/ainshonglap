@@ -54,11 +54,11 @@ uvicorn app.main:app --reload            # API on :8000
 ```
 
 Or the backend in Docker (CPU-only; `backend/Dockerfile`, built from the repo
-root; no source management inside it). Deployment: `gcp-deployment-plan.md`.
+root; ~435 MB, no models; no source management inside it).
 
 ```bash
-docker build -f backend/Dockerfile -t ainshonglap-backend .
-docker run -d --name ainshonglap-api -p 8000:8080 --env-file backend/.env.local ainshonglap-backend
+docker build -f backend/Dockerfile -t ainshonglap-backend:deployable .
+docker run -d --name ainshonglap-api -p 8000:8080 --env-file backend/.env.local ainshonglap-backend:deployable
 ```
 
 Secrets live in `backend/.env.local` (gitignored). Every job that runs on
@@ -66,14 +66,14 @@ Secrets live in `backend/.env.local` (gitignored). Every job that runs on
 
 | key | used by |
 |---|---|
-| `GROQ_API_KEY`, `_2`, `_3` | the generators, in rotation (see below) |
+| `GROQ_API_KEY`, `_2`, `_3` | the generators and image reading (qwen3.8-27b), in rotation (see below) |
 | `GROQ_API_KEY_PLANNER` | the planner alone — deliberately outside that rotation |
 | `GROQ_API_KEY_FALLBACK` | the system-wide fallback (gpt-oss-120b) for every model call — answers, planner, chapter lookup, summariser, naming |
 | `GROQ_API_KEY_SUMMARIZER` | the conversation summariser (gpt-oss-120b), and nothing else |
 | `GEMINI_API_KEY_3` | naming a conversation, and nothing else |
 | `INCEPTION_API_KEY` | Mercury, a selectable generator |
 | `DEEPGRAM_API_KEY` | voice |
-| `OPENROUTER_API_KEY`, `_2` | vision, OpenRouter generators, and the retrieval profiles that run on OpenRouter (rotation + failover, like Groq) |
+| `OPENROUTER_API_KEY`, `_2` | **retrieval** (required), OpenRouter generators — rotation + failover, like Groq |
 | `SUPABASE_*`, optional `GEMINI_API_KEY` | accounts and storage, optional generator |
 | `ADMIN_EMAILS` | signed-in users allowed to add/remove sources from the frontend |
 
@@ -110,15 +110,12 @@ python scripts/parse_law_pdf.py --all    # PDFs    -> Laws/main/parsed/*.json
 python scripts/verify/verify_parsed.py          #   check vs the PDF + bdlaws oracle
 python scripts/chunk_sections.py         # parsed  -> Laws/main/chunks/*.json
 python scripts/verify/verify_chunks.py          #   check vs the parsed JSON
-python scripts/build_index.py            # chunks  -> BGE-M3 vectors + FAISS (reuses known vectors; --full re-embeds)
+python scripts/build_index.py            # chunks  -> nemotron vectors via OpenRouter (new text only; --full re-embeds)
 python scripts/build_catalog.py          # parsed  -> Laws/main/catalog.sqlite
 python scripts/verify/verify_catalog.py         #   check vs the parsed JSON
 python scripts/load_supabase.py --all    # read models -> Supabase law_* tables (002)
+python scripts/load_supabase.py --embedder nemotron-3-embed --all   # vectors -> law_alt_chunks (003)
 python scripts/verify/verify_supabase.py        #   check vs the local read models
-# retrieval profile `nemotron-embed` (E21): its vectors, beside BGE-M3's.
-# Costs OpenRouter requests for new chunks only (~1 per 32). Migration 003 first.
-python scripts/build_index.py --embedder nemotron-3-embed
-python scripts/load_supabase.py --embedder nemotron-3-embed --all
 
 # adding a NEW document: parse, review 4 sampled pages as image vs PyMuPDF vs
 # Docling (Laws/review/<slug>/review.html), then choose. PyMuPDF = numbered
@@ -130,11 +127,8 @@ python scripts/remove_act.py --act arms
 
 python scripts/plan_demo.py          # walk the planner question by question
 python scripts/experiments/plan_cases.py         #   graded: category + scope (E13)
-python scripts/eval_retrieval.py     #   Recall@k / MRR / Act accuracy (--profile: see below)
-python scripts/rerank.py --topk 20   # + cross-encoder rerank, with delta
+python scripts/eval_retrieval.py     #   Recall@k / MRR / Act accuracy — 1 OpenRouter request per question
 python scripts/experiments/fit_threshold.py      #   abstention operating curve (E10)
-python scripts/experiments/experiment_retrieval.py --what all   # A/B prefix, chunk budget
-python scripts/experiments/experiment_granularity.py            # retrieval unit (E5)
 python scripts/experiments/experiment_abstention.py --n 20      # over-answering (E8)
 python scripts/groq_chat.py --json                              # Groq schema probe (E11)
 python scripts/inception_chat.py --json                         # Mercury schema probe (E14)
@@ -156,17 +150,19 @@ locally, then `load_supabase.py` + `verify_supabase.py`. A model names coordinat
 The model never writes SQL, and a coordinate the catalog does not have comes
 back empty rather than as the nearest match.
 
-**Retrieval has three profiles** (E21, `config.RETRIEVAL_PROFILES`), chosen by
-`RAG_RETRIEVAL` or `retrieval` on one `/api/query` request:
-`bge+nemotron-rerank` (best R@1 50.8 and Act accuracy 91.6), `bge+bge-rerank`
-(the default, R@1 41.8, no API) and `nemotron-embed` (best R@20 86.5, no
-reranker). Supabase holds both vector sets: BGE-M3 in `law_chunks`
-(1024-dim), nemotron in `law_alt_chunks` (2048-dim, migration 003). A question
-searches only its profile's set. The two OpenRouter profiles cost **one request
-per question** against the free-model daily cap (1,000 per account with credits,
-50 without) and fall back to the default, logged as `FALLBACK`, when OpenRouter
-cannot serve. Evaluating them costs a request per question too:
-`eval_retrieval.py --profile` on all 608 is most of a day's cap.
+**No model runs in this backend.** Retrieval is nemotron-3-embed on OpenRouter
+(E21: R@1 48.4, R@20 86.5 — above the local BGE-M3 + reranker pipeline, which
+lives on `main`). Its vectors are in `law_alt_chunks` (migration 003, 2048-dim);
+the local copy is `embeddings.nemotron-3-embed.npy`, searched with numpy when
+Supabase fails. `RAG_RETRIEVAL=nemotron-embed+rerank` adds the Nemotron
+reranker. Every question costs **one OpenRouter request** (two with the
+reranker) against the free-model daily cap (1,000 per account with credits, 50
+without). There is no local fallback for embedding: when OpenRouter cannot
+serve, meaning search answers **503** with a plain message and exact lookups
+still work. Evaluation costs a request per question too — all 608 is most of a
+day's cap. `law_chunks` (BGE-M3, 1024-dim) is kept intact for `main`, which
+shares the database; this build never reads it and does not write new chunks
+to it.
 
 **Core Acts are fixed; everything else is a source.** The CrPC, the Penal Code
 and the Evidence Act (`config.CORE_ACTS`) can never be removed — the service,
@@ -177,7 +173,7 @@ Embedding reuses every known vector (`build_index.build`), so adding a source
 embeds only that source. Only where the pipeline exists: the Docker image
 (`backend/Dockerfile`, CPU-only, no `scripts/`, PyMuPDF or Docling) reports
 `manage: false` and refuses with 503 — sources are added locally and reach the
-deployment through Supabase. Deployment: `gcp-deployment-plan.md`.
+deployment through Supabase.
 
 **Which Acts exist is data, not code.** `app/rag/acts.py` answers every
 "which Acts do we hold?" from the catalog: citation keys, short names, the
@@ -187,7 +183,7 @@ and all of that follows within a minute, with no code change.
 
 Handlers that do blocking work (retrieval, generator calls) are plain `def`, not
 `async def`: FastAPI runs an `async` handler on the event loop, and one blocking
-handler freezes every other request. Warmup loads the retrieval models in a
+handler freezes every other request. Warmup builds the in-memory catalog in a
 worker thread so the server answers immediately and `/health` reports `warming`.
 
 Serving: `uvicorn app.main:app --reload`. The API and the eval scripts share

@@ -41,6 +41,9 @@ read instead of permanently under the input box.
   clarification questions and refusals
 - a provenance badge stating how each answer was produced — quoted verbatim from
   the catalog, cited and checked, or not from the Acts at all
+- page images beside the Ask button: one PNG, JPEG or WebP of **at most 3 MB**
+  (larger files are refused before upload), read to text into the box for you
+  to check — never sent automatically, and never cited
 - voice input beside the Ask button: click to record, click to stop, and the
   transcript lands in the box for you to check. It is never sent automatically,
   because a misheard section number becomes a fully grounded answer about a

@@ -9,7 +9,8 @@ When the Acts do not support an answer, it says so instead of guessing.
 
 ## Run it
 
-You need Python 3.12 (conda), Node 22, a Supabase project and a Groq API key.
+You need Python 3.12 (conda), Node 22, a Supabase project, and Groq and
+OpenRouter API keys.
 
 **1. Backend**
 
@@ -39,22 +40,20 @@ python scripts/load_supabase.py --all
 python scripts/load_supabase.py --embedder nemotron-3-embed --all
 ```
 
-**Keys** (`backend/.env.local`): `GROQ_API_KEY` and `SUPABASE_URL` /
-`SUPABASE_SERVICE_ROLE_KEY` are required. The rest are optional — each one turns
-on a feature or gives a job its own quota: `GROQ_API_KEY_2`/`_3`,
-`GROQ_API_KEY_PLANNER`, `GROQ_API_KEY_SUMMARIZER`, `GROQ_API_KEY_FALLBACK`,
-`GEMINI_API_KEY_3` (conversation names), `OPENROUTER_API_KEY` (images, and the
-OpenRouter retrieval profiles), `DEEPGRAM_API_KEY` (voice), `ADMIN_EMAILS`.
+**Keys** (`backend/.env.local`): `GROQ_API_KEY`, `OPENROUTER_API_KEY` (search)
+and `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` are required. The rest are
+optional — each one turns on a feature or gives a job its own quota:
+`GROQ_API_KEY_2`/`_3`, `GROQ_API_KEY_PLANNER`, `GROQ_API_KEY_SUMMARIZER`,
+`GROQ_API_KEY_FALLBACK`, `OPENROUTER_API_KEY_2`, `GEMINI_API_KEY_3`
+(conversation names), `DEEPGRAM_API_KEY` (voice), `ADMIN_EMAILS`.
 
-**Or run the backend in Docker** (CPU only; the frontend runs as above):
+**Or run the backend in Docker** (~435 MB, ~90 MB of memory; no models inside):
 
 ```bash
-docker build -f backend/Dockerfile -t ainshonglap-backend .
+docker build -f backend/Dockerfile -t ainshonglap-backend:deployable .
 docker run -d --name ainshonglap-api -p 8000:8080 \
-  --env-file backend/.env.local ainshonglap-backend
+  --env-file backend/.env.local ainshonglap-backend:deployable
 ```
-
-Deploying to Google Cloud: `gcp-deployment-plan.md`.
 
 ## How it works
 
@@ -62,7 +61,7 @@ Deploying to Google Cloud: `gcp-deployment-plan.md`.
 question
   -> planner (LLM, strict JSON): what kind of question, and where to look
   -> validated against the catalog — unknown sections return nothing, never a guess
-  -> exact fetch by section / chapter / Act   OR   meaning search + reranking
+  -> exact fetch by section / chapter / Act   OR   meaning search (OpenRouter)
   -> generator (LLM): answer as claims, each with a section and a quote
   -> every quote must appear word for word in the cited section, or is dropped
   -> answer with citations, or a refusal
@@ -71,10 +70,13 @@ question
 - **Laws**: parsed from the PDFs into sections, checked against the PDFs and an
   independent copy of the Acts, stored in Supabase (Postgres + pgvector). Local
   copies are a logged fallback.
-- **Search**: BGE-M3 embeddings + a cross-encoder reranker, run locally. Two
-  OpenRouter options score higher (below), chosen with `RAG_RETRIEVAL`.
+- **Search**: nemotron-3-embed on OpenRouter, exact search over the stored
+  vectors. No model runs locally. If OpenRouter is down or out of daily quota,
+  meaning search says so; exact section lookups still work.
 - **Models**: Groq `gpt-oss-120b` plans and answers by default; others can be
   picked in the UI. Every model call has a fallback on its own key.
+- **Voice and images**: speech (Deepgram) or a photo of a page (Groq
+  `qwen3.8-27b`, max 3 MB) becomes text you check before sending.
 - **Stack**: FastAPI backend, Next.js frontend, optional Supabase accounts
   (guests store nothing).
 
@@ -99,15 +101,17 @@ Retrieval is scored on 608 external questions with known answers
 the right Act.
 
 ```bash
-python scripts/eval_retrieval.py
+python scripts/eval_retrieval.py --split single_hop   # 222 OpenRouter requests; all 608 without --split
 ```
 
-| retrieval profile | R@1 | R@5 | R@20 | right Act | cost |
-|---|---|---|---|---|---|
-| `bge+bge-rerank` (default, all local) | 41.8% | 59.0% | 71.4% | 87.5% | free |
-| `bge+nemotron-rerank` | **50.8%** | 67.1% | 71.4% | **91.6%** | 1 OpenRouter call / question |
-| `nemotron-embed` | 48.4% | **75.0%** | **86.5%** | 88.5% | 1 OpenRouter call / question |
+| retrieval | R@1 | R@5 | R@20 | right Act |
+|---|---|---|---|---|
+| `nemotron-embed` (default) | **48.4%** | **75.0%** | **86.5%** | 88.5% |
+| local BGE-M3 + reranker (on `main`, for comparison) | 41.8% | 59.0% | 71.4% | 87.5% |
 
+Each question costs one OpenRouter request (free tier: 1,000 a day per account
+with credits, 50 without). `RAG_RETRIEVAL=nemotron-embed+rerank` adds the
+Nemotron reranker (a second request; no gain measured on 119 questions).
 ±3.7 points is noise at this size. Every experiment — including the ones that
 did nothing — is in `experiments.md`.
 
@@ -129,4 +133,3 @@ Next steps: `plan.md`.
 - `experiments.md` — every experiment and result
 - `parsing-plan.md`, `chunking-plan.md`, `retrieval-plan.md`,
   `generation-plan.md`, `query-routing-plan.md` — design decisions
-- `gcp-deployment-plan.md` — deployment

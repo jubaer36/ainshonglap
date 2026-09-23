@@ -133,6 +133,11 @@ def build(slug: str, db: sqlite3.Connection, chunks: list[dict],
         m = c["metadata"]
         if m["act"].strip().lower() != name:
             continue
+        # No BGE-M3 vector (a chunk added on the OpenRouter-only build): not
+        # written to law_chunks, which only `main`'s BGE search reads. Its
+        # nemotron vector goes to law_alt_chunks as usual.
+        if not np.isfinite(emb[vec_id]).all():
+            continue
         chunk_rows.append({"vec_id": vec_id, "chunk_id": c["id"], "act_slug": slug,
                            "section": str(m["section"]),
                            "granularity": m.get("granularity") or "section",

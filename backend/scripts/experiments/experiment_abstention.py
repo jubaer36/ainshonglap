@@ -80,11 +80,11 @@ def main() -> None:
 
     from app.rag.answer import answer
     from app.rag.pipeline import Retrieved
-    from app.rag.store import load_store
+    from app.rag.store import load_alt
 
     rows = load_eval(None)
-    index, _, _ = load_store()
-    cache_p = config.INDEX_DIR / f"abstention_ctx_k{args.k}_{index.ntotal}.json"
+    emb, _ = load_alt(config.EMBEDDER)
+    cache_p = config.INDEX_DIR / f"abstention_ctx_k{args.k}_{config.EMBEDDER}_{len(emb)}.json"
     if cache_p.exists():
         ctxs = json.loads(cache_p.read_text(encoding="utf-8"))
         print(f"retrieval cache: {cache_p.name} ({len(ctxs)} questions)")

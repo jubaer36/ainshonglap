@@ -20,10 +20,10 @@ PyMuPDF and previews Docling on a few sampled pages; the job then waits in
 `review` until someone looks at the pages and calls `choose`. That is the same
 review `scripts/ingest_document.py` writes as HTML, delivered as data instead.
 
-Embedding happens in this process, through the model the API already has
-loaded — no second copy on the GPU — and only for new text: `build_index`
-reuses the vector of every chunk it has seen before. Adding one Act embeds that
-Act; removing one embeds nothing.
+Embedding goes to OpenRouter (nemotron-3-embed) and only for new text:
+`build_index` reuses the vector of every chunk it has seen before. Adding one
+Act embeds that Act (about one request per 32 chunks); removing one embeds
+nothing.
 
 Jobs are held in memory. A restart forgets them, which loses nothing that
 matters: the corpus itself is either fully loaded (it has a commit marker in
@@ -356,20 +356,18 @@ def _rebuild_and_sync(job: Job) -> None:
     import build_catalog
     import build_index
 
-    job.say("updating the vector index (new text only)")
-    build_index.build(log=lambda line: job.say(line.strip()))
-
-    # Other embedders' vectors (E21), only for models already in use here — a
-    # vector file exists. New chunks only; a failure (the OpenRouter daily cap)
-    # does not stop the job: that profile then falls back to the local one,
-    # logged, until `build_index.py --embedder <name>` is re-run.
-    import load_supabase as L
-    for name in L.alt_models():
-        try:
-            build_index.build_alt(name, log=lambda line: job.say(line.strip()))
-        except Exception as exc:
-            job.say(f"  {name} vectors NOT updated ({type(exc).__name__}: "
-                    f"{str(exc)[:120]}) — that profile falls back to local until rebuilt")
+    # Chunks, then vectors for new text only, from OpenRouter. There is no
+    # local embedder to fall back on: if OpenRouter refuses (the daily cap),
+    # the job stops here, before anything is loaded — the new source would
+    # otherwise be in the catalog but unfindable by meaning. Run it again once
+    # the cap resets; everything already embedded is reused.
+    job.say("updating the vector index (new text only, via OpenRouter)")
+    try:
+        build_index.build(log=lambda line: job.say(line.strip()))
+    except Exception as exc:
+        raise RuntimeError(f"could not embed the new text on OpenRouter "
+                           f"({type(exc).__name__}: {str(exc)[:160]}) — try again "
+                           f"once the daily limit resets") from exc
 
     job.say("rebuilding the catalog")
     build_catalog.build(config.CATALOG)
@@ -394,7 +392,10 @@ def _load_all(job: Job) -> None:
     client = supabase.client()
     db = sqlite3.connect(config.CATALOG)
     chunks = json.loads((config.INDEX_DIR / "chunks.json").read_text(encoding="utf-8"))
-    emb = np.load(config.INDEX_DIR / "embeddings.npy")
+    # BGE-M3 vectors, kept only so `main`'s law_chunks stays whole; NaN rows
+    # (and a missing file) mean "none", and those chunks are not written there.
+    bge = config.INDEX_DIR / "embeddings.npy"
+    emb = np.load(bge) if bge.exists() else np.full((len(chunks), 1), np.nan, "float32")
     for slug in [r[0] for r in db.execute("select slug from acts order by slug")]:
         rows = L.build(slug, db, chunks, emb)
         d = L.digest(rows)
@@ -418,14 +419,13 @@ def _load_all(job: Job) -> None:
                            log=lambda line: job.say(line.strip()))
         except Exception as exc:                # e.g. migration 003 not applied
             job.say(f"  {name} vectors not loaded to Supabase ({type(exc).__name__}); "
-                    f"served from the local file instead")
+                    f"search uses the local file until they are")
 
 
 def _refresh_caches() -> None:
     """Make the running app see the new corpus now, not in a minute."""
     from app.rag import catalog, corpus_db, library, store
 
-    store.load_store.cache_clear()
     store.load_alt.cache_clear()
     catalog._local.cache_clear()
     catalog.act_slugs.cache_clear()

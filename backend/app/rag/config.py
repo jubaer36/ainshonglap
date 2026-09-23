@@ -48,11 +48,10 @@ def acts() -> tuple[str, ...]:
 # Kept as a name for callers that want the current corpus at import time.
 ACTS = acts()
 
-# E4: bge-reranker-v2-m3 measured +9.2pp R@1 and +4.9pp Act accuracy over dense
-# alone. E6 could not validly measure the decoder-based alternatives (loading a
-# causal LM through AutoModelForSequenceClassification attaches a random head),
-# so they are unmeasured rather than rejected.
-EMBED_MODEL = os.getenv("RAG_EMBED_MODEL", "BAAI/bge-m3")
+# Retrieval runs on OpenRouter only (this branch): no model is loaded in this
+# process. The embedder that finds candidates — see REMOTE_EMBEDDERS below.
+# (The local BGE-M3 + bge-reranker-v2-m3 pipeline of E4-E7 lives on `main`.)
+EMBEDDER = os.getenv("RAG_EMBEDDER", "nemotron-3-embed")
 
 # Generator registry: alias -> (backend, model id). One table, because the
 # aliases previously lived in two scripts and the API knew none of them.
@@ -236,36 +235,31 @@ def resolve_generator(name: str | None) -> tuple[str, str]:
         backend, model = name.split(":", 1)
         return backend, model
     return os.getenv("RAG_LLM_BACKEND", "groq"), name
-RERANK_MODEL = os.getenv("RAG_RERANK_MODEL", "BAAI/bge-reranker-v2-m3")
-
 # ── retrieval profiles (E21) ────────────────────────────────────────────────
-# Which embedder finds the candidates and which reranker orders them. Three
-# measured combinations, chosen by name — `RAG_RETRIEVAL` for the server
-# default, or `retrieval` on a single /api/query request. Measured on the
-# 608-question set (R@1 / R@20 / Act accuracy):
+# Which embedder finds the candidates and whether a reranker reorders them.
+# Both run on OpenRouter; chosen by name — `RAG_RETRIEVAL` for the server
+# default, or `retrieval` on a single /api/query request. Measured (E21):
 #
-#   bge+nemotron-rerank  BGE-M3 local, Nemotron reranker on OpenRouter
-#                        50.8 / 71.4 / 91.6 — best R@1; one API call a question
-#   bge+bge-rerank       BGE-M3 local, bge-reranker-v2-m3 local (E4/E5)
-#                        41.8 / 71.4 / 87.5 — no API; the default
-#   nemotron-embed       nemotron-3-embed on OpenRouter, no reranker
-#                        48.4 / 86.5 / 88.5 — best recall; one API call a question
+#   nemotron-embed          nemotron-3-embed, no reranker — the default.
+#                           608 questions: R@1 48.4, R@20 86.5, right Act 88.5
+#   nemotron-embed+rerank   + the Nemotron reranker on the same 20 candidates.
+#                           Only 119 questions measured (daily cap): no better
+#                           than without it there. Costs a second request.
 #
-# Anything on OpenRouter falls back to `bge+bge-rerank` when it fails — the
-# free-model daily cap (1,000 requests, shared by every :free model on the
-# account), an outage, or nemotron vectors missing for the current corpus — and
-# every fallback is logged as FALLBACK.
+# Every question costs one OpenRouter request (two with the reranker), against
+# the free-model daily cap — 1,000 per account with credits bought, 50 without.
+# There is no local model to fall back to: when OpenRouter cannot embed the
+# question, meaning search is unavailable and the question says so (503).
+# Exact lookups — a section, range, chapter or Act — never need it.
 RETRIEVAL_PROFILES: dict[str, dict] = {
-    "bge+nemotron-rerank": {"embedder": "bge-m3", "reranker": "nemotron"},
-    "bge+bge-rerank":      {"embedder": "bge-m3", "reranker": "bge"},
-    "nemotron-embed":      {"embedder": "nemotron-3-embed", "reranker": None},
+    "nemotron-embed":        {"embedder": "nemotron-3-embed", "reranker": None},
+    "nemotron-embed+rerank": {"embedder": "nemotron-3-embed", "reranker": "nemotron"},
 }
-LOCAL_PROFILE = "bge+bge-rerank"
-RETRIEVAL_PROFILE = os.getenv("RAG_RETRIEVAL", LOCAL_PROFILE)
+RETRIEVAL_PROFILE = os.getenv("RAG_RETRIEVAL", "nemotron-embed")
 
 # Embedders served by OpenRouter. Used exactly as measured in E21: nemotron is
 # asymmetric, and the API honours `input_type` (the same text differs by cosine
-# 0.73 between the query and passage sides). The local BGE-M3 is "bge-m3".
+# 0.73 between the query and passage sides).
 REMOTE_EMBEDDERS: dict[str, dict] = {
     "nemotron-3-embed": {"model": "nvidia/nemotron-3-embed-1b:free", "dim": 2048,
                          "query": {"input_type": "query"},
@@ -273,7 +267,7 @@ REMOTE_EMBEDDERS: dict[str, dict] = {
 }
 REMOTE_RERANK_MODEL = os.getenv("RAG_REMOTE_RERANK_MODEL",
                                 "nvidia/llama-nemotron-rerank-vl-1b-v2:free")
-# On the answer path, so short: a slow provider costs a fallback, not a minute.
+# On the answer path, so short: a slow provider costs a clear failure, not a minute.
 REMOTE_TIMEOUT = float(os.getenv("RAG_REMOTE_TIMEOUT", "15"))
 
 
@@ -313,13 +307,3 @@ ROUTE_QUERIES = os.getenv("RAG_ROUTE", "1") == "1"
 # set, because two techniques imported from published work (E2, E3) did nothing
 # here.
 REFINE_QUERIES = os.getenv("RAG_REFINE", "0") == "1"
-
-EMBED_BATCH = int(os.getenv("RAG_EMBED_BATCH", "8"))
-RERANK_BATCH = int(os.getenv("RAG_RERANK_BATCH", "16"))
-MAX_SEQ_LEN = 1024
-
-
-def device() -> str:
-    import torch
-
-    return "cuda" if torch.cuda.is_available() else "cpu"

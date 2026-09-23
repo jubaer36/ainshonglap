@@ -22,8 +22,8 @@ what the Acts do not support.
 | 7 | evaluation beyond retrieval | **open** |
 | 8 | corpus served from Supabase | done (E19) |
 | 9 | sources added / removed from the app | done |
-| 10 | three retrieval profiles | done (E21) |
-| 11 | Docker image + GCP deployment | image done; deployment in `gcp-deployment-plan.md` |
+| 10 | retrieval on OpenRouter only (nemotron-3-embed) | done (E21) |
+| 11 | Docker image (~435 MB, no models) | done; deployment next |
 
 ## Next: phase 4
 
@@ -51,6 +51,8 @@ Only retrieval has numbers. Not yet measured:
 - Finish E8 (over-refusal) — E17 traced one case to the generator prompt.
 - E21: run nemotron-embed + nemotron reranker on all 608 (stopped at 119 by the
   daily cap); check the models for contamination by the public test set.
+- No fallback when OpenRouter is down or capped: decide whether that is
+  acceptable for the demo, or add a second remote embedder with its own vectors.
 - Re-measure retrieval whenever sources are added.
 - Record each source's document type, so Docling sources are cited by passage.
 - Source the missing CrPC Second Schedule.

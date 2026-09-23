@@ -45,10 +45,14 @@ def retrieve_sections(
     profile: str | None = Query(None, description="retrieval profile (E21); "
                                 "omit for the server default"),
 ) -> RetrieveResponse:
+    from app.rag.pipeline import SearchUnavailable
+
     try:
         hits = retrieve(q, k=k, rerank=rerank, profile=profile)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
+    except SearchUnavailable as exc:
+        raise HTTPException(503, str(exc)) from exc
     return RetrieveResponse(
         question=q,
         reranked=rerank,
