@@ -3,10 +3,13 @@
 Retrieval answers "which sections are relevant". This answers "what does the
 corpus contain" — the statute browser, and citation lookup by key.
 
-Backed by the same `chunks.json` the index was built from, so what is browsable
-and what is retrievable cannot drift apart. Child (subsection) vectors are
-skipped here: they exist to be retrieved, not to be listed as separate
-provisions.
+Backed by the CATALOG — the same rows answers quote from. It used to be built
+from `chunks.json`, which made a second copy of the text, and the copies
+disagreed for five sections: the chunks glued page-break fragments onto the real
+section, so the preview of `penal-s2` showed 1,155 characters where the section
+is 188. Reading the catalog, with its continuation fragments excluded, the side
+panel shows exactly what an answer cites — from Supabase, like the catalog,
+and from the local file only when the catalog falls back.
 """
 
 from __future__ import annotations
@@ -14,33 +17,36 @@ from __future__ import annotations
 import functools
 import re
 
-from app.rag.citations import ACT_SLUGS_BY_NAME, strip_prefix
-from app.rag.store import load_store
 
 
 @functools.lru_cache(maxsize=1)
 def _library() -> dict[str, dict]:
-    """citation key -> section record, in corpus order."""
-    _, chunks, _ = load_store()
+    """citation key -> section record, in corpus order.
+
+    Continuation fragments are left out: they are parser artifacts that the
+    catalog keeps flagged, not provisions anyone should browse to.
+    """
+    from app.rag import catalog
+
+    rows = catalog.connect().execute(
+        "SELECT s.key, s.number, s.title, s.text, s.page_start, s.page_end,"
+        "       a.slug, a.name, a.act_no, a.source_pdf,"
+        "       c.number AS chapter, c.title AS chapter_title, c.part"
+        "  FROM sections s JOIN acts a ON a.id = s.act_id"
+        "  LEFT JOIN chapters c ON c.id = s.chapter_id"
+        " WHERE s.continuation = 0"
+        " ORDER BY a.slug, s.seq").fetchall()
     out: dict[str, dict] = {}
-    for c in chunks:
-        m = c["metadata"]
-        if m.get("granularity") == "child":
-            continue
-        slug = ACT_SLUGS_BY_NAME.get(m["act"].strip().lower(), "act")
-        key = f"{slug}-s{m['section']}"
-        if key in out:            # a section split across several chunks
-            out[key]["text"] += "\n" + strip_prefix(c["text"])
-            continue
-        out[key] = {
-            "key": key, "act": m["act"], "act_slug": slug,
-            "act_no": m.get("act_no"), "section": str(m["section"]),
-            "section_title": m.get("section_title"),
-            "part": m.get("part"), "chapter": m.get("chapter"),
-            "chapter_title": m.get("chapter_title"),
-            "page_start": m.get("page_start"), "page_end": m.get("page_end"),
-            "source_pdf": m.get("source_pdf"),
-            "text": strip_prefix(c["text"]),
+    for r in rows:
+        out[r["key"]] = {
+            "key": r["key"], "act": r["name"], "act_slug": r["slug"],
+            "act_no": r["act_no"], "section": str(r["number"]),
+            "section_title": r["title"],
+            "part": r["part"], "chapter": r["chapter"],
+            "chapter_title": r["chapter_title"],
+            "page_start": r["page_start"], "page_end": r["page_end"],
+            "source_pdf": r["source_pdf"],
+            "text": r["text"],
         }
     return out
 

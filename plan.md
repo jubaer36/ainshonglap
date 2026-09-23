@@ -61,6 +61,7 @@ because answering from memory about a statute we do not hold is the E1 failure.
 | 6 | conversation memory | **done**, as a rolling summary rather than typed scope |
 | 6b | accounts and session storage | **done** |
 | 7 | evaluation and rollout | **the standing gap** |
+| 8 | corpus in Supabase (Postgres + pgvector) | **served** — Supabase primary, local files as a logged fallback; 15-question check next |
 
 Two rules hold across every phase, each learned from a failure. **`act` filters
 a structural plan but is only a hint on a semantic one** — a scenario planner
@@ -116,6 +117,30 @@ because a 9% WER transcript that turns 379 into 279 is a different offence.
 Still to measure: planner accuracy on the current model; multi-label precision
 and recall for comprehensive retrieval; citation validity, claim entailment and
 refusal in both directions; latency and token usage per stage.
+
+## Phase 8 — the corpus in Supabase
+
+Answers read `catalog.sqlite`; meaning search reads FAISS + `chunks.json`; the
+side panels read `chunks.json` again. Three files, and two copies of the text.
+Moving them into Postgres gives one copy, and turns "add an Act" from rebuild +
+restart into a load — which is the brief's *incremental document-update
+demonstration*.
+
+It does not make search better or faster: 2,320 vectors in-process take 0.17ms,
+and the models (embedding, reranking, generation) still run in the backend.
+
+| step | what | gate |
+|---|---|---|
+| A | `db/migrations/002_corpus.sql` — `law_*` tables, `vector(1024)`, full-text, `law_match_chunks` | applies cleanly |
+| B | `scripts/load_supabase.py` — per Act, from the local read models, no re-embedding | — |
+| C | `scripts/verify/verify_supabase.py` — counts, text bytes, vectors, search parity | all pass |
+| D | Supabase primary in `catalog.py`, `pipeline.py`, `library.py`; local only on failure, logged | outage simulated |
+| E | same results from both stores | **17/17 catalog, 10/10 retrieval identical** |
+| F | `scripts/check_questions.py` — 15 questions, every planner path | read by hand |
+
+Rules: **exact vector search** (no HNSW — approximate search would move the
+numbers); the small fixed tables cached at startup so planner validation makes
+no per-check network call; the PDFs and parsed JSON stay the source of law.
 
 ## Backlog
 

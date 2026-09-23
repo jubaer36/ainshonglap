@@ -63,7 +63,7 @@ async def lifespan(app: FastAPI):
     that was still waking up.
 
     Warmup now runs in a worker thread. Requests that need the index block only
-    until it is ready (`load_store` and the encoders are cached, so they wait on
+    until it is ready (the catalog and the encoders are cached, so they wait on
     the same load rather than starting a second one), while everything that does
     not — the model list, the catalog, the statute browser, /health — answers at
     once. `/health` reports `warming` until it finishes, so "not ready yet" is
@@ -89,19 +89,17 @@ async def lifespan(app: FastAPI):
 
 
 def _warmup() -> None:
-    """Load the index and both retrieval models. Runs off the event loop."""
+    """Build the catalog from Supabase and load both models. Off the event loop."""
     try:
+        from app.rag import config
         from app.rag.pipeline import warmup
-        from app.rag.store import load_store
 
         warmup()
-        index, chunks, meta = load_store()
         STATE.update(ready=True, index={
-            "vectors": int(index.ntotal),
-            "sections": meta.get("sections"),
-            "children": meta.get("children"),
-            "granularity": meta.get("granularity"),
-            "embedder": meta.get("model"),
+            # Counted from the load records, not a local file: this reports
+            # what the app actually searches, which is the database.
+            "vectors": _vector_count(),
+            "embedder": config.EMBED_MODEL,
         })
     except Exception as exc:                       # noqa: BLE001 - reported, not raised
         log.exception("warmup failed")
@@ -145,6 +143,29 @@ def _quota_state() -> dict:
     from app.rag import quota
 
     return quota.snapshot()
+
+
+def _vector_count() -> int | None:
+    """Vectors in Supabase, from the commit markers. None if unreachable."""
+    try:
+        from app.db import supabase
+
+        rows = supabase.client().table("law_loads").select("n_chunks").execute().data
+        return sum(r["n_chunks"] for r in rows)
+    except Exception:                              # noqa: BLE001 - reported as None
+        return None
+
+
+def _store_state() -> dict:
+    """Where the statute text is coming from right now.
+
+    `fallback` is non-empty whenever the local files answered instead of
+    Supabase since the last recovery — the same events logged as FALLBACK.
+    """
+    from app.rag import corpus_db, fallback
+
+    return {"primary": "supabase", **corpus_db.status(),
+            "fallback": fallback.active()}
 
 
 def _naming_state() -> dict:
@@ -198,6 +219,7 @@ async def health() -> dict:
         # invisibly: without GEMINI_API_KEY_3 conversations simply keep their
         # first question as a title, which looks like a feature that was never
         # built rather than a key that was never set.
+        "store": _store_state(),
         "naming": _naming_state(),
         "speech": _speech_state(),
         "vision": _vision_state(),

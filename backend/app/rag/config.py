@@ -20,6 +20,10 @@ INDEX_DIR = LAWS / "index"
 # Structural read model built from PARSED_DIR by scripts/build_catalog.py.
 # Rebuildable: the parsed JSON stays the source of truth.
 CATALOG = LAWS / "catalog.sqlite"
+
+# The statute text is read from Supabase (the law_* tables, migration 002).
+# catalog.sqlite and the FAISS index are kept ONLY as a fallback for when
+# Supabase cannot answer — see app/rag/fallback.py, which logs every use.
 QA_DIR = ROOT / "Laws" / "bangladesh-legal-qa-dataset" / "qa-splits"
 
 def acts() -> tuple[str, ...]:

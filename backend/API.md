@@ -346,6 +346,33 @@ The retrieval half alone, with dense and reranker scores per hit. `rerank=false`
 gives the dense-only ordering — the same code path the eval scripts measure, so
 served and measured numbers cannot drift.
 
+## Where the statute text comes from
+
+Supabase, always first. The catalog (exact lookups) is loaded from the `law_*`
+tables into memory at startup and rebuilt within a minute of an Act being
+loaded; meaning search runs `law_match_chunks` in Postgres on every question.
+
+The local `catalog.sqlite` and FAISS index are **fallbacks only**. They answer
+when Supabase cannot, and each use is logged at WARNING — visible even with
+`RAG_TRACE=0`:
+
+```
+FALLBACK  catalog served from LOCAL files — Supabase unavailable: <reason>
+RECOVERED catalog back on Supabase
+```
+
+A failure opens a 60-second breaker, so an outage costs one timeout rather than
+one per catalog lookup. `/health` reports it under `store`:
+
+```json
+"store": {"primary": "supabase", "catalog_loaded": true,
+          "acts": ["crpc", "evidence", "penal"], "unavailable": null,
+          "fallback": {}}
+```
+
+A non-empty `fallback` means answers are coming from the local copy, which does
+not have any Act loaded to Supabase since it was last rebuilt.
+
 ## Configuration
 
 `backend/.env.local` (gitignored) holds the keys:

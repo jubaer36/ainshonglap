@@ -109,6 +109,8 @@ python scripts/verify/verify_chunks.py          #   vs the parsed JSON
 python scripts/build_index.py            # chunks -> BGE-M3 vectors + FAISS
 python scripts/build_catalog.py          # parsed -> Laws/main/catalog.sqlite
 python scripts/verify/verify_catalog.py         #   vs the parsed JSON
+python scripts/load_supabase.py --all    # read models -> Supabase (migration 002)
+python scripts/verify/verify_supabase.py        #   vs the local read models
 python scripts/eval_retrieval.py         #   Recall@k / MRR / Act accuracy
 python scripts/rerank.py --topk 20       #   dense vs + reranker, with delta
 ```

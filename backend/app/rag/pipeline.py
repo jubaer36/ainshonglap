@@ -89,6 +89,35 @@ def _to_results(cands, k):
     return out
 
 
+def _search(qemb, n: int) -> list[tuple[list[dict], list[float], list[int]]]:
+    """Nearest chunks per query vector — from Supabase, or the local FAISS index
+    if Supabase fails.
+
+    Returns, per query, (chunks, scores, ids) in the shape `_collapse` takes, so
+    grouping into sections, reranking and everything after are the same code
+    whichever answered. Both are the same exact inner-product scan over the same
+    vectors (`verify_supabase.py` checks it), so a fallback changes where the
+    result came from, not what it is — unless an Act was loaded to Supabase and
+    not rebuilt locally, which is why every fallback is logged.
+    """
+    from app.rag import corpus_db, fallback
+
+    try:
+        out = []
+        for q in qemb:
+            rows = corpus_db.match(q, n)
+            out.append(([{"text": r["text"], "metadata": r["metadata"]} for r in rows],
+                        [r["score"] for r in rows], list(range(len(rows)))))
+        fallback.recovered("vector search")
+        return out
+    except corpus_db.Unavailable as exc:
+        fallback.used("vector search", str(exc))
+
+    index, chunks, _ = load_store()
+    scores, ids = index.search(qemb, min(n, index.ntotal))
+    return [(chunks, list(scores[i]), list(ids[i])) for i in range(len(qemb))]
+
+
 def retrieve_many(questions: list[str], k: int | None = None, *,
                   dense_k: int | None = None, rerank: bool = True,
                   batch: int | None = None,
@@ -98,13 +127,13 @@ def retrieve_many(questions: list[str], k: int | None = None, *,
         return []
     k = k or config.FINAL_K
     dense_k = dense_k or config.DENSE_K
-    index, chunks, _ = load_store()
     qemb = embed(questions, batch=batch)
-    scores, ids = index.search(qemb, min(dense_k * OVERFETCH, index.ntotal))
+    hits = _search(qemb, dense_k * OVERFETCH)
 
     results = []
     for i in range(len(questions)):
-        cands = _collapse(chunks, scores[i], ids[i], dense_k)
+        chunks, scores, ids = hits[i]
+        cands = _collapse(chunks, scores, ids, dense_k)
         if rerank and cands:
             pairs = [(questions[i], c["chunk"]["text"]) for c in cands]
             for c, s in zip(cands, rerank_scores(pairs)):
@@ -133,11 +162,16 @@ def retrieve(question: str, k: int | None = None, *,
 
 
 def warmup() -> None:
-    """Load index and both models up front.
+    """Build the catalog and load both models up front.
 
     Called at API startup so the first user query does not pay ~30s of model
     load, and so a missing index fails at boot instead of inside a request.
     """
-    load_store()
+    # The vectors stay in Postgres, so nothing is loaded from disk; the local
+    # FAISS index is read only if a fallback ever needs it. Building the
+    # in-memory catalog here moves its one-off cost off the first question.
+    from app.rag import catalog
+
+    catalog.connect()
     embed(["warmup"])
     rerank_scores([("warmup", "warmup")])

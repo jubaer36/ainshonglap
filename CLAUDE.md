@@ -97,6 +97,8 @@ python scripts/verify/verify_chunks.py          #   check vs the parsed JSON
 python scripts/build_index.py            # chunks  -> BGE-M3 vectors + FAISS
 python scripts/build_catalog.py          # parsed  -> Laws/main/catalog.sqlite
 python scripts/verify/verify_catalog.py         #   check vs the parsed JSON
+python scripts/load_supabase.py --all    # read models -> Supabase law_* tables (002)
+python scripts/verify/verify_supabase.py        #   check vs the local read models
 
 # any legal PDF, not just the three acts; --backend auto OCRs scans via Docling
 python scripts/parse_law_pdf.py --pdf "Laws/The Arms Act, 1878.pdf" \
@@ -115,12 +117,17 @@ python scripts/inception_chat.py --json                         # Mercury schema
 python scripts/deepgram_stt.py --record 6 --expect "..."        # voice: number accuracy, WER
 python scripts/chat_demo.py                                     # multi-turn, shows the memory
 python scripts/answer_demo.py                                   # full path, one question at a time
+python scripts/check_questions.py --store supabase             # 15 questions, every planner path, step by step
 ```
 
-Two read models, two jobs. **FAISS** answers "which provisions resemble this
-question"; **`catalog.sqlite`** answers "which provisions *are* these" — exact
-section, range, chapter, Act. Both are rebuildable from the parsed JSON, which
-stays the only source of law. A model names coordinates
+Two read models, two jobs: meaning search ("which provisions resemble this
+question") and the catalog ("which provisions *are* these" — exact section,
+range, chapter, Act). **Both are served from Supabase** (`law_*` tables,
+migration 002; `app/rag/corpus_db.py`). The local `catalog.sqlite` and FAISS
+index are **fallbacks only**, used when Supabase fails and logged as `FALLBACK`
+every time (`app/rag/fallback.py`; `/health` shows it too). Everything is
+rebuildable from the parsed JSON, which stays the only source of law: build
+locally, then `load_supabase.py` + `verify_supabase.py`. A model names coordinates
 (`app/rag/plan.py`); `app/rag/catalog.py` fetches them with parameterized SQL.
 The model never writes SQL, and a coordinate the catalog does not have comes
 back empty rather than as the nearest match.

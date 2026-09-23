@@ -46,8 +46,27 @@ class CatalogMissing(RuntimeError):
     """The catalog has not been built yet."""
 
 
-@functools.lru_cache(maxsize=1)
 def connect() -> sqlite3.Connection:
+    """The catalog, from Supabase; the local file only if Supabase fails.
+
+    Every query below runs unchanged against either — Supabase's copy is an
+    in-memory database with the same schema. The local file answering is a
+    fallback and is logged as one.
+    """
+    from app.rag import corpus_db, fallback
+
+    try:
+        con = corpus_db.connection()
+    except corpus_db.Unavailable as exc:
+        fallback.used("catalog", str(exc))
+        return _local()
+    fallback.recovered("catalog")
+    return con
+
+
+@functools.lru_cache(maxsize=1)
+def _local() -> sqlite3.Connection:
+    """The local catalog.sqlite — the fallback, never the first choice."""
     if not config.CATALOG.exists():
         raise CatalogMissing(
             f"no catalog at {config.CATALOG} — run scripts/build_catalog.py")

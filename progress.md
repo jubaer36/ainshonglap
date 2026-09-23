@@ -204,6 +204,42 @@ prompts or full answers.
 - The model picker returned `null` on an empty list, so a failing `/api/models`
   looked identical to a feature that did not exist.
 
+## Corpus served from Supabase
+
+The statute text is moving from local files into Postgres with pgvector
+(`plan.md` phase 8). **The app now reads it from Supabase**; the local files
+answer only when Supabase cannot, and every such use is logged as `FALLBACK`.
+
+Exact lookups load Supabase's structural tables into an in-memory copy of the
+catalog at startup — the planner consults the catalog many times per question,
+and a network call each time would add up to half a second — and rebuild it
+within a minute of an Act being loaded or reloaded. Meaning search asks Supabase
+on every question. A failure opens a 60-second breaker so an outage costs one
+timeout, not one per lookup. Simulated: 51 lookups during an outage made one
+network attempt, answers were identical, and recovery was logged.
+
+Checked across both stores with no model calls: 17/17 catalog functions and
+10/10 retrieval queries returned identical results, scores included. The side
+panels now read the catalog too, which fixed the five sections where they had
+shown page-break fragments glued onto the real text — `penal-s2` showed 1,155
+characters for a 188-character section.
+
+All three Acts loaded in ~19s and `verify_supabase.py` passed 13/13: every
+section's text byte-identical, all 2,320 vectors bit-identical, and on 60 search
+probes the top-60 results matched FAISS exactly in 56 and differed only in the
+order of equal-scoring chunks in the other 4 (largest score gap 4.8e-7, float
+rounding). Re-running the loader skips all three — the per-Act digest matches.
+
+Two things were settled before writing any of it. **Exact search only** — FAISS
+here is an exact scan and the retrieval numbers were measured on it, so an
+approximate index would change results; at 2,320 rows it buys nothing anyway.
+**Vectors are loaded, not recomputed** — sent at float32's shortest round-trip
+precision, which was checked to come back bit-identical for all 2,320.
+
+Found on the way: 36 subsection chunks share an id with a sibling
+(`crpc_s10_child4` appears twice). Harmless to FAISS, which works by position,
+so the database keys chunks by position too.
+
 ## What this establishes, and what it does not
 
 The full path runs end to end and is served over HTTP: question → plan →
