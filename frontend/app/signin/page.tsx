@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { BrandMark } from "@/components/brand/BrandMark";
@@ -15,6 +15,19 @@ import { BrandMark } from "@/components/brand/BrandMark";
  * survives a refresh mid-typing.
  */
 export default function SignInPage() {
+  // `useSearchParams` makes the form depend on the request URL, which does not
+  // exist when the page is prerendered at build time. Without a Suspense
+  // boundary `next build` fails outright ("useSearchParams() should be wrapped
+  // in a suspense boundary"); with one, the shell is prerendered and the form
+  // renders in the browser.
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-slate-50" />}>
+      <SignInForm />
+    </Suspense>
+  );
+}
+
+function SignInForm() {
   const router = useRouter();
   const params = useSearchParams();
   const { user, ready, configured, signIn, signUp } = useAuth();

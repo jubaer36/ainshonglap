@@ -1,3 +1,4 @@
+import { API_BASE_URL } from "./config";
 import { accessToken } from "./supabase";
 import type {
   Act,
@@ -17,7 +18,6 @@ import type {
   Transcription,
 } from "./types";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 /**
  * Authorization header for the current session, or nothing.

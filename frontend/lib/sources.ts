@@ -1,3 +1,4 @@
+import { API_BASE_URL } from "./config";
 import { accessToken } from "./supabase";
 
 /**
@@ -7,7 +8,6 @@ import { accessToken } from "./supabase";
  * are an admin (ADMIN_EMAILS) and refuses otherwise. Nothing here is trusted
  * for protection: hiding a button is a courtesy, the check is on the server.
  */
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export type JobStatus =
   | "queued" | "reviewing" | "review" | "building" | "done" | "failed" | "discarded";

@@ -1,3 +1,4 @@
+import { API_BASE_URL } from "./config";
 import { normalizeAssistantMessage } from "./api";
 import { accessToken } from "./supabase";
 import type { ChatMessage, ConversationMemory, UserMessage } from "./types";
@@ -20,7 +21,6 @@ import type { ChatMessage, ConversationMemory, UserMessage } from "./types";
  * `app/db/conversations.py` — rather than being split between a server filter
  * and a client-side policy that has to agree with it.
  */
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export interface SavedConversation {
   id: string;
