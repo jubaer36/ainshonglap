@@ -51,6 +51,30 @@ SCRIPTS = config.BACKEND / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
+
+def manageable() -> str | None:
+    """Why this deployment cannot add or remove sources, or None if it can.
+
+    Adding runs the whole offline pipeline — parse (PyMuPDF and Docling), chunk,
+    embed, catalog, load — from `backend/scripts/`. The deployed container ships
+    none of that on purpose (backend/Dockerfile): it serves the corpus from
+    Supabase, and sources are added on a machine that has the pipeline, then
+    loaded, and picked up by every deployment within a minute. Without this
+    check an admin's click would end in an ImportError halfway through a job.
+    `RAG_SOURCES=0` switches it off explicitly.
+    """
+    import importlib.util
+    import os
+
+    if os.getenv("RAG_SOURCES", "1") == "0":
+        return "source management is switched off here (RAG_SOURCES=0)"
+    if not (SCRIPTS / "ingest_document.py").exists():
+        return "this deployment does not include the ingestion pipeline"
+    for module, what in (("fitz", "PyMuPDF"), ("docling", "Docling")):
+        if importlib.util.find_spec(module) is None:
+            return f"this deployment does not include {what}"
+    return None
+
 REVIEW = config.LAWS.parent / "review"
 REMOVED = config.LAWS.parent / "removed"
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
@@ -335,6 +359,18 @@ def _rebuild_and_sync(job: Job) -> None:
     job.say("updating the vector index (new text only)")
     build_index.build(log=lambda line: job.say(line.strip()))
 
+    # Other embedders' vectors (E21), only for models already in use here — a
+    # vector file exists. New chunks only; a failure (the OpenRouter daily cap)
+    # does not stop the job: that profile then falls back to the local one,
+    # logged, until `build_index.py --embedder <name>` is re-run.
+    import load_supabase as L
+    for name in L.alt_models():
+        try:
+            build_index.build_alt(name, log=lambda line: job.say(line.strip()))
+        except Exception as exc:
+            job.say(f"  {name} vectors NOT updated ({type(exc).__name__}: "
+                    f"{str(exc)[:120]}) — that profile falls back to local until rebuilt")
+
     job.say("rebuilding the catalog")
     build_catalog.build(config.CATALOG)
 
@@ -369,12 +405,28 @@ def _load_all(job: Job) -> None:
         job.say(f"  loaded {slug}: {len(rows['law_sections'])} sections, "
                 f"{len(rows['law_chunks'])} vectors")
 
+    # Reloading an Act cascades away its alternate vectors; put them back.
+    from app.rag.store import alt_paths, texts_digest
+    for name in L.alt_models():
+        alt = np.load(alt_paths(name)[0])
+        meta = json.loads(alt_paths(name)[1].read_text(encoding="utf-8"))
+        if meta.get("texts_digest") != texts_digest(chunks):
+            continue                            # stale: not loaded, falls back
+        try:
+            for slug in [r[0] for r in db.execute("select slug from acts order by slug")]:
+                L.load_alt(client, slug, name, L.build_alt(slug, db, name, chunks, alt),
+                           log=lambda line: job.say(line.strip()))
+        except Exception as exc:                # e.g. migration 003 not applied
+            job.say(f"  {name} vectors not loaded to Supabase ({type(exc).__name__}); "
+                    f"served from the local file instead")
+
 
 def _refresh_caches() -> None:
     """Make the running app see the new corpus now, not in a minute."""
     from app.rag import catalog, corpus_db, library, store
 
     store.load_store.cache_clear()
+    store.load_alt.cache_clear()
     catalog._local.cache_clear()
     catalog.act_slugs.cache_clear()
     library._library.cache_clear()

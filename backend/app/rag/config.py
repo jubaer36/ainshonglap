@@ -238,6 +238,53 @@ def resolve_generator(name: str | None) -> tuple[str, str]:
     return os.getenv("RAG_LLM_BACKEND", "groq"), name
 RERANK_MODEL = os.getenv("RAG_RERANK_MODEL", "BAAI/bge-reranker-v2-m3")
 
+# ── retrieval profiles (E21) ────────────────────────────────────────────────
+# Which embedder finds the candidates and which reranker orders them. Three
+# measured combinations, chosen by name — `RAG_RETRIEVAL` for the server
+# default, or `retrieval` on a single /api/query request. Measured on the
+# 608-question set (R@1 / R@20 / Act accuracy):
+#
+#   bge+nemotron-rerank  BGE-M3 local, Nemotron reranker on OpenRouter
+#                        50.8 / 71.4 / 91.6 — best R@1; one API call a question
+#   bge+bge-rerank       BGE-M3 local, bge-reranker-v2-m3 local (E4/E5)
+#                        41.8 / 71.4 / 87.5 — no API; the default
+#   nemotron-embed       nemotron-3-embed on OpenRouter, no reranker
+#                        48.4 / 86.5 / 88.5 — best recall; one API call a question
+#
+# Anything on OpenRouter falls back to `bge+bge-rerank` when it fails — the
+# free-model daily cap (1,000 requests, shared by every :free model on the
+# account), an outage, or nemotron vectors missing for the current corpus — and
+# every fallback is logged as FALLBACK.
+RETRIEVAL_PROFILES: dict[str, dict] = {
+    "bge+nemotron-rerank": {"embedder": "bge-m3", "reranker": "nemotron"},
+    "bge+bge-rerank":      {"embedder": "bge-m3", "reranker": "bge"},
+    "nemotron-embed":      {"embedder": "nemotron-3-embed", "reranker": None},
+}
+LOCAL_PROFILE = "bge+bge-rerank"
+RETRIEVAL_PROFILE = os.getenv("RAG_RETRIEVAL", LOCAL_PROFILE)
+
+# Embedders served by OpenRouter. Used exactly as measured in E21: nemotron is
+# asymmetric, and the API honours `input_type` (the same text differs by cosine
+# 0.73 between the query and passage sides). The local BGE-M3 is "bge-m3".
+REMOTE_EMBEDDERS: dict[str, dict] = {
+    "nemotron-3-embed": {"model": "nvidia/nemotron-3-embed-1b:free", "dim": 2048,
+                         "query": {"input_type": "query"},
+                         "doc": {"input_type": "passage"}},
+}
+REMOTE_RERANK_MODEL = os.getenv("RAG_REMOTE_RERANK_MODEL",
+                                "nvidia/llama-nemotron-rerank-vl-1b-v2:free")
+# On the answer path, so short: a slow provider costs a fallback, not a minute.
+REMOTE_TIMEOUT = float(os.getenv("RAG_REMOTE_TIMEOUT", "15"))
+
+
+def retrieval_profile(name: str | None = None) -> tuple[str, dict]:
+    """(name, spec) for a profile; the server default when `name` is empty."""
+    name = (name or RETRIEVAL_PROFILE).strip()
+    if name not in RETRIEVAL_PROFILES:
+        raise ValueError(f"unknown retrieval profile {name!r} "
+                         f"(one of: {', '.join(RETRIEVAL_PROFILES)})")
+    return name, RETRIEVAL_PROFILES[name]
+
 # Candidates fetched densely, then reranked down. 20 was what E4 measured.
 DENSE_K = int(os.getenv("RAG_DENSE_K", "20"))
 # 5 was E4's figure, chosen when every question was "what does s.X say". It is

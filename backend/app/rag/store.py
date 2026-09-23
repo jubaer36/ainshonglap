@@ -41,3 +41,50 @@ def load_store():
             f"{config.EMBED_MODEL}; query and document vectors must match"
         )
     return index, chunks, meta
+
+
+# ── alternate embedders (E21) ───────────────────────────────────────────────
+# A remote embedder's vectors for the SAME chunks.json, row for row, in
+# `embeddings.<name>.npy`. `meta.<name>.json` records a digest of the chunk
+# texts they were built from: add a source without rebuilding these and the
+# digest stops matching, so they are refused rather than searched with the new
+# Act silently missing.
+
+def alt_paths(name: str):
+    return (config.INDEX_DIR / f"embeddings.{name}.npy",
+            config.INDEX_DIR / f"meta.{name}.json")
+
+
+def texts_digest(chunks: list[dict]) -> str:
+    import hashlib
+
+    h = hashlib.sha256()
+    for c in chunks:
+        h.update(c["text"].encode("utf-8"))
+        h.update(b"\0")
+    return h.hexdigest()
+
+
+class AltMissing(RuntimeError):
+    """No usable vectors for this embedder: absent, or built for another corpus."""
+
+
+@functools.lru_cache(maxsize=4)
+def load_alt(name: str):
+    """(faiss index, chunks) for a remote embedder, checked against chunks.json."""
+    import faiss
+    import numpy as np
+
+    emb_path, meta_path = alt_paths(name)
+    if not emb_path.exists() or not meta_path.exists():
+        raise AltMissing(f"no {emb_path.name} — run "
+                         f"`python scripts/build_index.py --embedder {name}`")
+    chunks = json.loads((config.INDEX_DIR / "chunks.json").read_text(encoding="utf-8"))
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    if meta.get("texts_digest") != texts_digest(chunks):
+        raise AltMissing(f"{emb_path.name} was built for a different corpus — "
+                         f"rebuild with `build_index.py --embedder {name}`")
+    emb = np.load(emb_path).astype("float32")
+    index = faiss.IndexFlatIP(emb.shape[1])
+    index.add(emb)
+    return index, chunks

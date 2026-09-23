@@ -243,8 +243,10 @@ def next_steps(slug: str) -> str:
             f"  python scripts/chunk_sections.py --act {slug}\n"
             f"  python scripts/verify/verify_chunks.py\n"
             f"  python scripts/build_index.py\n"
+            f"  python scripts/build_index.py --embedder nemotron-3-embed   # OpenRouter, new chunks only\n"
             f"  python scripts/build_catalog.py && python scripts/verify/verify_catalog.py\n"
-            f"  python scripts/load_supabase.py --all && python scripts/verify/verify_supabase.py\n")
+            f"  python scripts/load_supabase.py --all && python scripts/verify/verify_supabase.py\n"
+            f"  python scripts/load_supabase.py --embedder nemotron-3-embed --all\n")
 
 
 def main() -> None:

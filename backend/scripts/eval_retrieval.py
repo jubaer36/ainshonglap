@@ -28,6 +28,12 @@ Run (from backend/, ainshonglap conda env active):
     python scripts/eval_retrieval.py --no-rerank      # dense only
     python scripts/eval_retrieval.py --split single_hop --k 1 3 5 10
     python scripts/eval_retrieval.py --show-failures 10
+    python scripts/eval_retrieval.py --profile nemotron-embed    # E21 profiles
+
+`--profile` picks a retrieval profile (config.RETRIEVAL_PROFILES). The two that
+use OpenRouter spend one request PER QUESTION — 608 for the full set, more than
+half the free-model daily cap (1,000; a free-tier key has 50). Use `--split` to
+run a subset, or read E21 in experiments.md, which has all three measured.
 """
 
 from __future__ import annotations
@@ -102,6 +108,8 @@ def main() -> None:
     ap.add_argument("--batch", type=int, default=16)
     ap.add_argument("--no-rerank", action="store_true",
                     help="dense only — the pre-E4 baseline")
+    ap.add_argument("--profile", default=None,
+                    help="retrieval profile (E21); OpenRouter ones cost a request per question")
     args = ap.parse_args()
 
     from app.rag.pipeline import retrieve_many
@@ -112,13 +120,14 @@ def main() -> None:
     kmax = max(args.k)
     print(f"index: {index.ntotal} vectors ({meta['model']}, "
           f"granularity={meta.get('granularity','section')})   "
-          f"eval: {len(rows)} questions   rerank={'off' if args.no_rerank else 'on'}")
+          f"eval: {len(rows)} questions   rerank={'off' if args.no_rerank else 'on'}   "
+          f"profile={config.retrieval_profile(args.profile)[0]}")
 
     t0 = time.time()
     results = retrieve_many([r["question"] for r in rows], k=kmax,
                             dense_k=max(kmax, config.DENSE_K),
                             rerank=not args.no_rerank, batch=args.batch,
-                            progress=True)
+                            progress=True, profile=args.profile)
     elapsed = time.time() - t0
     print(f"  retrieved in {elapsed:.0f}s  ({elapsed/len(rows)*1000:.0f} ms/query)")
 

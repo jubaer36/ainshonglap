@@ -36,6 +36,14 @@ def _admin(authorization: str | None) -> None:
         raise HTTPException(403, "only an admin can add or remove sources")
 
 
+def _manageable() -> None:
+    from app.ingest import sources
+
+    if why := sources.manageable():
+        raise HTTPException(503, f"{why} — add or remove sources where the "
+                                 "pipeline runs, then load them to Supabase")
+
+
 def _refused(exc: Exception) -> HTTPException:
     return HTTPException(409, str(exc))
 
@@ -43,8 +51,13 @@ def _refused(exc: Exception) -> HTTPException:
 @router.get("/admin")
 def am_i_admin(authorization: str | None = Header(None)) -> dict:
     from app.db import supabase
+    from app.ingest import sources
 
-    return {"admin": supabase.is_admin(_token(authorization))}
+    # `manage` false: an admin, but this deployment cannot run the pipeline
+    # (the container) — the UI hides the controls rather than offer a failure.
+    why = sources.manageable()
+    return {"admin": supabase.is_admin(_token(authorization)),
+            "manage": why is None, "reason": why}
 
 
 @router.post("")
@@ -55,6 +68,7 @@ def add_source(file: UploadFile = File(...), slug: str = Form(...),
     from app.ingest import sources
 
     _admin(authorization)
+    _manageable()
     data = file.file.read(sources.MAX_UPLOAD_BYTES + 1)
     try:
         job = sources.start_add(data, file.filename or f"{slug}.pdf", slug, name, act_no)
@@ -68,6 +82,7 @@ def job_status(job_id: str, authorization: str | None = Header(None)) -> dict:
     from app.ingest import sources
 
     _admin(authorization)
+    _manageable()
     job = sources.get(job_id)
     if job is None:
         raise HTTPException(404, "no such job — it may have been lost to a restart")
@@ -84,6 +99,7 @@ def choose_parser(job_id: str, body: Choice,
     from app.ingest import sources
 
     _admin(authorization)
+    _manageable()
     try:
         return sources.choose(job_id, body.parser).public(with_review=False)
     except sources.Refused as exc:
@@ -95,6 +111,7 @@ def discard(job_id: str, authorization: str | None = Header(None)) -> dict:
     from app.ingest import sources
 
     _admin(authorization)
+    _manageable()
     try:
         return sources.discard(job_id).public(with_review=False)
     except sources.Refused as exc:
@@ -106,6 +123,7 @@ def remove_source(slug: str, authorization: str | None = Header(None)) -> dict:
     from app.ingest import sources
 
     _admin(authorization)
+    _manageable()
     try:
         return sources.start_remove(slug).public(with_review=False)
     except sources.Refused as exc:

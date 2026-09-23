@@ -118,9 +118,17 @@ def main() -> None:
     run("build_catalog.py")
     run("verify/verify_catalog.py")
     run("build_index.py")
+    # Other embedders' vectors (E21): removal embeds nothing, it only drops the
+    # Act's rows so the file matches chunks.json again.
+    import load_supabase
+    for name in load_supabase.alt_models():
+        run("build_index.py", "--embedder", name)
 
-    # 3. Re-sync Supabase with the rebuilt index, then check both agree.
+    # 3. Re-sync Supabase with the rebuilt index, then check both agree. (The
+    # Act's law_alt_chunks rows went with its law_acts row, by cascade.)
     run("load_supabase.py", "--all")
+    for name in load_supabase.alt_models():
+        run("load_supabase.py", "--embedder", name, "--all")
     run("verify/verify_supabase.py")
     print(f"\nDone. '{slug}' is gone from Supabase and from the local fallback. "
           f"Its files are kept in {dest}.")

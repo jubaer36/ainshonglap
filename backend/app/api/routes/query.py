@@ -52,6 +52,14 @@ def query(payload: QueryRequest,
     model = (payload.model or "").strip() or None
     trace.question(q, user=bool(authorization))
 
+    # The retrieval profile for every retrieve() this request makes, however
+    # deep in the executors. Validated here so a typo is a 422, not a 500.
+    from app.rag import pipeline
+    try:
+        pipeline.use_profile(payload.retrieval)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
     # A model known to be out of quota is swapped before the call rather than
     # after a failed one: the caller gets an answer instead of a 502, and the
     # response says which route actually produced it. Silently substituting

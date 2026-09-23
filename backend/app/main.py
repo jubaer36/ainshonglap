@@ -215,6 +215,8 @@ async def health() -> dict:
         "index": STATE["index"],
         "catalog": STATE["catalog"],
         "reranker": config.RERANK_MODEL,
+        "retrieval": {"default": config.RETRIEVAL_PROFILE,
+                      "profiles": config.RETRIEVAL_PROFILES},
         "planner": {"model": config.PLANNER_MODEL,
                     "enabled": config.PLAN_QUERIES},
         # Reported because it is the one part of the system that fails

@@ -220,17 +220,57 @@ def _on_change() -> None:
     library._library.cache_clear()
 
 
-def match(query: np.ndarray, k: int) -> list[dict]:
+_alt_cover: dict[str, tuple[float, frozenset]] = {}
+
+
+def _alt_missing(embedder: str) -> list[str]:
+    """Acts in the catalog that have no `embedder` vectors in Supabase.
+
+    Searching anyway would silently leave those Acts out of every answer — an
+    Act added from the command line without `--embedder` does exactly that.
+    Cached for REFRESH_SECONDS, like the catalog itself.
+    """
+    now = time.time()
+    got = _alt_cover.get(embedder)
+    if got is None or now - got[0] > REFRESH_SECONDS:
+        rows = (_client().table("law_alt_loads").select("act_slug")
+                .eq("model", embedder).execute().data)
+        got = (now, frozenset(r["act_slug"] for r in rows))
+        _alt_cover[embedder] = got
+    acts = [slug for slug, _ in (_state["version"] or ())]
+    return [a for a in acts if a not in got[1]]
+
+
+def match(query: np.ndarray, k: int, embedder: str = "bge-m3") -> list[dict]:
     """Exact nearest chunks for one query vector, best first.
 
     Rows carry `text`, `metadata` and `score` — the shape the pipeline groups
     into sections. `score` is the inner product, the same number FAISS returns.
     Raises `Unavailable` on any failure, or at once while the breaker is open.
+
+    `embedder` other than BGE-M3 searches `law_alt_chunks` (migration 003) for
+    that model's vectors. A failure there does NOT open the breaker: a missing
+    migration or an unloaded model says nothing about whether the catalog can
+    be served, and tripping it would push every lookup onto the local files.
     """
     if why := _open():
         raise Unavailable(why)
     literal = "[" + ",".join(np.format_float_positional(x, unique=True, trim="-")
                              for x in np.asarray(query, dtype=np.float32)) + "]"
+    if embedder != "bge-m3":
+        try:
+            if missing := _alt_missing(embedder):
+                raise Unavailable(f"no {embedder} vectors in Supabase for {', '.join(missing)}")
+            rows = _client().rpc("law_match_alt_chunks",
+                                 {"query_embedding": literal, "model_name": embedder,
+                                  "match_count": k}).execute().data
+        except Unavailable:
+            raise
+        except Exception as exc:
+            raise Unavailable(f"{type(exc).__name__}: {exc}"[:160]) from exc
+        if not rows:
+            raise Unavailable(f"no {embedder} vectors loaded in Supabase")
+        return rows
     try:
         return _client().rpc("law_match_chunks",
                              {"query_embedding": literal, "match_count": k}).execute().data

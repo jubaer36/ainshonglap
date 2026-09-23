@@ -50,7 +50,7 @@ sys.path.insert(0, str(BACKEND))
 from app.rag import config  # noqa: E402
 
 BATCH = {"law_chapters": 500, "law_sections": 200, "law_subsections": 500,
-         "law_cross_references": 500, "law_chunks": 60}
+         "law_cross_references": 500, "law_chunks": 60, "law_alt_chunks": 30}
 
 
 def _vector_literal(v: np.ndarray) -> str:
@@ -195,12 +195,63 @@ def load(client, slug: str, rows: dict[str, list[dict]], d: str) -> None:
         "n_chunks": len(rows["law_chunks"])}).execute()
 
 
+# ── alternate embedders (E21, migration 003) ────────────────────────────────
+# Another model's vectors for the same chunks, into law_alt_chunks. Reloading an
+# Act above deletes its law_acts row, and the cascade takes that Act's alternate
+# vectors and their load record with it — so after any reload these must be
+# loaded again, which the digest check below does by itself.
+
+def build_alt(slug: str, db: sqlite3.Connection, model: str, chunks: list[dict],
+              emb: np.ndarray) -> list[dict]:
+    """law_alt_chunks rows for one Act and one model, the chunks `build` selects."""
+    name = db.execute("select name from acts where slug = ?", (slug,)).fetchone()[0]
+    name = name.strip().lower()
+    return [{"model": model, "vec_id": vec_id, "chunk_id": c["id"], "act_slug": slug,
+             "section": str(c["metadata"]["section"]),
+             "granularity": c["metadata"].get("granularity") or "section",
+             "text": c["text"], "metadata": c["metadata"],
+             "embedding": _vector_literal(emb[vec_id])}
+            for vec_id, c in enumerate(chunks)
+            if c["metadata"]["act"].strip().lower() == name]
+
+
+def load_alt(client, slug: str, model: str, rows: list[dict], force: bool = False,
+             log=print) -> bool:
+    """Replace one Act's vectors for one model. False when already current."""
+    import hashlib
+
+    d = hashlib.sha256(json.dumps(rows, sort_keys=True, ensure_ascii=False)
+                       .encode()).hexdigest()
+    have = (client.table("law_alt_loads").select("digest")
+            .eq("model", model).eq("act_slug", slug).execute().data)
+    if have and have[0]["digest"] == d and not force:
+        return False
+    client.table("law_alt_chunks").delete().eq("model", model).eq("act_slug", slug).execute()
+    client.table("law_alt_loads").delete().eq("model", model).eq("act_slug", slug).execute()
+    t0 = time.time()
+    _insert(client, "law_alt_chunks", rows)
+    client.table("law_alt_loads").insert({"model": model, "act_slug": slug,
+                                          "digest": d, "n_chunks": len(rows)}).execute()
+    log(f"    {slug}: {len(rows)} {model} vectors  {time.time() - t0:.1f}s")
+    return True
+
+
+def alt_models() -> list[str]:
+    """Remote embedders that have a local vector file to load."""
+    from app.rag.store import alt_paths
+
+    return [m for m in config.REMOTE_EMBEDDERS if alt_paths(m)[0].exists()]
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--act", action="append", help="act slug; repeatable")
     ap.add_argument("--all", action="store_true")
     ap.add_argument("--force", action="store_true", help="reload even if unchanged")
     ap.add_argument("--dry-run", action="store_true", help="build rows, write nothing")
+    ap.add_argument("--embedder", choices=list(config.REMOTE_EMBEDDERS),
+                    help="load this model's vectors into law_alt_chunks (migration "
+                         "003) instead of the corpus")
     args = ap.parse_args()
 
     db = sqlite3.connect(config.CATALOG)
@@ -227,6 +278,25 @@ def main() -> None:
     if not args.dry_run:
         from app.db import supabase
         client = supabase.client()
+
+    if args.embedder:
+        from app.rag.store import alt_paths, texts_digest
+
+        emb_path, meta_path = alt_paths(args.embedder)
+        if not emb_path.exists():
+            raise SystemExit(f"no {emb_path.name} — run build_index.py --embedder "
+                             f"{args.embedder} first")
+        alt = np.load(emb_path)
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        if len(alt) != len(chunks) or meta.get("texts_digest") != texts_digest(chunks):
+            raise SystemExit(f"{emb_path.name} does not match chunks.json — rebuild it")
+        for slug in slugs:
+            rows = build_alt(slug, db, args.embedder, chunks, alt)
+            if args.dry_run:
+                print(f"{slug}: {len(rows)} {args.embedder} vectors")
+            elif not load_alt(client, slug, args.embedder, rows, args.force):
+                print(f"{slug}: {args.embedder} vectors unchanged — skipped")
+        return
 
     total_chunks = 0
     for slug in slugs:

@@ -9,7 +9,7 @@ nothing more.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from app.models.schemas import Citation
@@ -42,8 +42,13 @@ def retrieve_sections(
     q: str = Query(..., min_length=1, description="the question"),
     k: int = Query(config.FINAL_K, ge=1, le=50),
     rerank: bool = Query(True, description="false gives the dense-only ordering"),
+    profile: str | None = Query(None, description="retrieval profile (E21); "
+                                "omit for the server default"),
 ) -> RetrieveResponse:
-    hits = retrieve(q, k=k, rerank=rerank)
+    try:
+        hits = retrieve(q, k=k, rerank=rerank, profile=profile)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     return RetrieveResponse(
         question=q,
         reranked=rerank,

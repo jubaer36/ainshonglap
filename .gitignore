@@ -63,6 +63,7 @@ backend/scripts/*_out/
 Laws/main/index/abstention_ctx_k*.json
 Laws/main/index/threshold_scores_k*.json
 Laws/main/index/refine_cache_*.json
+Laws/main/index
 
 
 

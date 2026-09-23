@@ -17,16 +17,44 @@ section hit and the citation still points at the section.
 `retrieve_many` exists so the eval scripts run this exact code rather than
 their own copy of it — the previous split is how the logged numbers came to
 describe a pipeline nothing could actually serve.
+
+Which embedder and reranker run is a **retrieval profile** (E21,
+`config.RETRIEVAL_PROFILES`): the server default, `profile=` here, or
+`use_profile()` for the rest of one request. The stages above are the same for
+every profile; only the models change. A profile that needs OpenRouter falls
+back to the local one when OpenRouter cannot serve it, and says so in the log.
 """
 
 from __future__ import annotations
 
+import contextvars
+import logging
 from dataclasses import dataclass, field
 
 from app.rag import config
 from app.rag.encoder import embed
 from app.rag.reranker import rerank_scores
-from app.rag.store import load_store
+from app.rag.store import AltMissing, load_alt, load_store
+
+log = logging.getLogger("ainshonglap")
+
+# The profile for the rest of this request, when the caller chose one. A context
+# variable rather than a parameter threaded through the planner, the executors
+# and the answer code: those call `retrieve()` from half a dozen places, and
+# none of them should have to know retrieval has variants.
+_profile: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "retrieval_profile", default=None)
+
+
+def use_profile(name: str | None) -> None:
+    """Retrieve with `name` for the rest of this request (None = server default)."""
+    if name:
+        config.retrieval_profile(name)          # raises on an unknown name
+    _profile.set(name or None)
+
+
+def active_profile() -> str:
+    return config.retrieval_profile(_profile.get())[0]
 
 # How many vectors to pull before collapsing to sections. 3x was enough for the
 # top-20 to survive de-duplication in E5, where 60 vectors were fetched for 20
@@ -89,7 +117,7 @@ def _to_results(cands, k):
     return out
 
 
-def _search(qemb, n: int) -> list[tuple[list[dict], list[float], list[int]]]:
+def _search(qemb, n: int, embedder: str = "bge-m3") -> list[tuple[list[dict], list[float], list[int]]]:
     """Nearest chunks per query vector — from Supabase, or the local FAISS index
     if Supabase fails.
 
@@ -102,44 +130,85 @@ def _search(qemb, n: int) -> list[tuple[list[dict], list[float], list[int]]]:
     """
     from app.rag import corpus_db, fallback
 
+    source = "vector search" if embedder == "bge-m3" else f"vector search ({embedder})"
     try:
         out = []
         for q in qemb:
-            rows = corpus_db.match(q, n)
+            rows = corpus_db.match(q, n, embedder)
             out.append(([{"text": r["text"], "metadata": r["metadata"]} for r in rows],
                         [r["score"] for r in rows], list(range(len(rows)))))
-        fallback.recovered("vector search")
+        fallback.recovered(source)
         return out
     except corpus_db.Unavailable as exc:
-        fallback.used("vector search", str(exc))
+        fallback.used(source, str(exc))
 
-    index, chunks, _ = load_store()
+    # Raises AltMissing when this embedder has no vectors for the current
+    # corpus; the caller then drops to the local profile.
+    index, chunks = load_alt(embedder) if embedder != "bge-m3" else load_store()[:2]
     scores, ids = index.search(qemb, min(n, index.ntotal))
     return [(chunks, list(scores[i]), list(ids[i])) for i in range(len(qemb))]
 
 
+def _fell_back(what: str, why: object) -> None:
+    log.warning("FALLBACK  retrieval: %s failed (%s); using %s",
+                what, str(why)[:160], config.LOCAL_PROFILE)
+
+
 def retrieve_many(questions: list[str], k: int | None = None, *,
                   dense_k: int | None = None, rerank: bool = True,
-                  batch: int | None = None,
-                  progress: bool = False) -> list[list[Retrieved]]:
-    """Same pipeline as `retrieve`, batched over many questions."""
+                  batch: int | None = None, progress: bool = False,
+                  profile: str | None = None) -> list[list[Retrieved]]:
+    """Same pipeline as `retrieve`, batched over many questions.
+
+    `rerank=False` skips the reranking stage whatever the profile says.
+    """
+    from app.rag import remote_retrieval, trace
+
     if not questions:
         return []
     k = k or config.FINAL_K
     dense_k = dense_k or config.DENSE_K
-    qemb = embed(questions, batch=batch)
-    hits = _search(qemb, dense_k * OVERFETCH)
+    name, spec = config.retrieval_profile(profile or _profile.get())
+    embedder = spec["embedder"]
+    reranker = spec["reranker"] if rerank else None
+
+    hits = None
+    if embedder != "bge-m3":
+        try:
+            qemb = remote_retrieval.embed(questions, embedder, "query")
+            hits = _search(qemb, dense_k * OVERFETCH, embedder)
+        except (remote_retrieval.Unavailable, AltMissing) as exc:
+            _fell_back(f"{embedder} search", exc)
+            name, embedder = config.LOCAL_PROFILE, "bge-m3"
+            reranker = "bge" if rerank else None
+    if hits is None:
+        qemb = embed(questions, batch=batch)
+        hits = _search(qemb, dense_k * OVERFETCH)
+    trace.step("retrieve", f"profile {name}")
 
     results = []
     for i in range(len(questions)):
         chunks, scores, ids = hits[i]
         cands = _collapse(chunks, scores, ids, dense_k)
-        if rerank and cands:
+        if reranker == "nemotron" and cands:
+            try:
+                got = remote_retrieval.rerank(questions[i],
+                                              [c["chunk"]["text"] for c in cands])
+            except remote_retrieval.Unavailable as exc:
+                # This question and the rest of the batch: one failure is
+                # enough to know, and 600 failing calls would say nothing more.
+                _fell_back("nemotron rerank", exc)
+                reranker = "bge"
+            else:
+                for c, s in zip(cands, got):
+                    c["score"] = s
+                cands.sort(key=lambda c: -c["score"])
+        if reranker == "bge" and cands:
             pairs = [(questions[i], c["chunk"]["text"]) for c in cands]
             for c, s in zip(cands, rerank_scores(pairs)):
                 c["score"] = s
             cands.sort(key=lambda c: -c["score"])
-        else:
+        elif reranker is None:
             for c in cands:
                 c["score"] = c["dense"]
         results.append(_to_results(cands, k))
@@ -149,7 +218,8 @@ def retrieve_many(questions: list[str], k: int | None = None, *,
 
 
 def retrieve(question: str, k: int | None = None, *,
-             dense_k: int | None = None, rerank: bool = True) -> list[Retrieved]:
+             dense_k: int | None = None, rerank: bool = True,
+             profile: str | None = None) -> list[Retrieved]:
     """Top-k sections for a question, best first.
 
     `rerank=False` gives the dense-only ordering — kept so the two can be
@@ -158,7 +228,8 @@ def retrieve(question: str, k: int | None = None, *,
     """
     if not question.strip():
         return []
-    return retrieve_many([question], k, dense_k=dense_k, rerank=rerank)[0]
+    return retrieve_many([question], k, dense_k=dense_k, rerank=rerank,
+                         profile=profile)[0]
 
 
 def warmup() -> None:

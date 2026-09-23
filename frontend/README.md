@@ -30,7 +30,8 @@ read instead of permanently under the input box.
   scrolls; on a phone the placeholder drops the keyboard hint
 - the statute list reads the Acts actually held, marking the core Acts with a
   lock. Admins (`ADMIN_EMAILS` on the backend) also get **Add a source** and a
-  remove button on every non-core source. Adding opens a dialog that uploads the
+  remove button on every non-core source — unless the backend cannot run the
+  ingestion pipeline (the Docker image), which it reports as `manage: false`. Adding opens a dialog that uploads the
   PDF, shows sampled pages beside what each parser read, and indexes it with
   the parser chosen — the recommended choice follows how cleanly PyMuPDF read
   the document. The welcome screen and the "Before you start" notice name the

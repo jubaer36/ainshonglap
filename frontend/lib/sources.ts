@@ -74,8 +74,13 @@ async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 export async function checkAdmin(): Promise<boolean> {
   try {
-    const body = await call<{ admin: boolean }>("/api/sources/admin", { headers: await headers() });
-    return body.admin;
+    // `manage` is false where the server cannot run the ingestion pipeline (the
+    // deployed container): an admin there gets no add/remove controls rather
+    // than controls that fail. Absent on older servers, so treated as true.
+    const body = await call<{ admin: boolean; manage?: boolean }>("/api/sources/admin", {
+      headers: await headers(),
+    });
+    return body.admin && body.manage !== false;
   } catch {
     return false;
   }

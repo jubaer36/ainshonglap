@@ -153,6 +153,23 @@ measured completely.
 5. **Refusal path** in parallel: abstain when retrieval is weak, and measure
    abstention as its own metric.
 
+## Update — three retrieval profiles (E21)
+
+Free OpenRouter models were measured against the pipeline above, and two beat
+it: the Nemotron reranker (+9pp R@1 on the same candidates) and the
+nemotron-3-embed embedder (R@20 71.4 → 86.5 with no reranker). Both are served as
+alternatives rather than replacements, because each costs one OpenRouter
+request per question against a daily cap:
+
+| profile | search | reranker | R@1 | R@5 | R@20 | Act | API cost |
+|---|---|---|---|---|---|---|---|
+| `bge+nemotron-rerank` | BGE-M3, local | Nemotron rerank (OpenRouter) | **50.8** | 67.1 | 71.4 | **91.6** | 1 request / question |
+| `bge+bge-rerank` *(default)* | BGE-M3, local | bge-reranker-v2-m3, local | 41.8 | 59.0 | 71.4 | 87.5 | none |
+| `nemotron-embed` | nemotron-3-embed (OpenRouter) | none | 48.4 | **75.0** | **86.5** | 88.5 | 1 request / question |
+
+`app/rag/pipeline.retrieve()` runs whichever is chosen; the default needs no
+network. Anything remote falls back to it, logged.
+
 ## Current next questions
 
 - Can model-generated statutory query facets raise the 71.4% candidate ceiling?

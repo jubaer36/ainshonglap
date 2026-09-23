@@ -28,8 +28,9 @@ The corpus is what is in **`Laws/main/`**. Three **core Acts** are permanent —
 the Code of Criminal Procedure 1898, the Penal Code 1860, and the Evidence Act
 1872 (`config.CORE_ACTS`); nothing may remove them. Other sources are added one
 at a time, deliberately — through the app's add-source review or
-`scripts/ingest_document.py` — and can be removed again. The Arms Act, 1878 is
-currently loaded as one.
+`scripts/ingest_document.py` — and can be removed again. Only the three core
+Acts are loaded right now; the Arms and Police Act PDFs in `Laws/main/` were
+added and removed again.
 
 The ~31 other PDFs in `Laws/` are candidates, not corpus, and include duplicate
 copies of acts already in `main/` (a `(bdlaws.minlaw.gov.bd copy)` beside the
@@ -52,6 +53,14 @@ cd backend
 uvicorn app.main:app --reload            # API on :8000
 ```
 
+Or the backend in Docker (CPU-only; `backend/Dockerfile`, built from the repo
+root; no source management inside it). Deployment: `gcp-deployment-plan.md`.
+
+```bash
+docker build -f backend/Dockerfile -t ainshonglap-backend .
+docker run -d --name ainshonglap-api -p 8000:8080 --env-file backend/.env.local ainshonglap-backend
+```
+
 Secrets live in `backend/.env.local` (gitignored). Every job that runs on
 *every* question has a key nothing else draws on:
 
@@ -63,7 +72,8 @@ Secrets live in `backend/.env.local` (gitignored). Every job that runs on
 | `GROQ_API_KEY_SUMMARIZER` | the conversation summariser (gpt-oss-120b), and nothing else |
 | `GEMINI_API_KEY_3` | naming a conversation, and nothing else |
 | `INCEPTION_API_KEY` | Mercury, a selectable generator |
-| `DEEPGRAM_API_KEY` / `OPENROUTER_API_KEY` | voice / vision and OpenRouter routes |
+| `DEEPGRAM_API_KEY` | voice |
+| `OPENROUTER_API_KEY`, `_2` | vision, OpenRouter generators, and the retrieval profiles that run on OpenRouter (rotation + failover, like Groq) |
 | `SUPABASE_*`, optional `GEMINI_API_KEY` | accounts and storage, optional generator |
 | `ADMIN_EMAILS` | signed-in users allowed to add/remove sources from the frontend |
 
@@ -105,6 +115,10 @@ python scripts/build_catalog.py          # parsed  -> Laws/main/catalog.sqlite
 python scripts/verify/verify_catalog.py         #   check vs the parsed JSON
 python scripts/load_supabase.py --all    # read models -> Supabase law_* tables (002)
 python scripts/verify/verify_supabase.py        #   check vs the local read models
+# retrieval profile `nemotron-embed` (E21): its vectors, beside BGE-M3's.
+# Costs OpenRouter requests for new chunks only (~1 per 32). Migration 003 first.
+python scripts/build_index.py --embedder nemotron-3-embed
+python scripts/load_supabase.py --embedder nemotron-3-embed --all
 
 # adding a NEW document: parse, review 4 sampled pages as image vs PyMuPDF vs
 # Docling (Laws/review/<slug>/review.html), then choose. PyMuPDF = numbered
@@ -116,7 +130,7 @@ python scripts/remove_act.py --act arms
 
 python scripts/plan_demo.py          # walk the planner question by question
 python scripts/experiments/plan_cases.py         #   graded: category + scope (E13)
-python scripts/eval_retrieval.py     #   Recall@k / MRR / Act accuracy
+python scripts/eval_retrieval.py     #   Recall@k / MRR / Act accuracy (--profile: see below)
 python scripts/rerank.py --topk 20   # + cross-encoder rerank, with delta
 python scripts/experiments/fit_threshold.py      #   abstention operating curve (E10)
 python scripts/experiments/experiment_retrieval.py --what all   # A/B prefix, chunk budget
@@ -142,13 +156,28 @@ locally, then `load_supabase.py` + `verify_supabase.py`. A model names coordinat
 The model never writes SQL, and a coordinate the catalog does not have comes
 back empty rather than as the nearest match.
 
+**Retrieval has three profiles** (E21, `config.RETRIEVAL_PROFILES`), chosen by
+`RAG_RETRIEVAL` or `retrieval` on one `/api/query` request:
+`bge+nemotron-rerank` (best R@1 50.8 and Act accuracy 91.6), `bge+bge-rerank`
+(the default, R@1 41.8, no API) and `nemotron-embed` (best R@20 86.5, no
+reranker). Supabase holds both vector sets: BGE-M3 in `law_chunks`
+(1024-dim), nemotron in `law_alt_chunks` (2048-dim, migration 003). A question
+searches only its profile's set. The two OpenRouter profiles cost **one request
+per question** against the free-model daily cap (1,000 per account with credits,
+50 without) and fall back to the default, logged as `FALLBACK`, when OpenRouter
+cannot serve. Evaluating them costs a request per question too:
+`eval_retrieval.py --profile` on all 608 is most of a day's cap.
+
 **Core Acts are fixed; everything else is a source.** The CrPC, the Penal Code
 and the Evidence Act (`config.CORE_ACTS`) can never be removed — the service,
 the API and `remove_act.py` all refuse. Other sources are added and removed
 from the frontend by admins (`app/ingest/sources.py`, `/api/sources`): upload,
 review sampled pages against both parsers, choose, and the job indexes it.
 Embedding reuses every known vector (`build_index.build`), so adding a source
-embeds only that source.
+embeds only that source. Only where the pipeline exists: the Docker image
+(`backend/Dockerfile`, CPU-only, no `scripts/`, PyMuPDF or Docling) reports
+`manage: false` and refuses with 503 — sources are added locally and reach the
+deployment through Supabase. Deployment: `gcp-deployment-plan.md`.
 
 **Which Acts exist is data, not code.** `app/rag/acts.py` answers every
 "which Acts do we hold?" from the catalog: citation keys, short names, the

@@ -2,10 +2,18 @@
 
 BGE-M3 dense retrieval, then cross-encoder reranking. Numbers, not impressions.
 
-**Current served numbers** (dual-granularity index + reranking, `experiments.md`
-E7): **R@1 41.8%, R@5 59.0%, R@20 71.4%, MRR 0.498, Act accuracy 87.5%.** The
-baseline below is the section-only dense starting point those improved on; it is
-kept because the deltas are the argument, not the endpoint.
+**Served numbers** — three retrieval profiles, chosen by `RAG_RETRIEVAL`
+(`experiments.md` E21; the default is the E7 pipeline, dual-granularity index +
+reranking):
+
+| profile | search | reranker | R@1 | R@5 | R@20 | Act | API cost |
+|---|---|---|---|---|---|---|---|
+| `bge+nemotron-rerank` | BGE-M3, local | Nemotron rerank (OpenRouter) | **50.8** | 67.1 | 71.4 | **91.6** | 1 request / question |
+| `bge+bge-rerank` *(default)* | BGE-M3, local | bge-reranker-v2-m3, local | 41.8 | 59.0 | 71.4 | 87.5 | none |
+| `nemotron-embed` | nemotron-3-embed (OpenRouter) | none | 48.4 | **75.0** | **86.5** | 88.5 | 1 request / question |
+
+The baseline below is the section-only dense starting point the default
+improved on; it is kept because the deltas are the argument, not the endpoint.
 
 First measured numbers for the retrieval stage, and what they say to do next.
 Everything here comes from `backend/scripts/eval_retrieval.py`, scored against

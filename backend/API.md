@@ -385,11 +385,61 @@ When the chosen generator is out, `POST /api/query` answers on
 `RAG_FALLBACK_GENERATOR` (default `mercury`, deliberately a *different
 provider*) and reports the substitution rather than making it silently.
 
-### GET `/api/retrieve?q=...&k=5&rerank=true`
+### GET `/api/retrieve?q=...&k=5&rerank=true&profile=`
 
 The retrieval half alone, with dense and reranker scores per hit. `rerank=false`
 gives the dense-only ordering — the same code path the eval scripts measure, so
-served and measured numbers cannot drift.
+served and measured numbers cannot drift. `profile` picks a retrieval profile
+(below); an unknown name is a 422.
+
+## Retrieval profiles
+
+Which embedder finds the 20 candidates and which reranker orders them
+(`config.RETRIEVAL_PROFILES`, E21):
+
+| profile | search | reranker | R@1 | R@5 | R@20 | Act | API cost |
+|---|---|---|---|---|---|---|---|
+| `bge+nemotron-rerank` | BGE-M3, local | Nemotron rerank (OpenRouter) | **50.8** | 67.1 | 71.4 | **91.6** | 1 request / question |
+| `bge+bge-rerank` *(default)* | BGE-M3, local | bge-reranker-v2-m3, local | 41.8 | 59.0 | 71.4 | 87.5 | none |
+| `nemotron-embed` | nemotron-3-embed (OpenRouter) | none | 48.4 | **75.0** | **86.5** | 88.5 | 1 request / question |
+
+**Choosing.** `RAG_RETRIEVAL` sets the server default (restart to apply). A
+single question can override it with `"retrieval": "<profile>"` on
+`POST /api/query`; everything that question retrieves — every executor, every
+facet — uses it. `/health` lists the profiles and the default.
+
+**Two vector sets, one per embedder.** BGE-M3's live in `law_chunks`
+(`vector(1024)`); nemotron-3-embed's in `law_alt_chunks` (migration 003), whose
+`embedding` column has no fixed dimension and is always searched one model at a
+time through `law_match_alt_chunks(query_embedding, model_name, match_count)`.
+A question is embedded by one model and compared only with that model's
+vectors. Locally the same split: `embeddings.npy` and
+`embeddings.nemotron-3-embed.npy`, the latter tied to `chunks.json` by a digest
+of its texts so vectors built for an older corpus are refused rather than
+searched.
+
+**Cost and fallback.** The two remote profiles call OpenRouter once per
+question (a query embedding, or one rerank of 20 sections), on every
+`OPENROUTER_API_KEY*` in rotation with failover on a refusal. `:free` models
+share a daily cap per account — 1,000 requests with credits bought, 50 without.
+When OpenRouter cannot serve — the cap, an outage, a timeout
+(`RAG_REMOTE_TIMEOUT`), or no nemotron vectors for the current corpus — the
+question is answered with `bge+bge-rerank` and a WARNING is logged:
+
+```
+FALLBACK  retrieval: nemotron-3-embed search failed (<reason>); using bge+bge-rerank
+FALLBACK  retrieval: nemotron rerank failed (<reason>); using bge+bge-rerank
+```
+
+**Keeping the nemotron vectors current.** `build_index.py --embedder
+nemotron-3-embed` embeds only chunks that have no vector yet (about one request
+per 32 chunks), then `load_supabase.py --embedder nemotron-3-embed --all`
+loads them. Adding or removing a source through the app does both itself; if
+the embedding step fails, the job still completes and `nemotron-embed` falls
+back until it is re-run. `ingest_document.py` prints both steps; `remove_act.py`
+runs them. Before each search, the backend checks that every loaded Act has
+nemotron vectors in Supabase (cached for a minute); if one is missing,
+`nemotron-embed` falls back rather than silently leaving that Act out.
 
 ## Managing sources
 
@@ -408,7 +458,16 @@ Supabase, verify. Removing deletes from Supabase first, moves the local files to
 `Laws/removed/<slug>/`, and rebuilds. Jobs run one at a time on one worker, so
 two index rebuilds can never overlap; they are held in memory and forgotten on
 restart, which loses nothing — an Act is either loaded (it has a `law_loads`
-commit marker) or it is not.
+commit marker) or it is not. When nemotron vectors exist (E21), the same job
+embeds the new chunks for them and loads them to `law_alt_chunks`.
+
+**Only where the pipeline runs.** Adding runs the offline pipeline from
+`backend/scripts/` with PyMuPDF and Docling. The deployment image has none of
+that, so there `GET /api/sources/admin` returns `manage: false` with a
+`reason`, the frontend shows no add/remove controls, and every other
+`/api/sources` endpoint answers 503. `RAG_SOURCES=0` switches it off anywhere.
+Add sources on a machine that has the pipeline; the load to Supabase reaches
+every deployment within a minute.
 
 ## When a model fails
 
@@ -436,7 +495,9 @@ scoped search otherwise.
 
 Supabase, always first. The catalog (exact lookups) is loaded from the `law_*`
 tables into memory at startup and rebuilt within a minute of an Act being
-loaded; meaning search runs `law_match_chunks` in Postgres on every question.
+loaded; meaning search runs `law_match_chunks` in Postgres on every question
+(or `law_match_alt_chunks` for the `nemotron-embed` profile — see Retrieval
+profiles).
 
 The local `catalog.sqlite` and FAISS index are **fallbacks only**. They answer
 when Supabase cannot, and each use is logged at WARNING — visible even with
@@ -473,7 +534,7 @@ not have any Act loaded to Supabase since it was last rebuilt.
 | `GEMINI_API_KEY` | optional generator |
 | `INCEPTION_API_KEY` | Mercury, a selectable generator |
 | `DEEPGRAM_API_KEY` | voice |
-| `OPENROUTER_API_KEY` | vision, OpenRouter routes |
+| `OPENROUTER_API_KEY`, `_2` | vision, OpenRouter generators, the OpenRouter retrieval profiles (rotated) |
 
 Each job that runs on *every* question gets a key nothing else draws on. A
 sidebar label must not be able to exhaust the quota the next follow-up depends
@@ -497,8 +558,9 @@ Two mechanisms, and they are not the same thing:
 Keys already recorded as out of budget are tried **last, not skipped** — that
 record is a cached 429, not a fact about the account.
 
-A provider with one key (Inception, OpenRouter) yields a single slot and behaves
-exactly as it did before. `RAG_TRACE` logs each switch (`key GROQ_API_KEY_2 429
+A provider with one key (Inception) yields a single slot and behaves exactly as
+it did before. The OpenRouter retrieval calls (`remote_retrieval.py`) rotate
+over every `OPENROUTER_API_KEY*` the same way. `RAG_TRACE` logs each switch (`key GROQ_API_KEY_2 429
 -> next key`), and `/health` names which keys are down rather than only that the
 model is.
 
@@ -516,6 +578,9 @@ model is.
 | `RAG_PLAN` | `1` | `0` falls back to the old pattern router |
 | `RAG_ROUTER_MODEL` | `lfm` | old router's model, used only when `RAG_PLAN=0` |
 | `RAG_DENSE_K` / `RAG_FINAL_K` | `20` / `8` | candidates reranked / sections returned |
+| `RAG_RETRIEVAL` | `bge+bge-rerank` | retrieval profile: `bge+nemotron-rerank`, `bge+bge-rerank`, `nemotron-embed` |
+| `RAG_REMOTE_RERANK_MODEL` | `nvidia/llama-nemotron-rerank-vl-1b-v2:free` | reranker for `bge+nemotron-rerank` |
+| `RAG_REMOTE_TIMEOUT` | `15` | seconds before an OpenRouter retrieval call falls back to local |
 | `RAG_FALLBACK_GENERATOR` | `fallback` | gpt-oss-120b on its own key; used when any model call fails |
 | `RAG_GEMINI_TIMEOUT` | `20` | seconds before a Gemini call is abandoned for the fallback |
 | `RAG_MEMORY_MODEL` | *(auto)* | summariser alias; `summariser` when its key is set, else `oss120` |
@@ -544,7 +609,9 @@ app/rag/
   corpus_db.py     the corpus from Supabase: catalog cached in memory, vector search by RPC
   fallback.py      logs every time the local files answer instead of Supabase
   encoder.py       BGE-M3 query/document embedding
-  store.py         local FAISS index + chunk records — the fallback
+  store.py         local FAISS index + chunk records — the fallback; also the
+                   nemotron vectors (`load_alt`), checked against chunks.json
+  remote_retrieval.py  OpenRouter embedding + reranking for the E21 profiles
   reranker.py      cross-encoder (E4)
   pipeline.py      retrieve() — search, collapse to sections, rerank
   llm.py           Groq / Inception / OpenRouter / Gemini, JSON-schema output

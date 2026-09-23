@@ -161,6 +161,11 @@ class QueryRequest(BaseModel):
     refine: bool | None = Field(
         default=None, examples=[None],
         description="Override the query-refiner flag. Omit for the server default.")
+    retrieval: str | None = Field(
+        default=None, examples=[None],
+        description="Retrieval profile for this question: 'bge+nemotron-rerank', "
+                    "'bge+bge-rerank' or 'nemotron-embed' (E21). Omit for the "
+                    "server default, RAG_RETRIEVAL.")
     memory: ConversationMemory | None = Field(
         default=None, examples=[None],
         description="The memory returned by the previous answer. Omit to start "

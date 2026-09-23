@@ -1023,7 +1023,78 @@ timeout path) ran before the switch.
 
 ---
 
-## What E2-E20 together establish
+## E21 — OpenRouter's free embedders and reranker (n=608, MEASURED)
+
+**Objective.** Measure four free OpenRouter models against the served pipeline
+(BGE-M3 + bge-reranker-v2-m3): three embedders and one reranker.
+
+**Configuration.** `scripts/experiments/experiment_openrouter.py`. Same corpus
+(the 2,320 chunks of the local index — core Acts, sections + subsections), same
+60-vector search collapsed to 20 sections (`pipeline._collapse`), same scoring
+(`eval_retrieval.score`). Each model used as its card says: nemotron embedders
+with `input_type` query/passage (the API honours it — the same text differs by
+cosine 0.46-0.73 between sides); LFM with `query: `/`document: ` prefixes
+(`input_type` ignored); the reranker on `POST /rerank`, one request per question.
+The harness first reproduced the served numbers exactly (41.8 / 59.0 / 71.4 /
+0.498 / 87.5), so the deltas below come from the models, not the harness.
+Paired comparison on R@1 by exact McNemar.
+
+**Results** (608 questions):
+
+| pipeline | R@1 | R@5 | R@20 | MRR | Act | R@1 vs served |
+|---|---|---|---|---|---|---|
+| served: BGE-M3 + bge-reranker | 41.8 | 59.0 | 71.4 | 0.498 | 87.5 | — |
+| BGE-M3 dense only | 35.7 | 59.5 | 71.4 | 0.461 | 85.2 | +34/-71 |
+| BGE-M3 + **nemotron-rerank** | **50.8** | 67.1 | 71.4 | 0.575 | **91.6** | **+69/-14, p<0.001** |
+| **nemotron-3-embed** dense only | 48.4 | **75.0** | **86.5** | **0.595** | 88.5 | **+80/-40, p<0.001** |
+| nemotron-3-embed + bge-reranker | 46.2 | 66.3 | 86.5 | 0.556 | 87.7 | +33/-6, p<0.001 |
+| nemotron-embed-vl dense only | 44.2 | 66.3 | 78.1 | 0.536 | 88.8 | +64/-49, p=0.19 |
+| nemotron-embed-vl + bge-reranker | 44.6 | 62.7 | 78.1 | 0.530 | 88.7 | +26/-9, p=0.006 |
+| lfm-2.5-embedding dense only | 29.6 | 47.4 | 66.8 | 0.381 | 76.3 | +28/-102 |
+| lfm-2.5-embedding + bge-reranker | 41.1 | 56.7 | 66.8 | 0.482 | 84.2 | +22/-26, p=0.67 |
+
+`nemotron-3-embed + nemotron-rerank` reached only 119 questions before the
+free-model daily cap (all from `advanced_selection`, the hardest split). On those
+119 it matched nemotron-3-embed alone (R@1 42.9 both; served pipeline 28.6) —
+the reranker added nothing on top. n=119 is ±9pp; not a result on its own.
+
+**Reading.** Two independent gains. The Nemotron reranker orders BGE-M3's
+candidates better (+9pp R@1, Act accuracy 91.6%, the best measured). The
+nemotron-3-embed embedder finds far more: R@20 71.4 → 86.5, the first real move
+of the candidate ceiling since E5 — and 28.6pp "never retrieved" was the largest
+remaining bucket. The local bge-reranker on top of nemotron-3-embed makes it
+WORSE (R@1 48.4 → 46.2, R@5 75.0 → 66.3): it demotes sections nemotron had
+ranked well, so the `nemotron-embed` profile runs with no reranker. LFM loses on
+everything; it also cannot read 74 of the 2,320
+chunks whole (512-token input limit).
+
+**Cost.** Every OpenRouter model here is `:free`, and every question costs one
+request (a query embedding, or one rerank call). The free-model cap is per
+account and per day: 1,000 with credits bought, 50 without. The run itself used
+a full day's 1,000 — about 2,000 embedding inputs in 32-per-request batches, and
+727 rerank calls.
+
+**Decision.** All three kept, selectable by name (`RAG_RETRIEVAL`, or
+`retrieval` per request) — `config.RETRIEVAL_PROFILES`:
+
+| profile | search | reranker | R@1 | R@5 | R@20 | Act | API cost |
+|---|---|---|---|---|---|---|---|
+| `bge+nemotron-rerank` | BGE-M3, local | Nemotron rerank (OpenRouter) | **50.8** | 67.1 | 71.4 | **91.6** | 1 request / question |
+| `bge+bge-rerank` *(default)* | BGE-M3, local | bge-reranker-v2-m3, local | 41.8 | 59.0 | 71.4 | 87.5 | none |
+| `nemotron-embed` | nemotron-3-embed (OpenRouter) | none | 48.4 | **75.0** | **86.5** | 88.5 | 1 request / question |
+
+The default stays `bge+bge-rerank`, the only one with no daily cap. Anything on
+OpenRouter falls back to it when OpenRouter cannot serve (cap, outage, vectors
+missing), logged as `FALLBACK`. nemotron vectors live beside BGE-M3's
+(`law_alt_chunks`, migration 003; `embeddings.nemotron-3-embed.npy` locally).
+
+**Not measured.** The full 608 on nemotron-3-embed + nemotron-rerank. Whether
+these models saw the public QA dataset in training — contamination would inflate
+every number in the table, and nothing here can rule it out.
+
+---
+
+## What E2-E21 together establish
 
 Both chunk-formatting knobs are flat — retrieval on this corpus is not limited
 by how chunks are labelled or sized. Ranking is where the gains were, exactly as
@@ -1037,6 +1108,13 @@ Where the 608 questions stand on the live pipeline (dual index + reranking):
 | retrieved but badly ranked | 35.7pp | −6.1pp | **29.6pp** |
 | never retrieved at all | 31.6pp | −3.0pp (E5) | **28.6pp** |
 | wrong statute at rank 1 | 17.8% | −5.3pp | **12.5%** |
+
+E21 moved both remaining buckets for the first time since E5, with models
+rather than techniques: nemotron-3-embed cut "never retrieved" from 28.6pp to
+13.5pp (R@20 86.5), and the Nemotron reranker lifted R@1 to 50.8 and Act
+accuracy to 91.6 on the default's candidates. Both are opt-in profiles (one
+OpenRouter request per question), so the table above still describes the
+default.
 
 **Next retrieval experiment.** Query rewriting for the never-retrieved bucket,
 which is now within 1pp of being the largest and which no reranker can reach.

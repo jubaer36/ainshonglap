@@ -35,7 +35,8 @@ and `_3`, which are discovered automatically and used in turn.
 the conversation summariser; `GEMINI_API_KEY_3`
 conversation naming;
 `GROQ_API_KEY_FALLBACK` the gpt-oss-120b fallback behind every one of them.
-`INCEPTION_API_KEY` and `OPENROUTER_API_KEY` are selectable generators. Full table
+`INCEPTION_API_KEY` is a selectable generator; `OPENROUTER_API_KEY` (and `_2`,
+rotated) serves OpenRouter generators and the OpenRouter retrieval profiles. Full table
 in `API.md`.
 
 ```bash
@@ -46,6 +47,23 @@ curl -X POST http://localhost:8000/api/query \
 
 Startup loads BGE-M3 and the cross-encoder (~30s). `RAG_WARMUP=0` skips it when
 only the corpus endpoints are needed.
+
+### Docker
+
+`Dockerfile` (built from the repo root) makes a CPU-only image of about 6 GB:
+`requirements.docker.txt` (CPU PyTorch, no Docling or experiment deps), both
+models baked in and loaded offline, the local fallbacks, one Uvicorn worker on
+`$PORT`. It cannot add or remove sources (no `scripts/`, PyMuPDF or Docling).
+
+```bash
+# from the repository root
+docker build -f backend/Dockerfile -t ainshonglap-backend .
+docker run -d --name ainshonglap-api -p 8000:8080 --env-file backend/.env.local ainshonglap-backend
+docker logs -f ainshonglap-api
+```
+
+`--env-file` does not override the image's `RAG_RETRIEVAL`; pass
+`-e RAG_RETRIEVAL=...` for another profile. Deployment: `../gcp-deployment-plan.md`.
 
 ## Structure
 
@@ -98,8 +116,12 @@ as the logged fallback — and `app/rag/execute.py` holds one executor per
 category. Which Acts exist comes from the catalog too (`acts.py`).
 The old pattern router survives behind `RAG_PLAN=0` as an outage switch.
 
-The legal path retrieves 20 distinct section candidates, cross-encoder reranks
-them, and sends the best eight to the generator (`RAG_FINAL_K`, raised from 5;
+The legal path retrieves 20 distinct section candidates, reranks them, and
+sends the best eight to the generator. Which embedder and reranker do that is a
+**retrieval profile** (E21) — `RAG_RETRIEVAL`, default `bge+bge-rerank` (all
+local); `bge+nemotron-rerank` and `nemotron-embed` use OpenRouter, one request
+per question, and fall back to the default when it cannot serve. The best eight
+go to the generator (`RAG_FINAL_K`, raised from 5;
 unmeasured on the 608-question set — see E17). This is appropriate for a focused
 answer but is not yet an exhaustive “show every related provision” mode.
 
@@ -113,11 +135,13 @@ python scripts/verify/verify_parsed.py          #   vs the PDF + the bdlaws orac
 python scripts/chunk_sections.py         # parsed -> Laws/main/chunks/*.json
 python scripts/verify/verify_chunks.py          #   vs the parsed JSON
 python scripts/build_index.py            # chunks -> BGE-M3 vectors + FAISS (reuses known vectors)
+python scripts/build_index.py --embedder nemotron-3-embed   # E21 vectors, new chunks only (OpenRouter)
+python scripts/load_supabase.py --embedder nemotron-3-embed --all   # -> law_alt_chunks (migration 003)
 python scripts/build_catalog.py          # parsed -> Laws/main/catalog.sqlite
 python scripts/verify/verify_catalog.py         #   vs the parsed JSON
 python scripts/load_supabase.py --all    # read models -> Supabase (migration 002)
 python scripts/verify/verify_supabase.py        #   vs the local read models
-python scripts/eval_retrieval.py         #   Recall@k / MRR / Act accuracy
+python scripts/eval_retrieval.py         #   Recall@k / MRR / Act accuracy; --profile costs API calls
 python scripts/rerank.py --topk 20       #   dense vs + reranker, with delta
 ```
 
@@ -161,7 +185,7 @@ inside the pipeline would surface as a false refusal. Requests pin
 
 ## Current limitations
 
-- the three core Acts plus the Arms Act, 1878 are served; retrieval metrics describe the core three
+- only the three core Acts are loaded; retrieval metrics describe them
 - a Docling-parsed source is cited as "Section N", not "Passage N" — the catalog does not record document type yet
 - `refine.py` (the old router, `RAG_PLAN=0` only) and `verify_parsed.py` still know only the core Acts
 - legal generation sees eight reranked sections, limiting broad coverage

@@ -1,0 +1,31 @@
+.git
+.gitignore
+**/.env
+**/.env.*
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.mypy_cache
+
+# The backend build copies only its served package and deployment manifest.
+backend/scripts
+backend/db
+
+# Frontend has its own image and build context.
+frontend
+
+# Evaluation corpora and source PDFs are not read by the running API.
+Laws/bangladesh-legal-qa-dataset
+Laws/main/*.pdf
+Laws/main/chunks
+
+# Keep only what the running API reads: the BGE-M3 FAISS fallback, and the
+# nemotron-3-embed vectors for the `nemotron-embed` retrieval profile (E21) —
+# its local fallback when Supabase cannot serve law_alt_chunks. embeddings.npy
+# is only needed to build or load indexes, which the container never does.
+Laws/main/index/*
+!Laws/main/index/chunks.faiss
+!Laws/main/index/chunks.json
+!Laws/main/index/meta.json
+!Laws/main/index/embeddings.nemotron-3-embed.npy
+!Laws/main/index/meta.nemotron-3-embed.json
