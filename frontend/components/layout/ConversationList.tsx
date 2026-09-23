@@ -146,9 +146,6 @@ export function ConversationList({
                       }
                     }}
                   >
-                    <span className="text-[10px] text-rose-600 font-medium">
-                      Delete?
-                    </span>
                     <button
                       type="button"
                       onClick={(event) => {

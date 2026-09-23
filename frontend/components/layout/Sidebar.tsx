@@ -1,5 +1,8 @@
+"use client";
+
 import type { SavedConversation } from "@/lib/conversations";
 import { ConversationList } from "./ConversationList";
+import { ResizeHandle, useResizableWidth } from "./ResizeHandle";
 import { SidebarAccount } from "./SidebarAccount";
 import { StatuteBrowser } from "./StatuteBrowser";
 
@@ -14,6 +17,13 @@ interface SidebarProps {
   onRenameConversation: (id: string, title: string) => void;
 }
 
+// Width bounds for the drag handle. The floor keeps conversation titles and the
+// statute tree legible; the ceiling keeps the chat column the widest thing on
+// screen, since that is where the answers are read.
+const MIN_WIDTH = 220;
+const MAX_WIDTH = 520;
+const DEFAULT_WIDTH = 288; // w-72
+
 export function Sidebar({
   open,
   onNewChat,
@@ -24,12 +34,24 @@ export function Sidebar({
   onDeleteConversation,
   onRenameConversation,
 }: SidebarProps) {
+  const panel = useResizableWidth({ min: MIN_WIDTH, max: MAX_WIDTH, initial: DEFAULT_WIDTH });
+
   return (
     <aside
-      className={`w-72 bg-white border-r border-slate-200 flex-col justify-between flex-shrink-0 fixed top-14 bottom-0 left-0 z-40 lg:static lg:z-20 ${
+      style={{ width: panel.width }}
+      className={`bg-white border-r border-slate-200 flex-col justify-between flex-shrink-0 fixed top-14 bottom-0 left-0 z-40 lg:relative lg:top-auto lg:bottom-auto lg:z-20 ${
         open ? "flex" : "hidden"
       }`}
     >
+      <ResizeHandle
+        edge="right"
+        width={panel.width}
+        min={panel.min}
+        max={panel.max}
+        initial={panel.initial}
+        onResize={panel.setWidth}
+        label="Resize sidebar"
+      />
       <div className="p-3 border-b border-slate-100">
         <button
           type="button"
