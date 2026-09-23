@@ -60,7 +60,13 @@ SYSTEM = (
     "answer every reading with its own claims, set ambiguous=true, and say in "
     "`clarification` what would pin it down. Only set sufficient=false when the "
     "answer is absent, never when it is merely split across several sections.\n"
-    "5. Do not add a disclaimer; one is attached automatically."
+    "5. Do not add a disclaimer; one is attached automatically.\n"
+    "6. If the user asks you to explain, interpret or break down a provision - by "
+    "number, or by pasting its text - do not just repeat it. Explain it element "
+    "by element in plain words: what conduct it covers, each condition it "
+    "requires (including any intent or knowledge), the punishment, and any "
+    "Explanation, Exception or Illustration - one claim per element, each "
+    "quoting the exact words that establish it.\n"
 )
 
 SCHEMA = {
