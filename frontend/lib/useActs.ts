@@ -39,3 +39,9 @@ export function actListing(acts: Act[]): string {
   if (names.length <= 1) return names[0] ?? "";
   return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 }
+
+/** Forget the shared list, so the next reader fetches it again — after a source
+ *  is added or removed. */
+export function invalidateActs(): void {
+  pending = null;
+}

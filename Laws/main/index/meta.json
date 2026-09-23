@@ -1,9 +1,9 @@
 {
   "model": "BAAI/bge-m3",
   "dim": 1024,
-  "count": 2370,
-  "sections": 1354,
-  "children": 1016,
+  "count": 2406,
+  "sections": 1375,
+  "children": 1031,
   "granularity": "both",
   "normalised": true,
   "metric": "inner_product"

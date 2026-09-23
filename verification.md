@@ -211,6 +211,24 @@ page allocation is not ours to control.
 - **One bug in the checker itself** (D2, above) — the fourth such across three
   stages.
 
+## Stage 4 — the served store (`verify_supabase.py`)
+
+Supabase is loaded from the local read models and checked against them, never
+against its own load log: row counts per table, every section's text by hash,
+every vector bit for bit, and a search-parity probe — the same query vectors
+asked of FAISS and of Postgres, top 60 compared. It does not import the loader's
+row-building code, so a loader bug cannot pass by being mirrored. 13/13 on the
+first load; it runs again after every source added or removed from the app.
+
+## Before any of this — a person looks at the pages
+
+A parse can pass every check above and still be wrong: text that is all
+present, but in the wrong place. The statute parser given a judgment puts the
+whole of it in `preamble` — full coverage, nothing searchable. For documents
+other than the core Acts, the first check is therefore human: sampled pages
+shown beside both parsers' readings (`ingest_document.py`, or the app's
+add-source dialog), before anything is saved.
+
 ## Outstanding
 
 - **CrPC** — 1 lost line (`"313 CHAPTER XXIII"`, a heading whose footnote marker
@@ -231,6 +249,9 @@ page allocation is not ours to control.
 - **C6's 230 CrPC "sequence problems"** are probably not defects: a section
   whose `(1)` was repealed legitimately begins at `(2)`. The check cannot yet
   tell that apart from real loss, so its number should not be trusted.
+- **`verify_parsed.py` knows only the core Acts.** Added sources are checked by
+  the page review, by `verify_chunks.py` onward, and by `verify_supabase.py` —
+  not against the bdlaws oracle, which they would also be in.
 - **Amendment notes are separated but not linked.** All 541 CrPC endnotes are
   preserved in `dropped_as_furniture`, but not yet connected to the `N[` markers
   in section text that refer to them. Correctly excluded from the statute, not

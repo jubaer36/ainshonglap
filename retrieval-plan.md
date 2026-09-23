@@ -93,6 +93,13 @@ overbuilt at this scale.
 Retrieval must filter and cite on `act / chapter / section / page`, all of
 which already sit on every chunk.
 
+**What it became.** FAISS `IndexFlatIP` (exact) served the measured numbers.
+The corpus now lives in Supabase — pgvector with **no vector index**, so the
+search stays an exact inner-product scan — with FAISS kept locally as a logged
+fallback. Not for speed (2,370 vectors in-process take 0.17ms) but so there is
+one copy of the text and a source can be added without a redeploy. Results were
+shown identical to FAISS before the switch (`experiments.md` E19).
+
 ### Reranking — approaches considered
 
 Reordered after the baseline was measured: the dominant failure turned out to

@@ -85,6 +85,7 @@ export async function fetchActs(): Promise<Act[]> {
     actNo: (a.act_no as string) ?? null,
     sections: a.sections as number,
     sourcePdf: (a.source_pdf as string) ?? null,
+    core: Boolean(a.core),
   }));
 }
 

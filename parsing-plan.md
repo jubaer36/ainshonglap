@@ -297,20 +297,46 @@ retrieval needs no tree walk and citations are already page-level.
   statute text is government material, but confirm before anything ships.
 
 
-## Ingesting a PDF that is not one of the three acts
+## Ingesting a PDF that is not one of the three core Acts
 
-The parser takes any legal PDF. Structure detection is content-based — section
-numbering, font size relative to the page's body text, column geometry — and
-carries no per-act knowledge, so an unseen act goes through the same path.
+**A person chooses the parser, from the pages themselves.** The statute parser
+finds sections by their numbers ("302. …"). Given a document laid out any other
+way it does not fail — it finds no sections and puts the whole text in
+`preamble`, which nothing downstream reads. Three test documents showed it:
+
+| document | why the section rule missed | result |
+|---|---|---|
+| a court judgment | no numbered sections at all | 0 sections, all text in `preamble` |
+| Rules ("Rule 3. …") | the number must start the line | 0 sections |
+| a Bangla Act ("৩। …") | Bangla ends the number with `।`, not `.` | 0 sections |
+
+The script exits cleanly, chunking produces nothing, and `verify_parsed.py`
+would pass it — the text is all "recovered", just into a field nothing uses.
+Coverage checks cannot see misfiling; that lesson is older than this
+(`verification.md`, the CrPC endnotes).
+
+So adding a document goes through a review instead of a rule:
 
 ```bash
-python scripts/parse_law_pdf.py --pdf "Laws/The Arms Act, 1878.pdf" \
-    --name "The Arms Act, 1878" --act-no "XI of 1878" --slug arms
-python scripts/verify/verify_parsed.py          # then chunk_sections.py, build_index.py
+python scripts/ingest_document.py --pdf "Laws/main/The Arms Act, 1878.pdf" \
+    --slug arms --name "The Arms Act, 1878" --act-no "XI of 1878"
 ```
 
+It parses the whole PDF with PyMuPDF, samples four pages spread through it (one
+per quarter — front matter, body and end fail differently), runs Docling on
+just those, and shows each page's image beside both readings. The person keeps
+PyMuPDF or has Docling parse the whole document. The app's add-source dialog is
+the same review. PyMuPDF is refused outright when it found no sections.
+
+**Docling document mode** (`parse_docling_document.py`) is not Docling-as-OCR:
+it reads the layout — titles, headings, paragraphs, lists, tables — into
+heading-led passages, numbered in reading order and capped at 250 words, in the
+same JSON shape as a statute parse, so chunking, the catalog and the load take
+it unchanged. Its units are passages, not provisions, and chunks label them
+"Passage N". Tables are kept as Markdown inside their passage.
+
 Chunking and indexing discover whatever is in `Laws/main/parsed/`, so nothing
-downstream needs editing to add an act.
+downstream needs editing to add a source.
 
 Verified on the Arms Act 1878 (unseen, 17 pages): 32 sections, 30 titled, 8
 spanning a page break, 609 of 609 lines placed, 0 orphaned.

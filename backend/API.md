@@ -24,6 +24,12 @@ RAG_WARMUP=0 uvicorn app.main:app --reload   # skip model load (corpus endpoints
 | GET | `/api/conversations` | saved conversations (signed in) |
 | GET | `/api/conversations/{id}` | one conversation, with per-turn context and images |
 | PATCH | `/api/conversations/{id}` | rename one |
+| GET | `/api/sources/admin` | may the caller manage sources? |
+| POST | `/api/sources` | upload a PDF; starts its review (admin) |
+| GET | `/api/sources/jobs/{id}` | job progress, and the review when ready (admin) |
+| POST | `/api/sources/jobs/{id}/choose` | `{"parser": "pymupdf"\|"docling"}` — index it (admin) |
+| POST | `/api/sources/jobs/{id}/discard` | abandon an add before indexing (admin) |
+| DELETE | `/api/sources/{slug}` | remove a source; core Acts refused (admin) |
 | POST | `/api/conversations/{id}/name` | name one from its summary |
 | DELETE | `/api/conversations/{id}` | delete one |
 | POST | `/api/conversations/import` | adopt conversations made before signing in |
@@ -91,7 +97,7 @@ grounded answer", which makes "which Act did you mean?" indistinguishable from
 | `legal` | false | 1+ | retrieved and generated, every claim through C2/C3 below |
 | `meta` | false | 0 | about the assistant, assembled from the catalog manifest |
 | `general` | false | 0 | **not** a legal question; the model's own knowledge, uncited and unchecked |
-| `out_of_scope` | true | 0 | a legal question about law outside the three Acts. Nothing was searched. |
+| `out_of_scope` | true | 0 | a legal question about law outside the Acts held. Nothing was searched. |
 | `clarify` | true | 0 | the request needs one more detail — an ambiguous section number, a subjective selection |
 | `refused` | true | 0 | retrieval ran and nothing survived the citation gates |
 
@@ -354,6 +360,25 @@ The retrieval half alone, with dense and reranker scores per hit. `rerank=false`
 gives the dense-only ordering — the same code path the eval scripts measure, so
 served and measured numbers cannot drift.
 
+## Managing sources
+
+The core Acts (`RAG_CORE_ACTS`, default `crpc,penal,evidence`) are permanent.
+Any other source can be added or removed while the app runs, by a signed-in
+user whose email is in `ADMIN_EMAILS`. That check is made on the verified
+token; the frontend only hides the controls from everyone else. `/api/acts`
+carries `core: true` for the permanent ones.
+
+Adding is two steps with a person in between. `POST /api/sources` saves the PDF
+to `Laws/main/`, parses it with PyMuPDF and previews Docling on four sampled
+pages; the job then waits in `review`, carrying each page as an image beside
+both parsers' output. `choose` indexes it with the chosen parser: parse, chunk,
+embed (new text only — every known vector is reused), catalog, load into
+Supabase, verify. Removing deletes from Supabase first, moves the local files to
+`Laws/removed/<slug>/`, and rebuilds. Jobs run one at a time on one worker, so
+two index rebuilds can never overlap; they are held in memory and forgotten on
+restart, which loses nothing — an Act is either loaded (it has a `law_loads`
+commit marker) or it is not.
+
 ## Where the statute text comes from
 
 Supabase, always first. The catalog (exact lookups) is loaded from the `law_*`
@@ -458,34 +483,47 @@ loudly instead of returning prose.
 
 ```
 app/rag/
-  config.py     models, paths, k values
-  encoder.py    BGE-M3 query/document embedding
-  store.py      FAISS index + chunk records
-  reranker.py   cross-encoder (E4)
-  pipeline.py   retrieve() — dense, dedupe, rerank
-  llm.py        Groq / OpenRouter / Gemini, JSON-schema output
-  catalog.py    structural read side of catalog.sqlite — exact fetch by
-                coordinates, parameterized SQL, empty on a bad coordinate
-  plan.py       the planner: question -> category + coordinates, then
-                validated against the catalog
-  execute.py    one executor per category; plan -> Answer
-  answer.py     prompt, generation, gating, refusal
-  verify.py     C2 + C3 citation gates
-  citations.py  chunk metadata -> Citation
-  library.py    browsable corpus (older in-memory view; catalog.py supersedes
-                it for structural queries)
-  refine.py     the pattern router, used only when RAG_PLAN=0
-  speech.py     Deepgram STT — audio -> transcript, never an answer
-  memory.py     rolling conversation summary; prose from a model, section keys
-                from code
-  keyring.py    several API keys per provider: rotation, and failover on 429
-  quota.py      per (model, key) exhaustion and cooldown, for fallback and the picker
-  present.py    Answer -> AssistantMessage
+  config.py        models, paths, k values, CORE_ACTS
+  acts.py          which Acts are held — keys, short names, scope — from the catalog
+  catalog_schema.py  the catalog's table layout, shared by the build and corpus_db
+  corpus_db.py     the corpus from Supabase: catalog cached in memory, vector search by RPC
+  fallback.py      logs every time the local files answer instead of Supabase
+  encoder.py       BGE-M3 query/document embedding
+  store.py         local FAISS index + chunk records — the fallback
+  reranker.py      cross-encoder (E4)
+  pipeline.py      retrieve() — search, collapse to sections, rerank
+  llm.py           Groq / Inception / OpenRouter / Gemini, JSON-schema output
+  catalog.py       exact fetch by coordinates, parameterized SQL, empty on a bad
+                   coordinate — same queries whether the catalog came from Supabase
+                   or the local file
+  plan.py          the planner: question -> category + coordinates, validated
+                   against the catalog; scope and allowed Acts read from it
+  execute.py       one executor per category; plan -> Answer
+  answer.py        prompt, generation, gating, refusal
+  verify.py        C2 + C3 citation gates
+  citations.py     retrieved section -> Citation
+  library.py       browsable corpus for the side panels, read from the catalog
+  refine.py        the pattern router, used only when RAG_PLAN=0
+  speech.py        Deepgram STT — audio -> transcript, never an answer
+  vision.py        OpenRouter vision — one page image -> text
+  memory.py        rolling conversation summary + previous exchange verbatim;
+                   section keys from code
+  naming.py        names a conversation from its summary, on its own key
+  keyring.py       several API keys per provider: rotation, and failover on 429
+  quota.py         per (model, key) exhaustion and cooldown, for fallback and the picker
+  trace.py         one log line per step
+  present.py       Answer -> AssistantMessage
+
+app/ingest/
+  sources.py       add/remove sources as background jobs, one at a time; core Acts refused
 ```
 
-Two read models, two jobs: **FAISS** answers "which provisions resemble this
-question", **`catalog.sqlite`** answers "which provisions *are* these". Both are
-rebuilt from the parsed JSON, which stays the only source of law.
+Two read models, two jobs: meaning search answers "which provisions resemble
+this question", the catalog answers "which provisions *are* these". Both are
+served from Supabase (`law_chunks` with pgvector; the `law_*` structural
+tables), with `chunks.faiss` and `catalog.sqlite` kept locally as a logged
+fallback. All of it is rebuilt from the parsed JSON, which stays the only
+source of law.
 
 `pipeline.retrieve()` is shared by the API and the eval scripts by design: they
 previously diverged, and the logged numbers described a pipeline nothing could

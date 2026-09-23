@@ -143,6 +143,8 @@ export interface Act {
   actNo: string | null;
   sections: number;
   sourcePdf: string | null;
+  /** A core Act cannot be removed (the server refuses regardless). */
+  core: boolean;
 }
 
 /** A section as it appears in a browse listing (no statutory text). */

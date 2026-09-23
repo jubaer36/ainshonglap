@@ -50,9 +50,11 @@ only the corpus endpoints are needed.
 ```
 app/
   main.py            app, CORS, lifespan warmup, /health
-  api/routes/        query.py, retrieve.py, citations.py, models.py
+  api/routes/        query, retrieve, citations, models, speech, conversations, sources
   models/schemas.py  Pydantic contract, mirrored by frontend/lib/types.ts
   rag/               the pipeline — see API.md for the file-by-file map
+  ingest/sources.py  add/remove sources as background jobs (admin, from the app)
+  db/                Supabase auth, conversations, uploads
 scripts/             ingestion + tooling: parse, chunk, index, eval, rerank, REPLs
   verify/            correctness checks, run against the source not the parser's stats
   experiments/       measurement; nothing here runs in the product
@@ -88,8 +90,10 @@ The planner runs on Groq `gpt-oss-120b` on `GROQ_API_KEY_PLANNER` — its own ke
 outside the generators' rotation — with Gemini 3.5 Flash Lite as the fallback
 (E16). Both are marked `internal` so neither appears as a selectable answer
 model.
-`app/rag/catalog.py` executes them against `Laws/main/catalog.sqlite` with
-parameterized SQL, and `app/rag/execute.py` holds one executor per category.
+`app/rag/catalog.py` executes them with parameterized SQL against the catalog —
+loaded from Supabase into memory (`corpus_db.py`), with `Laws/main/catalog.sqlite`
+as the logged fallback — and `app/rag/execute.py` holds one executor per
+category. Which Acts exist comes from the catalog too (`acts.py`).
 The old pattern router survives behind `RAG_PLAN=0` as an outage switch.
 
 The legal path retrieves 20 distinct section candidates, cross-encoder reranks
@@ -106,7 +110,7 @@ python scripts/parse_law_pdf.py --all    # PDFs   -> Laws/main/parsed/*.json
 python scripts/verify/verify_parsed.py          #   vs the PDF + the bdlaws oracle
 python scripts/chunk_sections.py         # parsed -> Laws/main/chunks/*.json
 python scripts/verify/verify_chunks.py          #   vs the parsed JSON
-python scripts/build_index.py            # chunks -> BGE-M3 vectors + FAISS
+python scripts/build_index.py            # chunks -> BGE-M3 vectors + FAISS (reuses known vectors)
 python scripts/build_catalog.py          # parsed -> Laws/main/catalog.sqlite
 python scripts/verify/verify_catalog.py         #   vs the parsed JSON
 python scripts/load_supabase.py --all    # read models -> Supabase (migration 002)
@@ -115,17 +119,20 @@ python scripts/eval_retrieval.py         #   Recall@k / MRR / Act accuracy
 python scripts/rerank.py --topk 20       #   dense vs + reranker, with delta
 ```
 
-Ingest a PDF that is not one of the three acts — chunking and indexing discover
-whatever the parser wrote, so nothing downstream needs editing:
+Add a source other than the core Acts — the page review decides the parser,
+and chunking and indexing discover whatever was parsed, so nothing downstream
+needs editing:
 
 ```bash
-python scripts/parse_law_pdf.py --pdf "Laws/The Arms Act, 1878.pdf" \
-    --name "The Arms Act, 1878" --act-no "XI of 1878" --slug arms
+python scripts/ingest_document.py --pdf "Laws/main/The Arms Act, 1878.pdf" \
+    --slug arms --name "The Arms Act, 1878" --act-no "XI of 1878"
+python scripts/remove_act.py --act arms          # never a core Act
 ```
 
-`--backend auto` measures text per page and falls back to Docling (OCR) below
-120 chars/page, i.e. for scans. Docling is much worse wherever PyMuPDF works
-(5 of 13 sections on a 6-page sample) — see `parsing-plan.md`.
+The review samples four pages and shows each beside PyMuPDF's reading (numbered
+sections) and Docling's (page layout). Choosing Docling parses the whole
+document into heading-led passages (`parse_docling_document.py`). The app's
+sidebar does the same for admins, through `app/ingest/sources.py`.
 
 Measurement lives in `scripts/experiments/`: `eval_retrieval.py`, `rerank.py`,
 `fit_threshold.py`, `experiment_retrieval.py` (prefix, chunk budget),
@@ -152,7 +159,9 @@ inside the pipeline would surface as a false refusal. Requests pin
 
 ## Current limitations
 
-- only the CrPC, Penal Code and Evidence Act are served
+- the three core Acts plus the Arms Act, 1878 are served; retrieval metrics describe the core three
+- a Docling-parsed source is cited as "Section N", not "Passage N" — the catalog does not record document type yet
+- `refine.py` (the old router, `RAG_PLAN=0` only) and `verify_parsed.py` still know only the core Acts
 - legal generation sees eight reranked sections, limiting broad coverage
 - a question answered by a burden *allocation* rather than a stated rule is
   refused: the generator prompt forbids reasoning from the provisions (E17)

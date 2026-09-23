@@ -8,14 +8,16 @@ is repeated here.
 
 | | |
 |---|---|
-| Corpus | 3 Acts in `Laws/main/` — CrPC 1898 (508 sections), Penal Code 1860 (557), Evidence Act 1872 (182) |
-| Parsing | PyMuPDF + a rule-based legal-structure parser. Deterministic: re-running reproduces byte-identical JSON |
-| Read models | FAISS (2,320 vectors) for "what resembles this"; `catalog.sqlite` (1,247 sections, 76 chapters, 878 cross-references) for "which provisions *are* these". Both rebuildable from the parsed JSON |
+| Corpus | 3 **core** Acts — CrPC 1898 (508 sections), Penal Code 1860 (557), Evidence Act 1872 (182) — plus added sources (currently the Arms Act, 1878, 32 sections) |
+| Parsing | PyMuPDF + a rule-based legal-structure parser for statutes; Docling by layout for anything else — a person picks per document. Deterministic: re-running reproduces byte-identical JSON |
+| Read models | Served from **Supabase**: pgvector (2,370 vectors) for "what resembles this", the `law_*` tables for "which provisions *are* these". `chunks.faiss` and `catalog.sqlite` kept locally as a logged fallback. All rebuildable from the parsed JSON |
 | Routing | Model-authored plan → validated coordinates → one executor per category |
 | Generation | Strict JSON schema, C2/C3 citation gates, server-side disclaimer |
-| Serving | FastAPI, planner path live; voice, images, conversation memory, optional accounts |
+| Serving | FastAPI, planner path live; voice, images, conversation memory, optional accounts, sources managed by admins |
+| Interface | Next.js, responsive phone to laptop; Bangla name and logo throughout |
 
-**Measured retrieval** (608 external gold questions, ±3.7pp CI):
+**Measured retrieval** (608 external gold questions, ±3.7pp CI, over the three
+core Acts; identical after the move to Supabase — E19):
 
 | | dense | + reranker |
 |---|---|---|
@@ -207,6 +209,34 @@ prompts or full answers.
 - The model picker returned `null` on an empty list, so a failing `/api/models`
   looked identical to a feature that did not exist.
 
+## The interface, phone to laptop
+
+Screenshotted at five widths before and after, not judged from the code. On a
+phone the header's buttons overlapped the name and the input toolbar's controls
+overlapped each other; at 1024px both side panels docked at once and left the
+chat ~350px wide — narrower than a phone. Now the conversation sidebar docks
+from 1024px and the references panel from 1280px, each sliding over the chat
+below that and collapsing again when a window narrows; docked panels can be
+dragged to any width. The input grows with its text up to 40% of the screen.
+
+The name is আইনসংলাপ everywhere a person reads it, and the logo is served as
+small crops — the mark alone at avatar size, where the wordmark would be
+unreadable — rather than the 1.2 MB original on every answer.
+
+## Sources are managed from the app
+
+The three core Acts are fixed — the service, the API and `remove_act.py` all
+refuse to remove them. Any other source is added or removed from the sidebar by
+an admin (`ADMIN_EMAILS`, checked on the verified token). Adding shows the
+sampled pages as images beside both parsers' output and indexes with the one
+chosen; the running app picks the change up without a restart.
+
+`build_index` now reuses the vector of every chunk it has seen, so an index
+rebuild with nothing new takes ~1s and produces byte-identical files, and
+adding a source embeds only that source. Checked with a real add-then-remove
+cycle: 1 chunk embedded out of 2,371, 13/13 Supabase checks after each step,
+and the index back byte-for-byte afterwards.
+
 ## The Act list is data
 
 A fourth Act loaded and searched correctly — and still could not be answered
@@ -315,6 +345,11 @@ two Acts was unrepresentable, because the planner's `act` field held one slug �
 so "the first section of both" returned one Act's and dropped the other without
 a word (E18). `acts` is now a list.
 
-Next, in order: measure `FINAL_K=8` against 5, re-run `plan_cases.py` on the
-current planner model, then replace the fixed k with a fitted threshold plus
-facet retrieval.
+Sources can now be added and removed while the app runs, with the core Acts
+fixed and every Act-dependent list read from the catalog. What that has not
+done is re-measure anything: the retrieval numbers describe the three core
+Acts, and each added source changes the corpus they describe.
+
+Next, in order: read `check_questions.py`'s 15 answers, measure `FINAL_K=8`
+against 5, re-run `plan_cases.py` on the current planner model, then replace the
+fixed k with a fitted threshold plus facet retrieval.

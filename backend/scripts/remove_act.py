@@ -23,16 +23,19 @@ What it does, in order:
                   stores by position; the loader skips any Act whose content did
                   not change. Then verify_supabase.py checks both stores agree.
 
-Step 2 re-embeds every remaining Act (a few minutes on a GPU). `--supabase-only`
-skips steps 2 and 3 for a fast removal, and says plainly that the fallback still
+Step 2 embeds nothing: build_index reuses every remaining chunk's vector.
+`--supabase-only` skips steps 2 and 3, and says plainly that the fallback still
 holds the Act.
+
+The core Acts (config.CORE_ACTS — the CrPC, the Penal Code, the Evidence Act)
+are refused outright.
 
 The source PDF is left where it is. Nothing re-adds an Act on its own: the
 pipeline reads Laws/main/parsed/, and the Act's file is no longer there. To put
 it back, move the two files back and run chunk -> index -> catalog -> load.
 
-Why a script and not a button: there are no admin accounts, so an endpoint that
-removed an Act would let any visitor empty the corpus.
+The frontend does the same through /api/sources for users listed in
+ADMIN_EMAILS; this is the command-line route to it.
 """
 
 from __future__ import annotations
@@ -68,6 +71,9 @@ def main() -> None:
                     help="remove it from Supabase only; the local fallback keeps it")
     args = ap.parse_args()
     slug = args.act.strip().lower()
+    if slug in config.CORE_ACTS:
+        raise SystemExit(f"'{slug}' is a core Act and cannot be removed "
+                         f"(core: {', '.join(sorted(config.CORE_ACTS))}).")
 
     from app.db import supabase
 

@@ -24,14 +24,18 @@ Supporting detail, read only when working on that area:
 
 ## Scope
 
-Work only with the acts in **`Laws/main/`** — the Code of Criminal Procedure
-1898, the Penal Code 1860, and the Evidence Act 1872, plus their parsed JSON in
-`Laws/main/parsed/`.
+The corpus is what is in **`Laws/main/`**. Three **core Acts** are permanent —
+the Code of Criminal Procedure 1898, the Penal Code 1860, and the Evidence Act
+1872 (`config.CORE_ACTS`); nothing may remove them. Other sources are added one
+at a time, deliberately — through the app's add-source review or
+`scripts/ingest_document.py` — and can be removed again. The Arms Act, 1878 is
+currently loaded as one.
 
-The other ~31 PDFs sitting in `Laws/` are out of scope for now, and include
-duplicate copies of acts already in `main/`. Do not glob `Laws/*.pdf` — it would
-pull in duplicates and out-of-scope material. Everything outside `Laws/main/`
-is gitignored.
+The ~31 other PDFs in `Laws/` are candidates, not corpus, and include duplicate
+copies of acts already in `main/` (a `(bdlaws.minlaw.gov.bd copy)` beside the
+original). Do not glob `Laws/*.pdf` — it would pull in duplicates and material
+nobody chose to add. Everything outside `Laws/main/` is gitignored, including
+`Laws/review/` (parse reviews) and `Laws/removed/` (files of removed sources).
 
 `Laws/bdlaws/bdlaws.jsonl` is an independently scraped copy of all Bangladesh
 acts. It is a **validation oracle only** — never a content source. Statutory
@@ -60,6 +64,7 @@ Secrets live in `backend/.env.local` (gitignored). Every job that runs on
 | `INCEPTION_API_KEY` | Mercury, the cross-provider quota fallback |
 | `DEEPGRAM_API_KEY` / `OPENROUTER_API_KEY` | voice / vision and OpenRouter routes |
 | `SUPABASE_*`, optional `GEMINI_API_KEY` | accounts and storage, optional generator |
+| `ADMIN_EMAILS` | signed-in users allowed to add/remove sources from the frontend |
 
 `app/rag/keyring.py` discovers every `GROQ_API_KEY*` and uses them in turn:
 rotation per call so the daily caps drain evenly, immediate failover to the next
@@ -94,7 +99,7 @@ python scripts/parse_law_pdf.py --all    # PDFs    -> Laws/main/parsed/*.json
 python scripts/verify/verify_parsed.py          #   check vs the PDF + bdlaws oracle
 python scripts/chunk_sections.py         # parsed  -> Laws/main/chunks/*.json
 python scripts/verify/verify_chunks.py          #   check vs the parsed JSON
-python scripts/build_index.py            # chunks  -> BGE-M3 vectors + FAISS
+python scripts/build_index.py            # chunks  -> BGE-M3 vectors + FAISS (reuses known vectors; --full re-embeds)
 python scripts/build_catalog.py          # parsed  -> Laws/main/catalog.sqlite
 python scripts/verify/verify_catalog.py         #   check vs the parsed JSON
 python scripts/load_supabase.py --all    # read models -> Supabase law_* tables (002)
@@ -135,6 +140,14 @@ locally, then `load_supabase.py` + `verify_supabase.py`. A model names coordinat
 (`app/rag/plan.py`); `app/rag/catalog.py` fetches them with parameterized SQL.
 The model never writes SQL, and a coordinate the catalog does not have comes
 back empty rather than as the nearest match.
+
+**Core Acts are fixed; everything else is a source.** The CrPC, the Penal Code
+and the Evidence Act (`config.CORE_ACTS`) can never be removed — the service,
+the API and `remove_act.py` all refuse. Other sources are added and removed
+from the frontend by admins (`app/ingest/sources.py`, `/api/sources`): upload,
+review sampled pages against both parsers, choose, and the job indexes it.
+Embedding reuses every known vector (`build_index.build`), so adding a source
+embeds only that source.
 
 **Which Acts exist is data, not code.** `app/rag/acts.py` answers every
 "which Acts do we hold?" from the catalog: citation keys, short names, the

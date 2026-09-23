@@ -34,7 +34,6 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 from app.rag import config  # noqa: E402
-from app.rag.encoder import embed_texts, load_encoder  # noqa: E402
 from chunk_sections import hierarchy_path, ntok  # noqa: E402
 
 
@@ -88,31 +87,47 @@ def load_chunks(granularity: str = "both") -> list[dict]:
     return out
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--batch", type=int, default=16)
-    ap.add_argument("--device", default=None)
-    ap.add_argument("--granularity", choices=["both", "section"], default="both",
-                    help="both = E5 dual granularity (default); section = E5 off")
-    args = ap.parse_args()
+def build(granularity: str = "both", reuse: bool = True, log=print,
+          batch: int | None = None) -> dict:
+    """Write chunks.json, embeddings.npy, chunks.faiss and meta.json. Returns meta.
 
+    `reuse`: a chunk whose exact text already has a vector in the current index
+    keeps that vector; only new or changed text is embedded. Adding one Act then
+    embeds that Act alone instead of all ~2,300 chunks again, and removing one
+    embeds nothing. The order of the output is the same as a full rebuild —
+    Acts by slug, each Act's sections then its subsections — so a reused index
+    and a rebuilt one line up row for row.
+
+    Embeds through `encoder.embed`, the same cached model the API loads, so
+    calling this from the running server does not load a second copy onto the
+    GPU.
+    """
     import faiss
 
-    config.INDEX_DIR.mkdir(parents=True, exist_ok=True)
-    chunks = load_chunks(args.granularity)
-    n_child = sum(1 for c in chunks if c["metadata"].get("granularity") == "child")
-    print(f"chunks: {len(chunks)}  ({len(chunks)-n_child} section, {n_child} child)")
+    from app.rag.encoder import embed
 
-    device = args.device or config.device()
-    print(f"loading {config.EMBED_MODEL} on {device} ...")
-    t0 = time.time()
-    tok, model, device = load_encoder(config.EMBED_MODEL, device)
-    print(f"  loaded in {time.time()-t0:.0f}s")
+    config.INDEX_DIR.mkdir(parents=True, exist_ok=True)
+    chunks = load_chunks(granularity)
+    n_child = sum(1 for c in chunks if c["metadata"].get("granularity") == "child")
+    log(f"chunks: {len(chunks)}  ({len(chunks)-n_child} section, {n_child} child)")
+
+    known: dict[str, np.ndarray] = {}
+    if reuse and (config.INDEX_DIR / "embeddings.npy").exists():
+        old = json.loads((config.INDEX_DIR / "chunks.json").read_text(encoding="utf-8"))
+        old_emb = np.load(config.INDEX_DIR / "embeddings.npy")
+        if len(old) == len(old_emb):
+            known = {c["text"]: old_emb[i] for i, c in enumerate(old)}
 
     texts = [c["text"] for c in chunks]
+    todo = [t for t in dict.fromkeys(texts) if t not in known]
+    log(f"  reusing {len(texts) - len(todo)} vectors, embedding {len(todo)} new")
     t0 = time.time()
-    emb = embed_texts(texts, tok, model, device, batch=args.batch, progress=True)
-    print(f"  embedded {len(texts)} chunks in {time.time()-t0:.0f}s  dim={emb.shape[1]}")
+    if todo:
+        fresh = embed(todo, batch=batch)
+        known.update(zip(todo, fresh))
+    emb = np.vstack([known[t] for t in texts]).astype("float32") if texts \
+        else np.zeros((0, 1024), dtype="float32")
+    log(f"  embedded in {time.time()-t0:.0f}s  dim={emb.shape[1]}")
 
     index = faiss.IndexFlatIP(emb.shape[1])
     index.add(emb)
@@ -121,17 +136,24 @@ def main() -> None:
     (config.INDEX_DIR / "chunks.json").write_text(
         json.dumps(chunks, indent=2, ensure_ascii=False), encoding="utf-8"
     )
-    (config.INDEX_DIR / "meta.json").write_text(
-        json.dumps(
-            {"model": config.EMBED_MODEL, "dim": int(emb.shape[1]),
-             "count": len(chunks), "sections": len(chunks) - n_child,
-             "children": n_child, "granularity": args.granularity,
-             "normalised": True, "metric": "inner_product"},
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
-    print(f"  -> {config.INDEX_DIR}  ({index.ntotal} vectors)")
+    meta = {"model": config.EMBED_MODEL, "dim": int(emb.shape[1]),
+            "count": len(chunks), "sections": len(chunks) - n_child,
+            "children": n_child, "granularity": granularity,
+            "normalised": True, "metric": "inner_product"}
+    (config.INDEX_DIR / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    log(f"  -> {config.INDEX_DIR}  ({index.ntotal} vectors)")
+    return meta
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--batch", type=int, default=16)
+    ap.add_argument("--granularity", choices=["both", "section"], default="both",
+                    help="both = E5 dual granularity (default); section = E5 off")
+    ap.add_argument("--full", action="store_true",
+                    help="re-embed every chunk instead of reusing unchanged vectors")
+    args = ap.parse_args()
+    build(args.granularity, reuse=not args.full, batch=args.batch)
 
 
 if __name__ == "__main__":

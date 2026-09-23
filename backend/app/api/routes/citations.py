@@ -20,6 +20,9 @@ class ActSummary(BaseModel):
     act_no: str | None = None
     sections: int
     source_pdf: str | None = None
+    # A core Act (config.CORE_ACTS) cannot be removed; the frontend shows a lock
+    # instead of a remove button. The server refuses regardless.
+    core: bool = False
 
 
 class SectionSummary(BaseModel):
@@ -51,7 +54,9 @@ class SectionPage(BaseModel):
 @router.get("/acts", response_model=list[ActSummary])
 def list_acts() -> list[ActSummary]:
     """The indexed acts and how many sections of each are in the index."""
-    return [ActSummary(**a) for a in library.acts()]
+    from app.rag import config
+
+    return [ActSummary(**a, core=a["slug"] in config.CORE_ACTS) for a in library.acts()]
 
 
 @router.get("/sections", response_model=SectionPage)

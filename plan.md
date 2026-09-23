@@ -61,7 +61,8 @@ because answering from memory about a statute we do not hold is the E1 failure.
 | 6 | conversation memory | **done**, as a rolling summary rather than typed scope |
 | 6b | accounts and session storage | **done** |
 | 7 | evaluation and rollout | **the standing gap** |
-| 8 | corpus in Supabase (Postgres + pgvector) | **served** — Supabase primary, local files as a logged fallback; 15-question check next |
+| 8 | corpus in Supabase (Postgres + pgvector) | **done** — Supabase primary, local files as a logged fallback (E19) |
+| 9 | sources beyond the core Acts | **done** — added and removed from the app; core Acts fixed |
 
 Two rules hold across every phase, each learned from a failure. **`act` filters
 a structural plan but is only a hint on a semantic one** — a scenario planner
@@ -120,8 +121,9 @@ refusal in both directions; latency and token usage per stage.
 
 ## Phase 8 — the corpus in Supabase
 
-Answers read `catalog.sqlite`; meaning search reads FAISS + `chunks.json`; the
-side panels read `chunks.json` again. Three files, and two copies of the text.
+Before this, answers read `catalog.sqlite`; meaning search read FAISS +
+`chunks.json`; the side panels read `chunks.json` again. Three files, and two
+copies of the text.
 Moving them into Postgres gives one copy, and turns "add an Act" from rebuild +
 restart into a load — which is the brief's *incremental document-update
 demonstration*.
@@ -136,26 +138,50 @@ and the models (embedding, reranking, generation) still run in the backend.
 | C | `scripts/verify/verify_supabase.py` — counts, text bytes, vectors, search parity | all pass |
 | D | Supabase primary in `catalog.py`, `pipeline.py`, `library.py`; local only on failure, logged | outage simulated |
 | E | same results from both stores | **17/17 catalog, 10/10 retrieval identical** |
-| F | `scripts/check_questions.py` — 15 questions, every planner path | read by hand |
+| F | `scripts/check_questions.py` — 15 questions, every planner path | **to be read by hand** |
 
 Rules: **exact vector search** (no HNSW — approximate search would move the
 numbers); the small fixed tables cached at startup so planner validation makes
 no per-check network call; the PDFs and parsed JSON stay the source of law.
+
+## Phase 9 — sources beyond the core Acts
+
+The three core Acts (`config.CORE_ACTS`) are permanent. Anything else is a
+source an admin adds or removes from the app, and the system adjusts without a
+code change: which Acts exist — the planner's scope, citation keys, the
+"outside …" messages, the frontend's lists — is read from the catalog
+(`app/rag/acts.py`), never listed in code.
+
+Adding keeps a person in the loop, because no rule reliably judges whether a
+parse is right: four sampled pages are shown beside what PyMuPDF (numbered
+sections) and Docling (page layout) read from them, and the person chooses.
+Indexing embeds only the new text — `build_index` reuses every known vector —
+and the running app picks the change up without a restart.
+
+Open here: a Docling source is still cited as "Section N" rather than "Passage
+N" (the catalog does not record document type), and the admin UI has not been
+exercised signed in.
 
 ## Backlog
 
 - Finish E8 — the over-refusal it was meant to measure is now visible in
   ordinary use, and E17 traced one instance to the generator prompt.
 - Drop planner search terms with no lexical support in the catalog (E17 found
-  the planner emitting `presumption of innocence`, a phrase absent from all
-  three Acts).
+  the planner emitting `presumption of innocence`, a phrase absent from the
+  corpus).
+- Record each source's document type in the catalog, so a Docling source is
+  cited by passage, and teach `verify_parsed.py` about added sources.
+- Retire `refine.py` (the old router, `RAG_PLAN=0` only), which still names
+  the core Acts outright.
+- Re-measure retrieval with the added sources in the corpus — the published
+  numbers describe the three core Acts.
 - Voice: section-number accuracy on real speech; cost of the Bangla/English
   language choice (`deepgram_stt.py --compare`).
 - Parser gaps from E12: five continuation fragments re-detected as sections, and
   a missing `crpc-s99A`.
 - Measure query rewriting — 28.6% of gold sections are never retrieved.
 - Evaluate whether C4 entailment checking catches failures beyond quote fidelity.
-- Parse the remaining in-scope Acts after deduplicating source PDFs.
+- Add the remaining candidate Acts from `Laws/` through the review, one per duplicate pair.
 - Attach parsed gloss titles to their subsections; address 39 oversized chunks.
 - Source the missing CrPC Second Schedule.
 - Stream stage events so the frontend's waiting messages become observed rather
@@ -167,7 +193,9 @@ no per-check network call; the PDFs and parsed JSON stay the source of law.
 ## Guardrails
 
 - PDFs remain the content source; the bdlaws oracle is validation-only.
-- SQLite and FAISS are rebuildable read models, not new sources of law.
+- Supabase, `catalog.sqlite` and FAISS are rebuildable read models, not new
+  sources of law; the local two are a fallback whose every use is logged.
+- The core Acts are never removed.
 - The model never writes executable SQL or unvalidated statutory coordinates.
 - Exact requests never silently degrade to nearest-neighbour retrieval.
 - Nothing ships without a pinned evaluation and a before/after result. At n=608

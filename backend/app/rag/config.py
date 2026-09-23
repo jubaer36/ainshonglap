@@ -21,6 +21,13 @@ INDEX_DIR = LAWS / "index"
 # Rebuildable: the parsed JSON stays the source of truth.
 CATALOG = LAWS / "catalog.sqlite"
 
+# The Acts the assistant is built around. They cannot be removed — not from the
+# frontend, not through the API, not with scripts/remove_act.py. Every other
+# source can be added and removed while the app runs (app/ingest/sources.py).
+CORE_ACTS = frozenset(
+    s.strip().lower() for s in os.getenv("RAG_CORE_ACTS", "crpc,penal,evidence").split(",")
+    if s.strip())
+
 # The statute text is read from Supabase (the law_* tables, migration 002).
 # catalog.sqlite and the FAISS index are kept ONLY as a fallback for when
 # Supabase cannot answer — see app/rag/fallback.py, which logs every use.

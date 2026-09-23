@@ -943,9 +943,51 @@ The real candidates, in order of expected value:
 2.10s, 285 in / 728 out. That closes the "oss120 unprobed" item from E11 and is
 what made it eligible to be the default generator.
 
+## E19 — moving the corpus to Supabase changed nothing it should not have
+
+**Objective.** Serve the corpus from Supabase (Postgres + pgvector) instead of
+local files, and show the move altered where results come from, not what they
+are. The retrieval numbers were measured on FAISS `IndexFlatIP` — an exact scan
+— and a store that returned different neighbours would silently invalidate them.
+
+**Configuration.** `law_*` tables (migration 002), loaded by
+`load_supabase.py` from the local read models with **no re-embedding**: vectors
+sent as text at float32's shortest round-trip precision. **No vector index** —
+pgvector's HNSW/IVF are approximate, and at 2,320 rows an exact scan costs a
+few milliseconds. `law_match_chunks` orders by `<#>`, pgvector's negative inner
+product, so the score it returns is the number FAISS returns.
+
+**Results.**
+
+| check | result |
+|---|---|
+| vectors round-tripped through the text encoding | 2,320 / 2,320 bit-identical |
+| `verify_supabase.py` (counts, text bytes, vectors, search) | 13 / 13 |
+| top-60 search on 60 probes, FAISS vs Postgres | 56 identical; 4 differ only in the order of equal-scoring chunks; max score gap 4.8e-7 |
+| catalog functions run against each store | 17 / 17 identical, row ids included |
+| `retrieve()` on 10 questions, top 20 sections | 10 / 10 same sections, same order, zero score gap |
+| rebuild with nothing new, reusing known vectors | byte-identical index files in 1.3s |
+
+The four tie-only differences are chunks with identical text — the 36
+subsection chunks that share an id with a sibling carry identical vectors, so
+the order between them is arbitrary in both stores. Grouping into sections
+removes the difference, which is why `retrieve()` matched exactly.
+
+**Found on the way.** The side panels read `chunks.json` while answers read the
+catalog, and the two disagreed on exactly five sections — page-break fragments
+glued onto the real text (`penal-s2`: 1,155 characters shown for a
+188-character section). Moving the panels to the catalog fixed it.
+
+**Decision.** Supabase is primary; the local files answer only when it fails,
+and every such use is logged as `FALLBACK`. A simulated outage made one network
+attempt for 51 catalog lookups (a 60-second breaker), and answers were
+identical. The 608-question eval was not re-run on Supabase: every component of
+`retrieve()` was shown identical instead, which is the stronger statement for a
+change meant to alter nothing.
+
 ---
 
-## What E2-E18 together establish
+## What E2-E19 together establish
 
 Both chunk-formatting knobs are flat — retrieval on this corpus is not limited
 by how chunks are labelled or sized. Ranking is where the gains were, exactly as

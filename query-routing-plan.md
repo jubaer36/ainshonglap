@@ -1,10 +1,12 @@
 # Query planning, structural lookup and broad-coverage retrieval
 
-> **Status.** The planner and the catalog are built and measured (E12, E13);
-> the executors, the threshold and conversation scope are not. Where the
-> implementation diverged from this design, the divergence is recorded in
-> *What was actually built* at the end — read that before treating anything
-> above it as current.
+> **Status.** The planner, catalog, executors and conversation memory are built
+> and served; the threshold and facet retrieval (`plan.md` phase 4) are not.
+> Where the implementation diverged from this design, the divergence is recorded
+> in *What was actually built* at the end — read that before treating anything
+> above it as current. In particular: FAISS and `catalog.sqlite` below are now
+> the local fallback, with Supabase serving both; and the Act list is read from
+> the catalog rather than assumed to be three.
 
 ## Problem statement
 
@@ -348,3 +350,18 @@ anticipate: a chapter number is **canonicalised to the Act's own numbering**
 (`16` → `XVI`). The catalog matches either, so this changes no result, but a
 plan carrying the reader's spelling leaks it into answer headings and breaks
 every equality check downstream. This was the only scope failure in E13.
+
+### Since: Acts are data, and the stores moved
+
+- **The planner's Acts come from the catalog.** Its prompt calls the Act list it
+  is shown the complete scope, and its schema's `acts` field — a list since E18,
+  once a single string that could not hold "the Evidence Act *and* the CrPC" —
+  accepts only slugs the catalog holds. A source added or removed changes the
+  planner's scope within a minute, with no code change (`app/rag/acts.py`).
+- **Both read models are served from Supabase** (`law_chunks` with pgvector,
+  exact search; the `law_*` structural tables, cached in memory for the
+  validator's many small lookups). The local FAISS index and `catalog.sqlite`
+  answer only when Supabase fails, and are logged when they do (E19).
+- **The three core Acts are fixed; other sources are added by admins** after a
+  page review, and removed the same way.
+

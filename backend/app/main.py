@@ -27,6 +27,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes.citations import router as citations_router
 from app.api.routes.conversations import router as conversations_router
+from app.api.routes.sources import router as sources_router
 from app.api.routes.models import router as models_router
 from app.api.routes.query import router as query_router
 from app.api.routes.speech import router as speech_router
@@ -136,6 +137,7 @@ app.include_router(retrieve_router)
 app.include_router(models_router)
 app.include_router(speech_router)
 app.include_router(conversations_router)
+app.include_router(sources_router)
 
 
 def _quota_state() -> dict:

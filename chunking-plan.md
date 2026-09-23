@@ -181,3 +181,10 @@ found across parsing and chunking have been in verification code, not data.
 - The duplicate sections behind the id collisions still exist in the parse —
   now safely disambiguated rather than silently colliding, but worth fixing at
   the parser.
+- **Sources parsed by Docling** (not numbered statutes — `parsing-plan.md`)
+  arrive as heading-led passages of at most 250 words and are chunked by the
+  same code, with the prefix reading "Passage N" instead of "Section N". The
+  three core Acts' chunks were confirmed byte-identical after that change.
+- **Subsection chunk ids are not unique**: 36 share an id with a sibling (e.g.
+  `crpc_s10_child4` twice). Harmless to FAISS, which works by position, so the
+  Supabase store keys chunks by position too.

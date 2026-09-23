@@ -109,6 +109,21 @@ def verify(token: str) -> dict | None:
         return None
 
 
+def is_admin(token: str | None) -> bool:
+    """Is this a signed-in user allowed to add and remove sources?
+
+    `ADMIN_EMAILS` in backend/.env.local — comma-separated. Checked against the
+    email in a VERIFIED token, so it cannot be claimed by sending a header; with
+    the variable unset, nobody is an admin and the controls do not appear.
+    """
+    claims = verify(token or "")
+    if not claims:
+        return False
+    allowed = {e.strip().lower() for e in _env("ADMIN_EMAILS").split(",") if e.strip()}
+    email = str(claims.get("email") or "").strip().lower()
+    return bool(email) and email in allowed and bool(claims.get("sub"))
+
+
 def user_id(token: str | None) -> str | None:
     """The signed-in user's id, or None for an anonymous request."""
     claims = verify(token or "")
