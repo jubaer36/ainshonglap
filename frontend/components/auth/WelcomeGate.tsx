@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useAuth } from "./AuthProvider";
+import { BrandMark } from "@/components/brand/BrandMark";
 
 interface WelcomeGateProps {
   onContinueAsGuest: () => void;
@@ -27,10 +28,8 @@ export function WelcomeGate({ onContinueAsGuest }: WelcomeGateProps) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-50 px-4">
       <div className="w-full max-w-md space-y-5">
         <div className="text-center space-y-1.5">
-          <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-xl bg-slate-900 font-serif text-sm font-bold text-white">
-            আইন
-          </div>
-          <h1 className="font-serif text-lg font-semibold text-slate-900">AinShonglap</h1>
+          <BrandMark size={96} variant="full" eager className="mx-auto rounded-2xl shadow-sm" />
+          <h1 className="font-serif text-lg font-semibold text-slate-900">আইনসংলাপ</h1>
           <p className="text-xs text-slate-500">
             Answers on Bangladesh criminal law, cited to the Code of Criminal
             Procedure 1898, the Penal Code 1860 and the Evidence Act 1872.

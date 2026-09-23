@@ -51,7 +51,9 @@ export function MemoryPanel({ memory, onForget, onActivateCitation }: MemoryPane
   }, [open]);
 
   const turns = memory?.turns ?? 0;
-  const hasMemory = Boolean(memory && (memory.summary || memory.sections.length));
+  const hasMemory = Boolean(
+    memory && (memory.summary || memory.sections.length || memory.last_question),
+  );
   const stale = Boolean(memory?.error);
 
   return (
@@ -64,7 +66,7 @@ export function MemoryPanel({ memory, onForget, onActivateCitation }: MemoryPane
             ? "What the assistant remembers from this conversation"
             : "Nothing remembered yet — ask a question first"
         }
-        className={`flex items-center gap-1.5 px-2 py-1 rounded-md border text-[11px] transition-colors ${
+        className={`flex items-center gap-1.5 whitespace-nowrap px-2 py-1 rounded-md border text-[11px] transition-colors ${
           stale
             ? "border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100"
             : hasMemory
@@ -75,9 +77,13 @@ export function MemoryPanel({ memory, onForget, onActivateCitation }: MemoryPane
         <span className="material-symbols-outlined text-[14px]">
           {stale ? "running_with_errors" : "psychology"}
         </span>
-        <span className="font-medium">
+        {/* Full label from sm up. On a phone the icon stands alone, with the
+            turn count once there is one — the label was the widest thing in a
+            toolbar that did not fit. */}
+        <span className="hidden sm:inline font-medium">
           {hasMemory ? `context · ${turns} turn${turns === 1 ? "" : "s"}` : "no context"}
         </span>
+        {hasMemory && <span className="sm:hidden font-medium">{turns}</span>}
       </button>
 
       {open && (
@@ -116,7 +122,8 @@ export function MemoryPanel({ memory, onForget, onActivateCitation }: MemoryPane
                 <div className="rounded-md bg-amber-50 border border-amber-200 px-2 py-1.5 text-[11px] text-amber-900">
                   <span className="font-medium">Not up to date. </span>
                   The summariser failed on the last turn ({memory?.error}), so
-                  this reflects the conversation before it.
+                  the summary reflects the conversation before it. The previous
+                  exchange below is current — it is copied, not summarised.
                 </div>
               )}
 
@@ -128,6 +135,27 @@ export function MemoryPanel({ memory, onForget, onActivateCitation }: MemoryPane
                   {memory?.summary || "(empty)"}
                 </p>
               </div>
+
+              {memory?.last_question && (
+                // Shown because the next question is read against it: the
+                // exact previous question and answer, kept word for word
+                // alongside the summary rather than folded into it.
+                <div>
+                  <div className="text-[10px] uppercase tracking-wide text-slate-400 mb-1">
+                    Previous exchange, word for word
+                  </div>
+                  <div className="space-y-1.5 text-[12px] leading-relaxed">
+                    <p className="text-slate-700">
+                      <span className="font-medium text-slate-900">You: </span>
+                      {memory.last_question}
+                    </p>
+                    <p className="text-slate-600 whitespace-pre-wrap max-h-40 overflow-y-auto">
+                      <span className="font-medium text-slate-900">Answer: </span>
+                      {memory.last_answer || "(not answered)"}
+                    </p>
+                  </div>
+                </div>
+              )}
 
               {memory && memory.sections.length > 0 && (
                 <div>

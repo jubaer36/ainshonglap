@@ -2,8 +2,10 @@
 
 The shape is: answer the question through the normal pipeline, then hand
 (previous summary + this question + this answer) to a small model and store the
-short summary it returns. Next turn, that summary is the context. The
-conversation stays one paragraph however long it runs.
+summary it returns. Next turn, that summary is the context — together with the
+previous question and answer kept word for word, since a follow-up leans
+hardest on exactly the turn a rolling summary compresses first. The context
+stays bounded however long the conversation runs.
 
 Summarisation uses Gemini 3.5 Flash Lite on a **second** API key
 (`GEMINI_API_KEY_2`), because it runs on every turn and should not compete for
@@ -42,8 +44,19 @@ KEY_ENV = "GEMINI_API_KEY_2"
 # Hard ceiling on what goes back into a prompt. The whole point of a rolling
 # summary is a bounded context; without a cap the model slowly writes a longer
 # summary each turn and the bound is fiction.
-MAX_SUMMARY_CHARS = int(os.getenv("RAG_MEMORY_CHARS", "700"))
+# The summary covers the whole conversation; the latest exchange is also kept
+# word for word (below), so the summary can afford to be a record rather than a
+# headline. 90 words was a headline: by the next question, what had just been
+# asked and answered was already paraphrased away.
+MAX_SUMMARY_CHARS = int(os.getenv("RAG_MEMORY_CHARS", "1400"))
 MAX_SECTIONS = 12
+# The previous question and answer, verbatim — written by code, never by the
+# summariser. A follow-up leans hardest on the turn right before it ("what if
+# he had survived?", "and the second one?"), which is exactly the turn a
+# rolling summary compresses first. Capped so a long listing cannot swamp the
+# planner's prompt.
+MAX_LAST_QUESTION_CHARS = 1000
+MAX_LAST_ANSWER_CHARS = 1500
 
 SYSTEM = (
     "You maintain a running summary of a conversation between a user and a "
@@ -53,7 +66,11 @@ SYSTEM = (
     "and the assistant's newest answer. Return ONE updated summary that "
     "replaces the previous one.\n\n"
     "Rules:\n"
-    "1. Keep it under 90 words. It is a memory aid, not a transcript.\n"
+    "1. Keep it under 180 words. It is a memory aid, not a transcript — but "
+    "a follow-up will be read against it, so keep enough to answer 'what did "
+    "I ask about earlier, and what did you say?' for EACH turn: what the user "
+    "asked, in their terms, and what the assistant concluded, with the "
+    "sections it relied on.\n"
     "2. Copy every section number and Act name EXACTLY as written — '302' must "
     "never become '303', 'Penal Code' must never become 'Criminal Code'. These "
     "are the load-bearing details; prose can be lost, numbers cannot.\n"
@@ -87,19 +104,31 @@ class Memory:
     # conversation, but read by `naming.py`, which decides what to do with it:
     # a conversation of three refusals has no subject to name.
     answered: int = 0
+    # The latest exchange, word for word. Copied by code, so a summariser
+    # outage or a lossy paraphrase never costs the turn a follow-up needs most.
+    # `last_answer` is empty when that turn was not answered.
+    last_question: str = ""
+    last_answer: str = ""
     # Set when summarisation failed, so the caller can see that memory stopped
     # updating instead of silently going stale.
     error: str | None = None
 
     @property
     def empty(self) -> bool:
-        return not self.summary and not self.sections
+        return not self.summary and not self.sections and not self.last_question
 
     def as_prompt(self) -> str:
         """The context block handed to the planner. Empty when there is none."""
         if self.empty:
             return ""
-        parts = [f"Conversation so far: {self.summary}"] if self.summary else []
+        parts = [f"Summary of the conversation: {self.summary}"] if self.summary else []
+        if self.last_question:
+            # The exact words, not a paraphrase: most follow-ups lean on this
+            # turn, and the summariser is where detail gets lost.
+            parts.append(f'The user\'s previous question, verbatim: "{self.last_question}"')
+            parts.append(f"The assistant's previous answer: {self.last_answer}"
+                         if self.last_answer else
+                         "The assistant did not answer that question.")
         if self.sections:
             parts.append("Sections already cited: " + ", ".join(self.sections))
         return "\n".join(parts)
@@ -107,7 +136,8 @@ class Memory:
     def to_dict(self) -> dict:
         return {"summary": self.summary, "sections": self.sections,
                 "turns": self.turns, "answered": self.answered,
-                "error": self.error}
+                "last_question": self.last_question,
+                "last_answer": self.last_answer, "error": self.error}
 
     @classmethod
     def from_dict(cls, raw: dict | None) -> "Memory":
@@ -121,6 +151,8 @@ class Memory:
             # never reach the threshold, which is better than renaming an old
             # conversation out from under someone.
             answered=int(raw.get("answered") or 0),
+            last_question=str(raw.get("last_question") or "")[:MAX_LAST_QUESTION_CHARS],
+            last_answer=str(raw.get("last_answer") or "")[:MAX_LAST_ANSWER_CHARS],
         )
 
 
@@ -192,9 +224,15 @@ def update(memory: Memory | None, question: str, answer) -> Memory:
     keys = keys[-MAX_SECTIONS:]
 
     said = answer_text(answer)
+    # This turn, verbatim, for the next one. Set here — before any model call —
+    # so it survives a summariser failure: the summary may go stale, the last
+    # exchange never does. A refused turn keeps its question and no answer.
+    last = {"last_question": question.strip()[:MAX_LAST_QUESTION_CHARS],
+            "last_answer": ("" if failed(answer) else said[:MAX_LAST_ANSWER_CHARS])}
     if not said and not question.strip():
         return Memory(summary=prev.summary, sections=keys, turns=prev.turns,
-                      answered=prev.answered)
+                      answered=prev.answered, last_question=prev.last_question,
+                      last_answer=prev.last_answer)
 
     # On a failed turn the QUESTION is still recorded and the failure is not.
     #
@@ -228,14 +266,14 @@ def update(memory: Memory | None, question: str, answer) -> Memory:
     except Exception as exc:
         trace.step("memory", f"FAILED, kept stale  {type(exc).__name__}", elapsed())
         return Memory(summary=prev.summary, sections=keys, turns=prev.turns + 1,
-                      answered=answered,
+                      answered=answered, **last,
                       error=f"{type(exc).__name__}: {exc}"[:160])
 
     if not summary:
         trace.step("memory", "summariser returned nothing", elapsed())
         return Memory(summary=prev.summary, sections=keys, turns=prev.turns + 1,
-                      answered=answered,
+                      answered=answered, **last,
                       error="summariser returned nothing")
     trace.recv("memory", f"«{summary}»", elapsed())
     return Memory(summary=summary, sections=keys, turns=prev.turns + 1,
-                  answered=answered)
+                  answered=answered, **last)

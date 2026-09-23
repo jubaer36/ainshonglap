@@ -6,6 +6,7 @@ import { CopyableBlock } from "./CopyableBlock";
 import { BlockRenderer } from "./BlockRenderer";
 import { QuickActionButton } from "./QuickActionButton";
 import { UnsupportedAnswer } from "./UnsupportedAnswer";
+import { BrandMark } from "@/components/brand/BrandMark";
 
 interface MessageAssistantProps {
   message: AssistantMessage;
@@ -35,9 +36,7 @@ export function MessageAssistant({
     Boolean(onRetry) && (message.kind === "refused" || Boolean(message.retryQuestion));
   return (
     <div className="flex items-start gap-3.5 pr-2">
-      <div className="w-8 h-8 rounded-lg bg-slate-900 text-white flex items-center justify-center flex-shrink-0 font-serif font-bold text-xs shadow-sm mt-0.5">
-        আইন
-      </div>
+      <BrandMark size={32} className="rounded-lg shadow-sm mt-0.5" />
       <div className="group flex-1 space-y-3">
         {/* Metadata only. The summary used to share this row and was squeezed
             into whatever width the badges left it — a one-line answer wrapped

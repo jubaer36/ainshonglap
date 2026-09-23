@@ -114,6 +114,9 @@ so memory carries two things: the prose summary, and a `sections` list of
 citation keys copied by *code* from the answer's own sources. The prompt asks
 for verbatim numbers; the code list is the guarantee. A `context · N turns` chip
 makes all of it inspectable, because hidden state that steers answers should be.
+The summary was later loosened from 90 to ~180 words and the previous
+question and answer kept verbatim beside it: at 90 words, what had just been
+asked was already paraphrased away by the time the next question arrived.
 
 **Retry is offered only on the last message.** It re-asks the question and
 replaces that answer in place, so mid-conversation it would rewrite an answer

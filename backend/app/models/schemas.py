@@ -135,6 +135,12 @@ class ConversationMemory(BaseModel):
     # model is dropped on the way in, which would reset the count to zero every
     # turn and mean the conversation is never named.
     answered: int = 0
+    # The previous exchange, verbatim. Declared for the same reason as
+    # `answered`: the client echoes this object back each turn, and a field the
+    # model does not declare is dropped on the way in — the planner would then
+    # never see the turn a follow-up depends on most.
+    last_question: str = ""
+    last_answer: str = ""
     error: str | None = None
 
 

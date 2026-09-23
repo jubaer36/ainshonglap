@@ -19,7 +19,7 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "AinShonglap",
+  title: "আইনসংলাপ",
   // No "verified precedents" — there is no case law in the corpus, only the
   // three Acts.
   description:

@@ -1,7 +1,8 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ConversationMemory } from "@/lib/types";
+import { useMediaQuery } from "@/lib/useMediaQuery";
 import { ImageButton } from "./ImageButton";
 import { InputStatus, type InputStatusState } from "./InputStatus";
 import { MemoryPanel } from "./MemoryPanel";
@@ -37,7 +38,35 @@ export function InputDock({
   onActivateCitation,
 }: InputDockProps) {
   const [status, setStatus] = useState<InputStatusState | null>(null);
+  // A real keyboard and room for the hint: a mouse-driven screen at least 640px
+  // wide. Touch devices, and anything narrower, get the short placeholder.
+  const keyboard = useMediaQuery("(pointer: fine) and (min-width: 640px)");
+
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // The box grows with what is typed, up to a limit, then scrolls inside.
+  // A fixed two-row box hid most of a pasted case brief; an unlimited one
+  // pushed the conversation off a phone screen once the keyboard was up. The
+  // limit is 40% of the visible height, capped at 320px, and re-measured when
+  // the viewport changes — which on a phone is the keyboard opening.
+  const fitToContent = useCallback(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    const limit = Math.max(96, Math.min(320, Math.round(window.innerHeight * 0.4)));
+    el.style.height = "auto";
+    const needed = el.scrollHeight;
+    el.style.height = `${Math.min(needed, limit)}px`;
+    el.style.overflowY = needed > limit ? "auto" : "hidden";
+  }, []);
+
+  // Layout effect, not a plain one: the height must be set before the browser
+  // paints, or every keystroke flashes the old size for a frame.
+  useLayoutEffect(fitToContent, [value, fitToContent]);
+
+  useEffect(() => {
+    window.addEventListener("resize", fitToContent);
+    return () => window.removeEventListener("resize", fitToContent);
+  }, [fitToContent]);
   const clearRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Roughly where a question stops being a question. Matches the backend's
   // document threshold so the hint and the response agree.
@@ -62,13 +91,20 @@ export function InputDock({
   }
 
   return (
-    <div className="p-4 bg-white border-t border-slate-200 flex-shrink-0 z-20">
+    <div className="p-2 sm:p-4 bg-white border-t border-slate-200 flex-shrink-0 z-20">
       <div className="max-w-3xl mx-auto space-y-2">
         <div className="relative bg-slate-50 hover:bg-slate-100/60 focus-within:bg-white border border-slate-200 focus-within:border-slate-800 focus-within:ring-2 focus-within:ring-slate-900/10 rounded-2xl transition-all shadow-sm">
           <textarea
             ref={textareaRef}
-            className="w-full bg-transparent px-4 pt-3.5 pb-2 text-sm text-slate-900 placeholder:text-slate-400 resize-none focus:outline-none leading-relaxed font-sans"
-            placeholder="Ask a question about Bangladeshi laws, criminal procedure, bail, or civil remedies…  (Enter to send, Shift+Enter for a new line)"
+            className="w-full bg-transparent px-3 sm:px-4 pt-3 sm:pt-3.5 pb-2 text-sm text-slate-900 placeholder:text-slate-400 resize-none focus:outline-none leading-relaxed font-sans"
+            // The key hint is for keyboards. On a phone it is meaningless and
+            // it was the part being cut off, so touch and narrow screens get
+            // the question alone.
+            placeholder={
+              keyboard
+                ? "Ask a question about Bangladeshi laws, criminal procedure, bail, or civil remedies…  (Enter to send, Shift+Enter for a new line)"
+                : "Ask a legal question…"
+            }
             rows={2}
             value={value}
             onChange={(event) => onChange(event.target.value)}
@@ -105,7 +141,7 @@ export function InputDock({
               <InputStatus state={status} />
             </div>
           )}
-          <div className="flex items-center justify-between px-3 pb-2.5 pt-1">
+          <div className="flex items-center justify-between gap-2 px-2 sm:px-3 pb-2 sm:pb-2.5 pt-1">
             <div className="flex items-center gap-1 text-slate-500 min-w-0">
               <ModelPicker value={model} onChange={onModelChange} disabled={disabled} />
               <MemoryPanel
@@ -114,7 +150,7 @@ export function InputDock({
                 onActivateCitation={onActivateCitation}
               />
             </div>
-            <div className="flex items-center gap-1.5 flex-shrink-0">
+            <div className="flex items-center gap-1 sm:gap-1.5 flex-shrink-0">
               <ImageButton
                 disabled={disabled}
                 conversationId={conversationId}
@@ -141,11 +177,13 @@ export function InputDock({
               />
               <button
                 type="button"
-                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-slate-900 text-white hover:bg-slate-800 text-xs font-medium shadow-sm transition-transform active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="flex items-center gap-1.5 px-2.5 sm:px-3.5 py-1.5 rounded-xl bg-slate-900 text-white hover:bg-slate-800 text-xs font-medium shadow-sm transition-transform active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
                 onClick={handleSubmit}
                 disabled={disabled || !value.trim()}
+                title="Ask"
+                aria-label="Ask"
               >
-                <span>Ask</span>
+                <span className="hidden sm:inline">Ask</span>
                 <span className="material-symbols-outlined text-[15px]">arrow_upward</span>
               </button>
             </div>

@@ -17,10 +17,13 @@ export function AuthButton() {
   return (
     <Link
       href="/signin"
-      className="flex items-center gap-1.5 rounded-md border border-slate-200 px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-50"
+      title="Sign in"
+      className="flex items-center gap-1.5 whitespace-nowrap rounded-md border border-slate-200 px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-50"
     >
       <span className="material-symbols-outlined text-[14px]">login</span>
-      <span>Sign in</span>
+      {/* Icon alone on phones, where the header has room for the name and a
+          few icons but not for labels beside them. */}
+      <span className="hidden sm:inline">Sign in</span>
     </Link>
   );
 }

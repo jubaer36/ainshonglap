@@ -6,13 +6,19 @@ import { LiveCitationPreviewCard } from "../references/LiveCitationPreviewCard";
 import { OfficialReferencesCard } from "../references/OfficialReferencesCard";
 
 interface ReferencesDrawerProps {
-  open: boolean;
+  /** null: follow the screen — docked from xl, collapsed below. */
+  open: boolean | null;
   references: Reference[];
   activeCitation: Citation | null;
 }
 
 // Wider bounds than the left sidebar: this panel shows statutory text, and a
 // long section reads better with room. The floor still fits a citation card.
+//
+// Docked as a column only from xl (1280px). Below that it slides over the chat
+// instead: at 1024px, docking both panels left the chat ~350px wide — narrower
+// than a phone. Solid while it overlays (the docked tint is half-transparent,
+// which over the chat let the text underneath show through).
 const MIN_WIDTH = 280;
 const MAX_WIDTH = 720;
 const DEFAULT_WIDTH = 384; // w-96
@@ -23,8 +29,8 @@ export function ReferencesDrawer({ open, references, activeCitation }: Reference
   return (
     <aside
       style={{ width: panel.width }}
-      className={`max-w-[85vw] bg-slate-50/50 border-l border-slate-200 flex-col flex-shrink-0 fixed top-14 bottom-0 right-0 z-40 lg:relative lg:top-auto lg:bottom-auto lg:right-auto lg:z-20 ${
-        open ? "flex" : "hidden"
+      className={`max-w-[85vw] bg-slate-50 xl:bg-slate-50/50 border-l border-slate-200 flex-col flex-shrink-0 fixed top-14 bottom-0 right-0 z-40 shadow-xl xl:shadow-none xl:relative xl:top-auto xl:bottom-auto xl:right-auto xl:z-20 ${
+        open === null ? "hidden xl:flex" : open ? "flex" : "hidden"
       }`}
     >
       {/* Handle on the LEFT edge, so dragging left widens the panel. */}
@@ -36,6 +42,7 @@ export function ReferencesDrawer({ open, references, activeCitation }: Reference
         initial={panel.initial}
         onResize={panel.setWidth}
         label="Resize references panel"
+        from="xl"
       />
       {/* Scrolling lives here rather than on the aside: the handle is
           absolutely positioned against the aside, and inside a scrolling

@@ -55,6 +55,14 @@ false**, and rewrites a follow-up into a standalone question; `resolved_question
 comes back so the reader can see what was actually answered. A bad rewrite would
 otherwise be a confident, properly cited answer to a question nobody asked.
 
+Two parts, because a follow-up leans hardest on the turn right before it — the
+one a rolling summary compresses first. The **summary** covers the whole
+conversation, up to ~180 words: for each turn, what was asked and what was
+concluded, with its sections. The **previous exchange** — `last_question` and
+`last_answer` — is copied word for word by code, never by the summariser, so it
+survives a paraphrase and a summariser outage alike. Both reach the planner, and
+both are shown in the frontend's memory panel.
+
 The server stores nothing — the client holds the memory and echoes it. For
 questions this personal that is a privacy property, and it removes the session
 store entirely. `sections` is written by code from the answer's own citations,
@@ -431,7 +439,7 @@ model is.
 | `RAG_DENSE_K` / `RAG_FINAL_K` | `20` / `8` | candidates reranked / sections returned |
 | `RAG_FALLBACK_GENERATOR` | `mercury` | used when the chosen generator is out of quota |
 | `RAG_MEMORY_MODEL` | `gemini-3.5-flash-lite` | rolling conversation summariser |
-| `RAG_MEMORY_CHARS` | `700` | ceiling on the summary, so context stays bounded |
+| `RAG_MEMORY_CHARS` | `1400` | ceiling on the summary; the previous exchange is kept verbatim on top (1,000 + 1,500 chars) |
 | `RAG_STT_MODEL` | `nova-3` | Deepgram model; Bengali needs nova-3 |
 | `RAG_STT_LANGUAGE` | `en` | `en`, `bn`, or `multi` (no Bengali in `multi`) |
 | `RAG_WARMUP` | `1` | `0` skips model loading at startup |

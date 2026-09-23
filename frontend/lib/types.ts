@@ -95,6 +95,11 @@ export interface ConversationMemory {
    *  refusals too. The server names the conversation when this reaches its
    *  threshold, so it has to survive the round trip through the client. */
   answered: number;
+  /** The previous question and answer, word for word — what a follow-up leans
+   *  on most. snake_case on purpose: memory is passed back to the server as
+   *  the object it arrived as, never converted, so these are the wire names. */
+  last_question?: string;
+  last_answer?: string;
   error: string | null;
 }
 

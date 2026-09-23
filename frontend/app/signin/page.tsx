@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/components/auth/AuthProvider";
+import { BrandMark } from "@/components/brand/BrandMark";
 
 /**
  * Sign in or create an account, on its own page.
@@ -45,9 +46,7 @@ export default function SignInPage() {
     <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4">
       <div className="w-full max-w-sm space-y-5">
         <div className="space-y-1.5 text-center">
-          <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-xl bg-slate-900 font-serif text-sm font-bold text-white">
-            আইন
-          </div>
+          <BrandMark size={80} variant="full" eager className="mx-auto rounded-2xl shadow-sm" />
           <h1 className="font-serif text-lg font-semibold text-slate-900">
             {mode === "in" ? "Sign in" : "Create an account"}
           </h1>

@@ -7,7 +7,8 @@ import { SidebarAccount } from "./SidebarAccount";
 import { StatuteBrowser } from "./StatuteBrowser";
 
 interface SidebarProps {
-  open: boolean;
+  /** null: follow the screen — docked from lg, collapsed below. */
+  open: boolean | null;
   onNewChat: () => void;
   onActivateCitation: (key: string) => void;
   conversations: SavedConversation[];
@@ -40,7 +41,7 @@ export function Sidebar({
     <aside
       style={{ width: panel.width }}
       className={`bg-white border-r border-slate-200 flex-col justify-between flex-shrink-0 fixed top-14 bottom-0 left-0 z-40 lg:relative lg:top-auto lg:bottom-auto lg:z-20 ${
-        open ? "flex" : "hidden"
+        open === null ? "hidden lg:flex" : open ? "flex" : "hidden"
       }`}
     >
       <ResizeHandle

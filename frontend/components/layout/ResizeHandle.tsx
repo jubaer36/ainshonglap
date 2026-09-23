@@ -41,6 +41,8 @@ interface ResizeHandleProps {
   initial: number;
   onResize: (w: number | ((prev: number) => number)) => void;
   label: string;
+  /** The breakpoint from which the panel is docked, and so resizable. */
+  from?: "lg" | "xl";
 }
 
 /**
@@ -51,7 +53,7 @@ interface ResizeHandleProps {
  * steps). It is a `separator` with its value exposed, so it is reachable and
  * operable without a mouse.
  */
-export function ResizeHandle({ edge, width, min, max, initial, onResize, label }: ResizeHandleProps) {
+export function ResizeHandle({ edge, width, min, max, initial, onResize, label, from = "lg" }: ResizeHandleProps) {
   const [dragging, setDragging] = useState(false);
   const startRef = useRef<{ x: number; width: number } | null>(null);
   const sign = edge === "right" ? 1 : -1;
@@ -115,7 +117,9 @@ export function ResizeHandle({ edge, width, min, max, initial, onResize, label }
         }
       }}
       title="Drag to resize · double-click to reset"
-      className={`hidden lg:block absolute top-0 h-full w-2 z-30 cursor-col-resize group/handle focus:outline-none ${
+      // Written out in full rather than built from `from`: Tailwind only
+      // generates classes it can find as literal strings.
+      className={`hidden ${from === "xl" ? "xl:block" : "lg:block"} absolute top-0 h-full w-2 z-30 cursor-col-resize group/handle focus:outline-none ${
         edge === "right" ? "-right-1" : "-left-1"
       }`}
     >

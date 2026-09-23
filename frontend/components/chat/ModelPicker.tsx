@@ -119,7 +119,7 @@ export function ModelPicker({ value, onChange, disabled }: ModelPickerProps) {
         disabled={disabled}
         onClick={() => setOpen((o) => !o)}
         title="Which model writes the answer"
-        className="flex items-center gap-1.5 px-2 py-1 rounded-md border border-slate-200 text-[11px] text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+        className="flex items-center gap-1.5 whitespace-nowrap px-2 py-1 rounded-md border border-slate-200 text-[11px] text-slate-600 hover:bg-slate-50 disabled:opacity-50"
       >
         <span className="material-symbols-outlined text-[14px] text-slate-400">memory</span>
         <span className="font-medium">{active?.alias ?? "model"}</span>
@@ -129,7 +129,7 @@ export function ModelPicker({ value, onChange, disabled }: ModelPickerProps) {
       </button>
 
       {open && (
-        <div className="absolute bottom-full mb-1 left-0 z-50 w-80 max-h-80 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg p-1">
+        <div className="absolute bottom-full mb-1 left-0 z-50 w-[min(20rem,calc(100vw-2rem))] max-h-80 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg p-1">
           {models.map((m) => {
             const selectable = usable(m);
             return (

@@ -109,7 +109,7 @@ def _warmup() -> None:
 
 
 app = FastAPI(
-    title="AinShonglap API",
+    title="আইনসংলাপ API",
     version="0.2.0",
     description="Source-grounded Q&A over Bangladesh criminal law.",
     lifespan=lifespan,

@@ -14,6 +14,7 @@ import {
 import { useAuth } from "@/components/auth/AuthProvider";
 import { WelcomeGate } from "@/components/auth/WelcomeGate";
 import type { AssistantMessage, ChatMessage, Citation, UserMessage, ConversationMemory } from "@/lib/types";
+import { useMediaQuery } from "@/lib/useMediaQuery";
 import { Header } from "../layout/Header";
 import { ReferencesDrawer } from "../layout/ReferencesDrawer";
 import { Sidebar } from "../layout/Sidebar";
@@ -61,7 +62,7 @@ function errorAssistantMessage(error: unknown, question?: string): AssistantMess
   return {
     id: newId(),
     role: "assistant",
-    heading: "AinShonglap Plain Legal Guide",
+    heading: "আইনসংলাপ Plain Legal Guide",
     subheading,
     // A transport failure renders like a refusal — amber, "can't answer". It is
     // not out_of_scope (we never reached the corpus) and not clarify (there is
@@ -85,6 +86,24 @@ function errorAssistantMessage(error: unknown, question?: string): AssistantMess
 
 /** Remembers only that the welcome screen was answered — never any content. */
 const GUEST_CHOICE_KEY = "ainshonglap.guest";
+
+// Where each side panel stops overlaying the chat and becomes a column. The
+// references drawer needs a wider screen than the sidebar: with both docked at
+// 1024px the chat was left about 350px wide.
+const SIDEBAR_DOCKS = "(min-width: 1024px)";
+const DRAWER_DOCKS = "(min-width: 1280px)";
+
+/**
+ * A panel the reader opened or closed, and the layout they did it in.
+ *
+ * Until they touch it, a panel follows the screen: docked and open on a wide
+ * one, collapsed on a phone — decided by CSS alone, so a phone never flashes an
+ * open panel before the script runs. A choice made in one layout is dropped
+ * when the screen crosses into the other (a window narrowed, a tablet rotated):
+ * a sidebar opened on a laptop has no business staying open over a phone-width
+ * chat.
+ */
+type PanelChoice = { open: boolean; docked: boolean } | null;
 
 export function ChatShell() {
   const { user, ready: authReady, configured: authConfigured } = useAuth();
@@ -112,8 +131,17 @@ export function ChatShell() {
   const [inputValue, setInputValue] = useState("");
   const [loading, setLoading] = useState(false);
   const [noticeDismissed, setNoticeDismissed] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [drawerOpen, setDrawerOpen] = useState(true);
+  const sidebarDocked = useMediaQuery(SIDEBAR_DOCKS);
+  const drawerDocked = useMediaQuery(DRAWER_DOCKS);
+  const [sidebarChoice, setSidebarChoice] = useState<PanelChoice>(null);
+  const [drawerChoice, setDrawerChoice] = useState<PanelChoice>(null);
+  // null = no choice that applies to this layout, so the screen decides.
+  const sidebarPick = sidebarChoice?.docked === sidebarDocked ? sidebarChoice.open : null;
+  const drawerPick = drawerChoice?.docked === drawerDocked ? drawerChoice.open : null;
+  const sidebarOpen = sidebarPick ?? sidebarDocked;
+  const drawerOpen = drawerPick ?? drawerDocked;
+  const setSidebarOpen = (open: boolean) => setSidebarChoice({ open, docked: sidebarDocked });
+  const setDrawerOpen = (open: boolean) => setDrawerChoice({ open, docked: drawerDocked });
   const [citationLibrary, setCitationLibrary] = useState<Record<string, Citation>>({});
   const [activeCitationKey, setActiveCitationKey] = useState<string | null>(null);
   const [model, setModel] = useState<string | null>(null);
@@ -180,18 +208,6 @@ export function ChatShell() {
       cancelled = true;
     };
   }, [user]);
-
-  useEffect(() => {
-    // Below lg, sidebar/drawer are fixed overlays (see Sidebar/ReferencesDrawer)
-    // rather than flex-row columns, so default them closed there. Deferred to
-    // an effect (rather than the useState initializer) so server and client
-    // render the same first pass and avoid a hydration mismatch.
-    const isMobile = window.matchMedia("(max-width: 1023px)").matches;
-    if (isMobile) {
-      setSidebarOpen(false);
-      setDrawerOpen(false);
-    }
-  }, []);
 
   /**
    * Ask a question. `retryOf` re-runs one that failed.
@@ -275,9 +291,7 @@ export function ChatShell() {
     setMemory(null);
     setInputValue("");
     setActiveCitationKey(null);
-    if (window.matchMedia("(max-width: 1023px)").matches) {
-      setSidebarOpen(false);
-    }
+    if (!sidebarDocked) setSidebarOpen(false);
   }
 
   async function handleOpenConversation(id: string) {
@@ -296,7 +310,7 @@ export function ChatShell() {
       if (message.role === "assistant") Object.assign(restored, message.citations);
     }
     setCitationLibrary((current) => ({ ...current, ...restored }));
-    if (window.matchMedia("(max-width: 1023px)").matches) setSidebarOpen(false);
+    if (!sidebarDocked) setSidebarOpen(false);
   }
 
   async function handleRenameConversation(id: string, title: string) {
@@ -315,9 +329,7 @@ export function ChatShell() {
   function handleActivateCitation(key: string) {
     setActiveCitationKey(key);
     setDrawerOpen(true);
-    if (window.matchMedia("(max-width: 1023px)").matches) {
-      setSidebarOpen(false);
-    }
+    if (!sidebarDocked) setSidebarOpen(false);
   }
 
   const latestAssistantMessage = [...messages]
@@ -360,14 +372,17 @@ export function ChatShell() {
         activeTopic={firstUserMessage?.text ?? null}
         drawerOpen={drawerOpen}
         sidebarOpen={sidebarOpen}
-        onToggleSidebar={() => setSidebarOpen((open) => !open)}
-        onToggleDrawer={() => setDrawerOpen((open) => !open)}
+        onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
+        onToggleDrawer={() => setDrawerOpen(!drawerOpen)}
       />
       <div className="flex-1 flex overflow-hidden relative">
-        {(sidebarOpen || drawerOpen) && (
+        {/* A dimmed backdrop behind whichever panel is overlaying the chat.
+            One per panel, because they overlay at different widths: the
+            sidebar below lg, the references drawer below xl. */}
+        {sidebarOpen && !sidebarDocked && (
           <button
             type="button"
-            aria-label="Close panel"
+            aria-label="Close conversations"
             className="lg:hidden fixed top-14 bottom-0 inset-x-0 z-30 bg-slate-900/30"
             onClick={() => {
               setSidebarOpen(false);
@@ -375,8 +390,16 @@ export function ChatShell() {
             }}
           />
         )}
+        {drawerOpen && !drawerDocked && (
+          <button
+            type="button"
+            aria-label="Close references"
+            className="xl:hidden fixed top-14 bottom-0 inset-x-0 z-30 bg-slate-900/30"
+            onClick={() => setDrawerOpen(false)}
+          />
+        )}
         <Sidebar
-          open={sidebarOpen}
+          open={sidebarPick}
           onNewChat={handleNewChat}
           onActivateCitation={handleActivateCitation}
           conversations={conversations}
@@ -434,7 +457,7 @@ export function ChatShell() {
           />
         </main>
         <ReferencesDrawer
-          open={drawerOpen}
+          open={drawerPick}
           references={currentReferences}
           activeCitation={activeCitation}
         />
