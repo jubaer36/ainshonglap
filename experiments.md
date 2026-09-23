@@ -987,7 +987,43 @@ change meant to alter nothing.
 
 ---
 
-## What E2-E19 together establish
+## E20 — the summariser moves off Gemini (n=2 probes, DIAGNOSTIC)
+
+**Objective.** Find why every context update took 18-20s, once the update had
+been split out of `/api/query` (`POST /api/memory`) and a follow-up question
+waits on it for up to 25s.
+
+**Configuration.** One-word JSON reply from `gemini-3.5-flash-lite`, called
+directly (no deadline) on `GEMINI_API_KEY_2` and `GEMINI_API_KEY_3`, then once
+through `GeminiLLM` with the app's 20s deadline (`RAG_GEMINI_TIMEOUT`).
+
+**Results.**
+
+| call | result |
+|---|---|
+| direct, `GEMINI_API_KEY_2` (summariser) | ok after **64.1s** |
+| direct, `GEMINI_API_KEY_3` (naming) | ok after **33.8s** |
+| through `GeminiLLM`, 20s deadline | `google.genai.errors.ServerError: 504 DEADLINE_EXCEEDED` after 19.8s |
+
+Not a key, quota or schema problem — the model answered correctly, just slowly.
+The app sends its timeout to Google as the request deadline, so every summary
+spent 20s on Gemini, failed, and was written by the fallback.
+
+**Decision.** The summariser moved to gpt-oss-120b on its own key
+(`GROQ_API_KEY_SUMMARIZER`), with `GROQ_API_KEY_FALLBACK` behind it. Naming
+stays on Gemini (`GEMINI_API_KEY_3`): it runs once per conversation, off the
+answer path, and nothing waits on it. At the same time the summary was cut to
+under ~100 words (800 characters), one sentence per turn, and the verbatim
+previous answer widened to every claim (4,000 characters) — the verbatim
+exchange is what a follow-up leans on; the summary is background.
+
+**Not measured.** Follow-up resolution with the shorter summary. The browser
+check of the decoupled update ("what is that doubled?" -> 84, and the 25s
+timeout path) ran before the switch.
+
+---
+
+## What E2-E20 together establish
 
 Both chunk-formatting knobs are flat — retrieval on this corpus is not limited
 by how chunks are labelled or sized. Ranking is where the gains were, exactly as

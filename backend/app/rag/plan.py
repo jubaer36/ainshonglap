@@ -48,7 +48,7 @@ import functools
 from dataclasses import dataclass, field
 
 from app.rag import catalog, config, trace
-from app.rag.llm import get_llm
+from app.rag.llm import generate_with_fallback, get_llm
 
 CATEGORIES = ("meta", "structural", "semantic", "document", "out_of_scope",
               "general")
@@ -244,8 +244,9 @@ def resolve_chapter(description: str, act: str | None, *,
     listing = catalog.chapter_listing(act)
     payload = (f"Description: {description}\n\nChapters:\n{listing}")
     try:
-        raw = get_llm(backend, model or config.PLANNER_MODEL).generate_json(
-            CHAPTER_SYSTEM, payload, CHAPTER_SCHEMA)
+        raw, _ = generate_with_fallback(backend, model or config.PLANNER_MODEL,
+                                        CHAPTER_SYSTEM, payload, CHAPTER_SCHEMA,
+                                        job="chapter lookup")
     except Exception:
         return act, None, "chapter-lookup-failed"
     got_act = _clean(raw.get("act")).lower() or act
@@ -281,6 +282,27 @@ def validate(plan: Plan) -> Plan:
         plan.category = "semantic"
     if plan.operation not in OPERATIONS:
         plan.operation = ""
+
+    # A question that NAMES an Act we hold is never out of scope. The prompt
+    # says so, but a prompt is a request: the fallback planner (gpt-oss-20b)
+    # sent "What does section 13 of the Arms Act say?" to out_of_scope, which
+    # answers "that Act is not held" about an Act that is. Enforced here, from
+    # the catalog's own Act list, whichever planner produced the plan.
+    if plan.category == "out_of_scope":
+        from app.rag import acts as held
+
+        named = [a for a in held.mentioned(plan.asked) if a in slugs]
+        if named:
+            number = _section_number(plan.asked)
+            plan.acts = plan.acts or named
+            if number:
+                plan.category, plan.operation = "structural", "fetch"
+                plan.sections = plan.sections or [number]
+            else:
+                plan.category = "semantic"
+                plan.search_query = plan.search_query or plan.asked
+            plan.notes.append(f"out_of_scope overruled: names held Act "
+                              f"{', '.join(named)} -> {plan.category}")
 
     unknown = [a for a in plan.acts if a not in slugs]
     if unknown:
@@ -374,6 +396,13 @@ def validate(plan: Plan) -> Plan:
     return plan
 
 
+def _section_number(text: str) -> str | None:
+    """'section 13', 's.13', 'sec 302A' -> the number; None if none is named."""
+    import re
+    m = re.search(r"\b(?:sections?|secs?\.?|s\.)\s*(\d{1,3}[A-Za-z]?)\b", text or "", re.I)
+    return m.group(1).upper() if m else None
+
+
 def _looks_like_citation(text: str) -> bool:
     import re
     return bool(re.search(r"\b(?:s\.?|sec\.?|section)\s*\d", text, re.I))
@@ -417,6 +446,9 @@ def _ask_planner(backend: str | None, model: str | None,
         if not fallback or fallback == primary:
             raise
         trace.step("planner", f"{primary} failed ({type(exc).__name__}) -> {fallback}")
+        import logging
+        logging.getLogger("ainshonglap").warning(
+            "FALLBACK  planner: %s failed (%s); using %s", primary, type(exc).__name__, fallback)
         return get_llm(None, fallback).generate_json(SYSTEM, payload, _schema()), fallback
 
 

@@ -57,6 +57,9 @@ export interface UserMessage {
   id: string;
   role: "user";
   text: string;
+  /** Set when this question was sent before the previous answer's context
+   *  update finished — it went with the earlier context. */
+  contextNote?: string;
 }
 
 /**
@@ -116,6 +119,9 @@ export interface AssistantMessage {
    *  that was actually executed. Shown, because a wrong rewrite is otherwise a
    *  confident answer to a question nobody asked. */
   resolvedQuestion: string | null;
+  /** The context update for this answer is still to be requested
+   *  (POST /api/memory) — the answer is sent before the summariser runs. */
+  memoryPending?: boolean;
   /** Which model actually answered. */
   generator: string | null;
   /** The alias this replaced, when the requested one was out of quota. */

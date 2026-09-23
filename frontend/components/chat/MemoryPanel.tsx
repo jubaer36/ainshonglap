@@ -5,6 +5,8 @@ import type { ConversationMemory } from "@/lib/types";
 
 interface MemoryPanelProps {
   memory: ConversationMemory | null;
+  /** The last answer is still being folded into the context. */
+  updating?: boolean;
   onForget: () => void;
   onActivateCitation?: (key: string) => void;
 }
@@ -30,7 +32,7 @@ interface MemoryPanelProps {
  *              that cannot be paraphrased away. If the prose and the sections
  *              disagree, trust the sections.
  */
-export function MemoryPanel({ memory, onForget, onActivateCitation }: MemoryPanelProps) {
+export function MemoryPanel({ memory, updating = false, onForget, onActivateCitation }: MemoryPanelProps) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -74,14 +76,16 @@ export function MemoryPanel({ memory, onForget, onActivateCitation }: MemoryPane
               : "border-slate-200 text-slate-400 hover:bg-slate-50"
         }`}
       >
-        <span className="material-symbols-outlined text-[14px]">
-          {stale ? "running_with_errors" : "psychology"}
+        <span className={`material-symbols-outlined text-[14px] ${updating ? "animate-spin motion-reduce:animate-none" : ""}`}>
+          {updating ? "progress_activity" : stale ? "running_with_errors" : "psychology"}
         </span>
         {/* Full label from sm up. On a phone the icon stands alone, with the
             turn count once there is one — the label was the widest thing in a
             toolbar that did not fit. */}
         <span className="hidden sm:inline font-medium">
-          {hasMemory ? `context · ${turns} turn${turns === 1 ? "" : "s"}` : "no context"}
+          {updating
+            ? "updating context…"
+            : hasMemory ? `context · ${turns} turn${turns === 1 ? "" : "s"}` : "no context"}
         </span>
         {hasMemory && <span className="sm:hidden font-medium">{turns}</span>}
       </button>

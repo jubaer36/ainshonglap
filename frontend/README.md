@@ -47,7 +47,11 @@ read instead of permanently under the input box.
 - a `context · N turns` chip opening the conversation memory: the running
   summary verbatim, the previous question and answer word for word, the section
   keys kept exactly, a stale warning when the summariser failed, and a Forget
-  button
+  button. The context update (gpt-oss-120b, `POST /api/memory`) runs after the
+  answer is shown, never before it;
+  the chip reads "updating context…" meanwhile. A question sent during it waits
+  up to 25s ("Updating the context from your last answer…"), then goes with the
+  previous context and is marked so under the question
 - the model picker lists an alias and the provider's real model id and nothing
   else, best first (`oss120`, `qwen`, `oss`, `gemini`, then the rest). It greys
   out routes that are out of quota, with a countdown, and moves a dead selection

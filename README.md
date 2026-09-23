@@ -19,7 +19,7 @@ source PDF
 
 question
   -> gpt-oss-120b planner  (strict JSON: coordinates only, never text or SQL;
-                            Gemini Flash Lite as fallback)
+                            gpt-oss-120b on its own key as fallback)
   -> validated against the catalog
   -> structural: exact fetch   |   semantic: vector search + reranking
   -> gpt-oss-120b structured generation (other models selectable)
@@ -44,8 +44,9 @@ Which Acts exist is data, not code: the planner's scope, citation keys and the
 "outside …" messages are all read from the catalog, so adding or removing a
 source needs no code change and no restart.
 
-`gpt-oss-120b` plans on a Groq key nothing else uses, with Gemini 3.5 Flash
-Lite as an automatic fallback. `gpt-oss-120b` also writes the answers by
+`gpt-oss-120b` plans on a Groq key nothing else uses. Every model call —
+answers, planner, summariser, naming — falls back to gpt-oss-120b on one more
+key of its own, and each use is logged. `gpt-oss-120b` also writes the answers by
 default, with Qwen, gpt-oss-20b, Gemini, Mercury and OpenRouter routes
 selectable per request. Every request logs one line per step, so which stage
 produced a given answer is readable rather than guessed.
@@ -55,10 +56,11 @@ retrieved section and include a quote found verbatim in it.
 The planner, catalog and executors are live and served. Two things sit on top:
 **voice input** (Deepgram nova-3 — the transcript is shown for confirmation, never
 auto-sent, because the pipeline cannot detect a correctly-executed *wrong*
-question) and **conversation memory** (a rolling summary from Gemini Flash Lite,
-plus the previous question and answer kept word for word; the planner rewrites
-a follow-up into a standalone question so nothing downstream knows a
-conversation happened). A conversation names itself after three answered turns,
+question) and **conversation memory** (a short rolling summary from
+gpt-oss-120b on its own key, plus the previous question and answer kept word for
+word; the planner rewrites a follow-up into a standalone question so nothing
+downstream knows a conversation happened). The memory is updated after the
+answer is shown, never before it. A conversation names itself after three answered turns,
 on its own model and key, unless the reader has already renamed it.
 
 Generators are selectable per request and quota-aware. Groq's free tier caps

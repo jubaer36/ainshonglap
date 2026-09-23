@@ -27,6 +27,34 @@ body {
   overscroll-behavior: none;
 }
 
+/* The hand cursor on anything clickable.
+ *
+ * Tailwind v4's reset gives buttons the plain arrow (v3 gave them the hand), so
+ * every button in the app read as inert on hover. One rule here rather than a
+ * class on each button, so a new button cannot forget it. In the base layer, so
+ * an explicit utility still wins — the panel edges keep `cursor-col-resize`,
+ * text fields keep the text cursor.
+ */
+@layer base {
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  a[href],
+  summary,
+  select,
+  input[type="checkbox"],
+  input[type="radio"],
+  input[type="file"],
+  input[type="file"]::file-selector-button {
+    cursor: pointer;
+  }
+
+  /* Disabled says so on hover, rather than looking clickable and doing nothing. */
+  button:disabled,
+  [aria-disabled="true"] {
+    cursor: not-allowed;
+  }
+}
+
 ::-webkit-scrollbar {
   width: 5px;
   height: 5px;

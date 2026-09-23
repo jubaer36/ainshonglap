@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, Header, HTTPException, Query
+from pydantic import BaseModel
 
 from app.models.schemas import AssistantMessage, ConversationMemory, QueryRequest
 from app.rag import config, trace
@@ -67,23 +68,28 @@ def query(payload: QueryRequest,
             try:
                 result = answer_question(q, model=model, memory=before)
             except Exception as exc:
-                # The FIRST request to hit a model's daily cap discovers it the
-                # hard way: nothing was known to be blocked, so the call went
-                # out and failed. By now `quota` has recorded it, so retrying
-                # once on the fallback turns that request into an answer rather
-                # than making one unlucky user eat the 502.
+                # Whatever took the chosen model down — its daily cap, an
+                # outage, a timeout — retry once on the system fallback rather
+                # than handing the reader a 502. The answer says it came from
+                # a substitute (`generator_substituted`).
                 retry, replaced = _after_failure(exc, model)
                 if not retry:
                     raise
-                log.info("retrying on %s after quota failure on %s", retry, replaced)
+                log.warning("FALLBACK  generator %s failed (%s); retrying on %s",
+                            replaced, type(exc).__name__, retry)
                 result = answer_question(q, model=retry, memory=before)
                 substituted = replaced
             message = to_message(result)
 
-            # Summarise AFTER answering, never before: a summariser outage must
-            # cost the conversation its memory, not cost the user their answer.
-            after = mem.update(before, q, result)
-            message.memory = ConversationMemory(**after.to_dict())
+            # The context update is NOT done here. It used to be — between the
+            # answer being ready and the answer being sent — so every reader
+            # waited for the summariser, a minute at a time when Gemini was
+            # slow. The answer goes out now; the client asks for the update
+            # separately (POST /api/memory), which collects what is parked here.
+            from app.rag import pending_memory
+
+            pending_memory.park(message.id, q, result, before)
+            message.memory_pending = True
             plan = result.plan
             if plan is not None and getattr(plan, "follow_up", False):
                 message.resolved_question = plan.resolved_question
@@ -107,8 +113,10 @@ def query(payload: QueryRequest,
             # Persist only for a signed-in user. A guest's questions are never
             # written anywhere — that is what they chose on the way in, and the
             # absence of a token is the whole enforcement.
+            # Stored with the context the question was asked against; the
+            # memory request replaces it with the updated one when it lands.
             message.conversation_id = _persist(
-                authorization, payload.conversation_id, q, message, after)
+                authorization, payload.conversation_id, q, message, before)
             return message
 
         from app.rag.answer import answer
@@ -173,32 +181,36 @@ def _usable(alias: str | None) -> tuple[str | None, str | None]:
     from app.rag import quota
 
     wanted = alias or config.DEFAULT_GENERATOR
-    _, model_id = config.resolve_generator(wanted)
-    if quota.available(model_id):
+    if quota.available(config.quota_name(wanted)):
         return alias, None
 
     fallback = config.FALLBACK_GENERATOR
     if not fallback or fallback == wanted:
         return alias, None
-    _, fallback_id = config.resolve_generator(fallback)
-    if not quota.available(fallback_id):
+    if not quota.available(config.quota_name(fallback)):
         return alias, None            # both out: let the real error surface
     log.info("generator %s out of quota; using %s", wanted, fallback)
     return fallback, wanted
 
 
 def _after_failure(exc: Exception, model: str | None) -> tuple[str | None, str | None]:
-    """(fallback alias, the alias it replaces) when a call died on quota."""
+    """(fallback alias, the alias it replaces) when the generator call failed.
+
+    Any provider failure — quota, an outage, a timeout, a malformed reply — is
+    retried on the fallback route. It used to be quota only, so a provider
+    having a bad minute reached the reader as a 502. The one exception is an
+    unknown model id: that is the caller's mistake, and retrying elsewhere
+    would hide it.
+    """
     from app.rag import quota
 
-    if not quota.looks_like_quota(str(exc)):
+    if _unknown_model(exc):
         return None, None
     wanted = model or config.DEFAULT_GENERATOR
     fallback = config.FALLBACK_GENERATOR
     if not fallback or fallback == wanted:
         return None, None
-    _, fallback_id = config.resolve_generator(fallback)
-    if not quota.available(fallback_id):
+    if not quota.available(config.quota_name(fallback)):
         return None, None
     return fallback, wanted
 
@@ -213,6 +225,54 @@ def _unknown_model(exc: Exception) -> bool:
     """
     text = str(exc).lower()
     return "model_not_found" in text or "does not exist or you do not have access" in text
+
+
+class MemoryRequest(BaseModel):
+    """Which answer to fold into the context, and where it is stored."""
+
+    message_id: str
+    conversation_id: str | None = None
+
+
+@router.post("/api/memory", response_model=ConversationMemory)
+def update_memory(payload: MemoryRequest, authorization: str | None = Header(None)):
+    """The context update for one answer — asked for after the answer is shown.
+
+    Runs the summariser on the question, the answer and the context the
+    question was asked against, all parked by `POST /api/query` under the
+    message id. Returns the new memory for the client to send with its next
+    question; for a signed-in user it also replaces the stored context.
+
+    Separate from the answer on purpose: the summariser is Gemini, which has
+    taken 60-90s under load, and no reader should wait for it to see an answer
+    that was ready in two. 410 when the answer is no longer parked (expired, or
+    the server restarted) — the client then keeps the context it already has.
+    """
+    from app.rag import memory as mem
+    from app.rag import pending_memory
+
+    entry = pending_memory.collect(payload.message_id)
+    if entry is None:
+        raise HTTPException(410, "that answer is no longer waiting for a context update")
+    after = mem.update(entry.before, entry.question, entry.answer)
+    result = ConversationMemory(**after.to_dict())
+
+    if payload.conversation_id:
+        from app.db import supabase
+
+        token = ""
+        if authorization and authorization.lower().startswith("bearer "):
+            token = authorization.split(" ", 1)[1]
+        user = supabase.user_id(token) if supabase.configured() else None
+        if user:
+            try:
+                from app.db import conversations as store
+
+                store.update_memory(user, payload.conversation_id,
+                                    payload.message_id, result.model_dump())
+            except Exception:                   # storage is a convenience
+                log.exception("storing the context update failed")
+    return result
 
 
 @router.get("/api/plan", tags=["assistant"])

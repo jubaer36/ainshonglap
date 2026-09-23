@@ -137,57 +137,90 @@ def _images(user_id: str, conversation_id: str) -> dict[str, list[dict]]:
     return grouped
 
 
+def update_memory(user_id: str, conversation_id: str, message_id: str,
+                  memory: dict) -> bool:
+    """Store a context update that arrived after its answer was saved.
+
+    The answer is stored when it is produced, with the context it was asked
+    against; the summariser runs afterwards (POST /api/memory). This puts the
+    result in both places a session is reloaded from — the conversation (what
+    the next turn reads) and that answer's own snapshot (what the turn is shown
+    against). Scoped by `user_id` on both statements, like everything here.
+    """
+    updated = (client().table("conversations").update({"memory": memory})
+               .eq("user_id", user_id).eq("id", conversation_id).execute())
+    if not updated.data:
+        return False
+    try:
+        (client().table("messages").update({"memory": memory})
+         .eq("user_id", user_id).eq("conversation_id", conversation_id)
+         .eq("role", "assistant").eq("content->>id", message_id).execute())
+    except Exception as exc:
+        # Migration 001 not applied: the conversation still carries the
+        # update, only the per-answer snapshot is missing.
+        if not _missing_column(exc):
+            raise
+    trace.step("supabase", f"context updated for {conversation_id[:8]}")
+    return True
+
+
 def name_conversation(user_id: str, conversation_id: str,
-                      memory: dict | None) -> dict | None:
+                      memory: dict | None) -> tuple[str, dict | None]:
     """Give a conversation a name of its own, once it has earned one.
 
-    Returns the conversation row when the title changed, None when it did not —
-    which is the ordinary outcome, since this is safe to call more than once.
+    Returns (status, row):
+
+        "named"    renamed now; row is the updated conversation
+        "kept"     the title is already the reader's, or was named before —
+                   left alone, and there is no reason to ask again
+        "not_yet"  too few answered turns; ask again after the next answer
+        "failed"   the naming model could not be reached; ask again next turn
+
+    The caller needs the difference. It used to get only "renamed" or None, so
+    "not yet" and "the model was busy" looked like "done", and the frontend —
+    which asked once and stopped — never asked again when naming was due.
 
     **A title the reader typed is never overwritten.** The guard is that the
-    stored title still equals the one derived from the first question. If it
-    does not, either they renamed it or naming already ran, and both outcomes
-    are theirs to keep. No extra column is needed to know that, which matters
-    because the last migration is still waiting to be applied by hand.
-
-    Never raises. A conversation with the wrong name is a much smaller problem
-    than the request it was called from.
+    stored title still equals the one derived from the first question.
     """
     from app.rag import memory as mem
     from app.rag import naming
 
     parsed = mem.Memory.from_dict(memory)
     if not naming.earned(parsed):
-        return None
+        return "not_yet", None
     try:
         row = (client().table("conversations").select("*")
                .eq("user_id", user_id).eq("id", conversation_id)
                .limit(1).execute())
         if not row.data:
-            return None
+            return "kept", None
         current = row.data[0].get("title") or ""
 
         first = (client().table("messages").select("content")
                  .eq("user_id", user_id).eq("conversation_id", conversation_id)
                  .eq("role", "user").order("seq").limit(1).execute())
         if not first.data:
-            return None
+            return "not_yet", None
         opening = _title((first.data[0].get("content") or {}).get("text", ""))
         if current != opening:
-            trace.step("name", "title is the reader's, left alone")
-            return None
+            trace.step("name", "title is the reader's (or already named), left alone")
+            return "kept", None
 
-        chosen = naming.suggest(parsed.summary)
+        try:
+            chosen = naming.suggest(parsed.summary)
+        except naming.Unavailable:
+            return "failed", None
         if not chosen or _title(chosen) == current:
-            return None
+            return "not_yet", None
         updated = (client().table("conversations")
                    .update({"title": _title(chosen)})
                    .eq("user_id", user_id).eq("id", conversation_id).execute())
         trace.step("supabase", f"named conversation «{chosen}»")
-        return updated.data[0] if updated.data else None
+        return "named", (updated.data[0] if updated.data else None)
     except Exception:                               # pragma: no cover - defensive
         log.warning("naming failed; the title is unchanged", exc_info=True)
-        return None
+        return "failed", None
 
 
 def save_turn(user_id: str, conversation_id: str | None, question: dict,

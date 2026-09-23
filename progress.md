@@ -86,7 +86,8 @@ listing only when a chapter is described by subject rather than numbered.
 
 **The planner has its own key** (E18): `gpt-oss-120b` on
 `GROQ_API_KEY_PLANNER`, outside the generators' rotation, with Gemini 3.5 Flash
-Lite as the fallback — a different *provider* on purpose. The planner runs
+Lite as the fallback at first; the system-wide fallback (below) has since
+replaced it. The planner runs
 before anything else on every question, so a burst of answers must not leave the
 classifier rate-limited. Gemini held the job before this (E16): 1.3-1.8s against
 43.3s on a rate-limited Groq. The move surfaced a cross-provider schema bug: the schema used
@@ -119,6 +120,20 @@ makes all of it inspectable, because hidden state that steers answers should be.
 The summary was later loosened from 90 to ~180 words and the previous
 question and answer kept verbatim beside it: at 90 words, what had just been
 asked was already paraphrased away by the time the next question arrived.
+Then back down to ~100 words, one sentence per turn: with the previous exchange
+verbatim (now in full, every claim), the summary is only background. The
+summariser moved from Gemini to gpt-oss-120b when Gemini began taking 34-64s a
+call — every update was hitting the 20s deadline and landing on the fallback.
+
+**The answer does not wait for the context update.** Summarising ran inside
+`/api/query`, so every answer arrived only after it — and Gemini took 60-90s on
+bad days. The answer now goes out as soon as it is ready and the client asks
+for the update separately (`POST /api/memory`). A question sent while that is
+still running waits up to 25 seconds, with the bubble saying the context is
+updating; after that it goes with the previous context, and the question is
+marked as sent without the last exchange. Checked in a browser both ways: an
+update landing inside the wait resolved "what is that doubled?" to 84; one
+held past 25s sent the question with the old context and the note appeared.
 
 **Retry is offered only on the last message.** It re-asks the question and
 replaces that answer in place, so mid-conversation it would rewrite an answer
@@ -179,12 +194,17 @@ genuine quota errors count; a 500 or a timeout says nothing about budget.
 
 Generators offered, best first: `oss120` (default, probed for strict schema),
 `qwen`, `oss`, `gemini`, then `lfm`, `super`, `mercury`, `mercury-2`. `gemini2`
-is marked `internal` — it runs the planner and the summariser on their own key,
-and offering it as an answer model would spend the classifier's quota. The
+and the other machinery routes (`planner`, `summariser`, `fallback`) are marked
+`internal` — offering them as answer models would spend quota a per-question
+job depends on. The
 picker shows an alias and the real model id and nothing else.
 
-When a route is out, `/api/query` substitutes the fallback (a different
-provider) and **says so** — a silent swap would hide which model answered.
+**One fallback for every model call**: gpt-oss-120b on `GROQ_API_KEY_FALLBACK`,
+a key nothing else uses — answers (any failure, not only quota), planner,
+chapter lookup, summariser, naming. Its quota is tracked apart from the shared
+pool, so the pool running out of gpt-oss-120b does not take the fallback with
+it. Every use is logged as `FALLBACK`, and a substituted answer **says so** — a
+silent swap would hide which model answered.
 
 ## Observability
 

@@ -31,7 +31,7 @@ import re
 from dataclasses import dataclass, field
 
 from app.rag import config
-from app.rag.llm import get_llm
+from app.rag.llm import generate_with_fallback, get_llm
 from app.rag.pipeline import Retrieved, retrieve
 from app.rag.refine import Refined, extract_scope, parse_citation, refine
 from app.rag.citations import strip_prefix
@@ -194,8 +194,8 @@ def general_answer(question: str, ref: Refined | None, *, backend: str | None = 
     legal assistant — but answering them *as though grounded* would be worse.
     """
     try:
-        raw = get_llm(backend, model).generate_json(GENERAL_SYSTEM, question,
-                                                    GENERAL_SCHEMA)
+        raw, _ = generate_with_fallback(backend, model, GENERAL_SYSTEM, question,
+                                        GENERAL_SCHEMA, job="general answer")
         text = (raw.get("answer") or "").strip()
     except Exception as exc:
         return Answer(question, refused=True, refined=ref,
@@ -297,8 +297,8 @@ def outline_answer(question: str, ref: Refined | None, *, prose: bool = True,
     if prose:
         payload = head + "\n" + "\n".join(lines)
         try:
-            raw = get_llm(backend, model).generate_json(
-                SUMMARY_SYSTEM, payload, SUMMARY_SCHEMA)
+            raw, _ = generate_with_fallback(backend, model, SUMMARY_SYSTEM, payload,
+                                            SUMMARY_SCHEMA, job="Act overview")
             if (w := (raw.get("summary") or "").strip()):
                 text = f"{facts}\n\n{w}"
         except Exception:

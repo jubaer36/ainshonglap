@@ -59,9 +59,10 @@ Secrets live in `backend/.env.local` (gitignored). Every job that runs on
 |---|---|
 | `GROQ_API_KEY`, `_2`, `_3` | the generators, in rotation (see below) |
 | `GROQ_API_KEY_PLANNER` | the planner alone — deliberately outside that rotation |
-| `GEMINI_API_KEY_2` | the planner's fallback and the conversation summariser |
+| `GROQ_API_KEY_FALLBACK` | the system-wide fallback (gpt-oss-120b) for every model call — answers, planner, chapter lookup, summariser, naming |
+| `GROQ_API_KEY_SUMMARIZER` | the conversation summariser (gpt-oss-120b), and nothing else |
 | `GEMINI_API_KEY_3` | naming a conversation, and nothing else |
-| `INCEPTION_API_KEY` | Mercury, the cross-provider quota fallback |
+| `INCEPTION_API_KEY` | Mercury, a selectable generator |
 | `DEEPGRAM_API_KEY` / `OPENROUTER_API_KEY` | voice / vision and OpenRouter routes |
 | `SUPABASE_*`, optional `GEMINI_API_KEY` | accounts and storage, optional generator |
 | `ADMIN_EMAILS` | signed-in users allowed to add/remove sources from the frontend |

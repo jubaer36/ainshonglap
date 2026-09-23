@@ -394,6 +394,7 @@ export function normalizeAssistantMessage(raw: Record<string, unknown>): Assista
     generatorSubstituted: (raw.generator_substituted as string) ?? null,
     retryQuestion: null,
     conversationId: (raw.conversation_id as string) ?? null,
+    memoryPending: Boolean(raw.memory_pending),
     notice: (raw.notice as string) ?? null,
     suggestedModel: (raw.suggested_model as string) ?? null,
     blocks: raw.blocks as AssistantMessage["blocks"],
@@ -431,3 +432,30 @@ function normalizeQuickAction(raw: Record<string, unknown>): QuickAction {
       throw new Error(`Unknown quick action kind: ${String(raw.kind)}`);
   }
 }
+
+/**
+ * The context update for one answer, asked for after it is on screen.
+ *
+ * The summariser used to run inside /api/query, so every answer waited for it.
+ * Now the answer arrives first and this runs on its own. Returns null when the
+ * update is no longer available (the answer expired server-side, or the
+ * server restarted) — the caller keeps the context it already had.
+ */
+export async function updateMemory(
+  messageId: string,
+  conversationId: string | null,
+): Promise<ConversationMemory | null> {
+  const token = await accessToken().catch(() => null);
+  const response = await fetch(`${API_BASE_URL}/api/memory`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ message_id: messageId, conversation_id: conversationId }),
+  });
+  if (response.status === 410) return null;
+  if (!response.ok) throw new Error(`context update failed (${response.status})`);
+  return (await response.json()) as ConversationMemory;
+}
+

@@ -31,9 +31,11 @@ and the configured models, so a degraded start is visible without reading logs).
 
 `.env.local` (gitignored) holds `GROQ_API_KEY`, and optionally `GROQ_API_KEY_2`
 and `_3`, which are discovered automatically and used in turn.
-`GROQ_API_KEY_PLANNER` runs the planner alone; `GEMINI_API_KEY_2` its fallback
-and the conversation summariser; `GEMINI_API_KEY_3` conversation naming.
-`INCEPTION_API_KEY` and `OPENROUTER_API_KEY` are generator fallbacks. Full table
+`GROQ_API_KEY_PLANNER` runs the planner alone; `GROQ_API_KEY_SUMMARIZER`
+the conversation summariser; `GEMINI_API_KEY_3`
+conversation naming;
+`GROQ_API_KEY_FALLBACK` the gpt-oss-120b fallback behind every one of them.
+`INCEPTION_API_KEY` and `OPENROUTER_API_KEY` are selectable generators. Full table
 in `API.md`.
 
 ```bash
@@ -87,8 +89,8 @@ collapses the six intents into six categories — `meta`, `structural`
 (lookup/browse/summarize, differing by operation), `semantic`, `document`,
 `out_of_scope`, `general` — with a strict-JSON call returning coordinates only.
 The planner runs on Groq `gpt-oss-120b` on `GROQ_API_KEY_PLANNER` — its own key,
-outside the generators' rotation — with Gemini 3.5 Flash Lite as the fallback
-(E16). Both are marked `internal` so neither appears as a selectable answer
+outside the generators' rotation — with the system fallback (gpt-oss-120b on
+`GROQ_API_KEY_FALLBACK`) behind it. Both are marked `internal` so neither appears as a selectable answer
 model.
 `app/rag/catalog.py` executes them with parameterized SQL against the catalog —
 loaded from Supabase into memory (`corpus_db.py`), with `Laws/main/catalog.sqlite`

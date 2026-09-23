@@ -60,26 +60,26 @@ def get_conversation(conversation_id: str, authorization: str | None = Header(No
     return ConversationDetail(**found)
 
 
-@router.post("/{conversation_id}/name", response_model=ConversationSummary | None)
+@router.post("/{conversation_id}/name")
 def name_conversation(conversation_id: str, payload: NameRequest,
-                      authorization: str | None = Header(None)):
+                      authorization: str | None = Header(None)) -> dict:
     """Name a conversation from its summary, if it has earned one.
 
-    Its own request, not part of `POST /api/query`, because naming is not on the
-    path to an answer. Folding it in would put a second model call between the
-    reader and an answer they are already waiting for, for a label they are not
-    looking at yet. Its own model and key too — see `app/rag/naming.py`.
+    Its own request, not part of `POST /api/query`: naming is not on the path to
+    an answer. Its own model and key too — see `app/rag/naming.py`.
 
-    Returns the updated conversation, or `null` when the title is unchanged,
-    which is the ordinary outcome: too few answered turns, or a title the reader
-    has already made their own. Safe to call more than once.
+    Returns `{"status", "conversation"}`. `status` is "named", "kept" (the
+    title is the reader's or already named — stop asking), "not_yet" (too few
+    answered turns) or "failed" (the naming model was unreachable). On the last
+    two the client asks again after the next answer.
     """
     from app.db import conversations as store
 
     user = _caller(authorization)
     memory = payload.memory.model_dump() if payload.memory else None
-    named = store.name_conversation(user, conversation_id, memory)
-    return ConversationSummary(**named) if named else None
+    status, row = store.name_conversation(user, conversation_id, memory)
+    return {"status": status,
+            "conversation": ConversationSummary(**row).model_dump() if row else None}
 
 
 @router.patch("/{conversation_id}", response_model=ConversationSummary)

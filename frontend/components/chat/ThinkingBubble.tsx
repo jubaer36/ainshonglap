@@ -44,7 +44,7 @@ const PHASES: Phase[] = [
   { after: 20000, text: "Taking longer than usual…" },
 ];
 
-export function ThinkingBubble() {
+export function ThinkingBubble({ waitingForContext = false }: { waitingForContext?: boolean }) {
   const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
@@ -53,7 +53,12 @@ export function ThinkingBubble() {
     return () => clearInterval(timer);
   }, []);
 
-  const phase = [...PHASES].reverse().find((p) => elapsed >= p.after) ?? PHASES[0];
+  // Before the question is even sent: the previous answer's context is still
+  // being updated, and a follow-up should be read against it. Says exactly
+  // that, rather than a pipeline phase that has not started.
+  const phase = waitingForContext
+    ? { after: 0, text: "Updating the context from your last answer — one moment…" }
+    : [...PHASES].reverse().find((p) => elapsed >= p.after) ?? PHASES[0];
 
   return (
     <div className="flex items-start gap-3.5 pr-2">
@@ -65,7 +70,7 @@ export function ThinkingBubble() {
           <span className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce" />
         </span>
         <span>{phase.text}</span>
-        {elapsed > 8000 && (
+        {(waitingForContext ? elapsed > 2000 : elapsed > 8000) && (
           <span className="font-mono text-[10px] text-slate-300 tabular-nums">
             {Math.round(elapsed / 1000)}s
           </span>

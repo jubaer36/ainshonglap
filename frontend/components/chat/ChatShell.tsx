@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ApiError, fetchSection, sendQuery } from "@/lib/api";
+import { ApiError, fetchSection, sendQuery, updateMemory } from "@/lib/api";
 import {
   deleteConversation,
   nameConversation,
@@ -87,6 +87,10 @@ function errorAssistantMessage(error: unknown, question?: string): AssistantMess
 /** Remembers only that the welcome screen was answered — never any content. */
 const GUEST_CHOICE_KEY = "ainshonglap.guest";
 
+// How long a new question waits for the previous answer's context update
+// before going ahead with the context it has.
+const CONTEXT_WAIT_MS = 25_000;
+
 // Where each side panel stops overlaying the chat and becomes a column. The
 // references drawer needs a wider screen than the sidebar: with both docked at
 // 1024px the chat was left about 350px wide.
@@ -113,17 +117,33 @@ export function ChatShell() {
   // these are personal legal questions, and keeping nothing server-side is a
   // privacy property. Cleared by "New chat", which is what makes that button
   // actually start a new conversation rather than just empty the screen.
-  const [memory, setMemory] = useState<ConversationMemory | null>(null);
+  const [memory, setMemoryState] = useState<ConversationMemory | null>(null);
+  // The memory as of right now, readable inside an async flow. A question that
+  // waits for a context update must send the memory that update produced, not
+  // the value captured when Enter was pressed.
+  const memoryRef = useRef<ConversationMemory | null>(null);
+  const setMemory = (next: ConversationMemory | null) => {
+    memoryRef.current = next;
+    setMemoryState(next);
+  };
+  // The context update runs AFTER an answer is shown, as its own request. The
+  // answer never waits for it; only the NEXT question might — briefly.
+  // `contextGen` numbers each update, so one that finishes after it stopped
+  // mattering (the question went ahead without it, or the conversation
+  // changed) is recognised as stale and never applied.
+  const pendingContext = useRef<Promise<ConversationMemory | null> | null>(null);
+  const contextGen = useRef(0);
+  const [contextUpdating, setContextUpdating] = useState(false);
+  const [waitingForContext, setWaitingForContext] = useState(false);
   // Saved conversations live in localStorage (see lib/conversations.ts): these
   // are people's legal questions, and a server that never receives them cannot
   // mishandle them. `conversationId` is allocated up front so the first answer
   // lands in a record rather than creating one retroactively.
   const [conversations, setConversations] = useState<SavedConversation[]>([]);
-  // Conversations naming has already been asked about. The server decides
-  // whether a name is due and refuses politely when it is not, so asking twice
-  // is harmless — but asking on every turn forever is a request per question
-  // for a label that was settled long ago.
-  const namingAsked = useRef<Set<string>>(new Set());
+  // Conversations whose title is settled — named, or already the reader's.
+  // Only those stop being asked: asking after every answer until then is one
+  // small request, and stopping earlier is how naming never happened at all.
+  const namingSettled = useRef<Set<string>>(new Set());
   const [conversationId, setConversationId] = useState<string>(() => newConversationId());
   // The server's id for this conversation, once it has stored one. Distinct
   // from `conversationId`, which is a local key that also exists for guests.
@@ -234,35 +254,51 @@ export function ChatShell() {
     setMessages(historyForRequest);
     setLoading(true);
 
+    // The previous answer's context may still be updating. Wait for it — up to
+    // CONTEXT_WAIT_MS — so a follow-up is read against the exchange it follows.
+    // Past that, go ahead with the context as it stands and say so under the
+    // question; the late update is then discarded rather than applied over
+    // whatever comes next.
+    const pending = pendingContext.current;
+    if (pending) {
+      setWaitingForContext(true);
+      const outcome = await Promise.race([
+        pending.then((m) => (m ? "updated" : "failed")),
+        new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), CONTEXT_WAIT_MS)),
+      ]);
+      setWaitingForContext(false);
+      if (outcome !== "updated") {
+        dropPendingContext();
+        const note = outcome === "timeout"
+          ? "Sent with the earlier context — updating it from your last answer took too long."
+          : "Sent with the earlier context — it could not be updated from your last answer.";
+        historyForRequest = historyForRequest.map((m, i) =>
+          i === historyForRequest.length - 1 && m.role === "user" ? { ...m, contextNote: note } : m);
+        setMessages(historyForRequest);
+      }
+    }
+
     try {
       const assistantMessage = await sendQuery(trimmed, historyForRequest, {
         model: withModel ?? model ?? undefined,
-        memory,
+        memory: memoryRef.current,
         // Null on the first turn; the server returns the id it stored under.
         conversationId: user ? storedId : null,
       });
       const nextMessages = [...historyForRequest, assistantMessage];
       setMessages(nextMessages);
-      // Carry the updated summary into the next turn. Left untouched when the
-      // answer carries none, so a failed summarisation does not erase what the
-      // conversation already remembered.
+      // An older server still returns the updated memory with the answer.
       if (assistantMessage.memory) setMemory(assistantMessage.memory);
       // Storage happens server-side inside /api/query for a signed-in user, so
       // nothing is written here. Refresh the list so a new conversation appears
       // in the sidebar as soon as it has a title.
       if (assistantMessage.conversationId) setStoredId(assistantMessage.conversationId);
       if (user) void listConversations().then(setConversations);
-      // Naming is a separate request, made after the answer is on screen, so a
-      // second model call never sits between the reader and an answer they are
-      // already waiting for. It returns null unless the title actually changed.
-      const namedId = assistantMessage.conversationId;
-      if (user && namedId && !namingAsked.current.has(namedId)) {
-        namingAsked.current.add(namedId);
-        void nameConversation(namedId, assistantMessage.memory).then((list) => {
-          if (list) setConversations(list);
-        });
-      }
       setCitationLibrary((current) => ({ ...current, ...assistantMessage.citations }));
+      // The answer is on screen; now update the context, on its own.
+      if (assistantMessage.memoryPending) {
+        startContextUpdate(assistantMessage.id, assistantMessage.conversationId ?? null);
+      }
     } catch (error) {
       // A transport failure never reaches the summariser, so memory is
       // untouched here by construction — the next attempt starts from the same
@@ -271,6 +307,41 @@ export function ChatShell() {
     } finally {
       setLoading(false);
     }
+  }
+
+  /** Update the context from one answer, without anyone waiting on it. */
+  function startContextUpdate(messageId: string, storedConversationId: string | null) {
+    const gen = ++contextGen.current;
+    setContextUpdating(true);
+    const promise = updateMemory(messageId, user ? storedConversationId : null)
+      .catch(() => null)
+      .then((next) => {
+        if (gen !== contextGen.current) return null;      // stale: never applied
+        if (next) setMemory(next);
+        pendingContext.current = null;
+        setContextUpdating(false);
+        return next;
+      });
+    pendingContext.current = promise;
+
+    // Naming reads the summary, so it follows the update. Asked after every
+    // update until the server says the title is settled ("named" or "kept");
+    // "not_yet" and "failed" leave it for the next turn.
+    void promise.then((next) => {
+      const id = storedConversationId;
+      if (!next || !user || !id || namingSettled.current.has(id)) return;
+      void nameConversation(id, next).then(({ status, list }) => {
+        if (status === "named" || status === "kept") namingSettled.current.add(id);
+        if (list) setConversations(list);
+      });
+    });
+  }
+
+  /** Forget an update in flight — the conversation it belonged to has moved on. */
+  function dropPendingContext() {
+    contextGen.current++;
+    pendingContext.current = null;
+    setContextUpdating(false);
   }
 
   function handleRetry(messageId: string, withModel?: string) {
@@ -288,6 +359,7 @@ export function ChatShell() {
     setConversationId(newConversationId());
     setStoredId(null);
     setMessages([]);
+    dropPendingContext();
     setMemory(null);
     setInputValue("");
     setActiveCitationKey(null);
@@ -300,6 +372,7 @@ export function ChatShell() {
     setConversationId(saved.id);
     setStoredId(saved.id);
     setMessages(saved.messages);
+    dropPendingContext();
     setMemory(saved.memory);
     setInputValue("");
     setActiveCitationKey(null);
@@ -440,7 +513,14 @@ export function ChatShell() {
                 ),
               )}
 
-              {loading && <ThinkingBubble />}
+              {loading && (
+                // Keyed, so its seconds counter restarts when the wait for the
+                // context gives way to the wait for the answer.
+                <ThinkingBubble
+                  key={waitingForContext ? "context" : "answer"}
+                  waitingForContext={waitingForContext}
+                />
+              )}
             </div>
           </div>
           <InputDock
@@ -451,8 +531,12 @@ export function ChatShell() {
             model={model}
             onModelChange={setModel}
             memory={memory}
+            contextUpdating={contextUpdating}
             conversationId={storedId}
-            onForgetMemory={() => setMemory(null)}
+            onForgetMemory={() => {
+              dropPendingContext();
+              setMemory(null);
+            }}
             onActivateCitation={handleActivateCitation}
           />
         </main>

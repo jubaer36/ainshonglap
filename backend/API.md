@@ -43,7 +43,8 @@ RAG_WARMUP=0 uvicorn app.main:app --reload   # skip model load (corpus endpoints
 
 Returns an `AssistantMessage`: `heading`, `blocks` (paragraphs with inline
 citation segments), `citations` keyed by citation key, `unsupported`, `kind`,
-and — for a conversation — `memory`, `resolved_question`, `generator`.
+`resolved_question`, `generator`, and `memory_pending: true` — the updated
+conversation memory is not in this response (see below).
 
 #### Conversation memory
 
@@ -55,21 +56,25 @@ Send the `memory` from the previous answer back with the next question:
             "sections": ["penal-s302", "penal-s304"], "turns": 1}}
 ```
 
-A rolling summary, rewritten after every turn by Gemini 3.5 Flash Lite on
-`GEMINI_API_KEY_2`. The planner decides `follow_up` itself, **defaulting to
+A rolling summary, rewritten after every turn by gpt-oss-120b on its own key,
+`GROQ_API_KEY_SUMMARIZER`, with the system fallback behind it. (Gemini 3.5 Flash
+Lite held the job until it took 34-64s per call and every update hit the 20s
+deadline with `504 DEADLINE_EXCEEDED` — E20.) The planner decides `follow_up` itself, **defaulting to
 false**, and rewrites a follow-up into a standalone question; `resolved_question`
 comes back so the reader can see what was actually answered. A bad rewrite would
 otherwise be a confident, properly cited answer to a question nobody asked.
 
 Two parts, because a follow-up leans hardest on the turn right before it — the
-one a rolling summary compresses first. The **summary** covers the whole
-conversation, up to ~180 words: for each turn, what was asked and what was
-concluded, with its sections. The **previous exchange** — `last_question` and
+one a rolling summary compresses first. The **summary** is short background,
+under ~100 words: one sentence per turn, what was asked and what was concluded,
+with its sections. The **previous exchange** — `last_question` and
 `last_answer` — is copied word for word by code, never by the summariser, so it
 survives a paraphrase and a summariser outage alike. Both reach the planner, and
 both are shown in the frontend's memory panel.
 
-The server stores nothing — the client holds the memory and echoes it. For
+The server stores nothing for a guest — the client holds the memory and echoes
+it; the only server-side copy is the few minutes an answer waits in
+`pending_memory` for its context update. For
 questions this personal that is a privacy property, and it removes the session
 store entirely. `sections` is written by code from the answer's own citations,
 never by the summariser, because a rolling summary is lossy and the detail most
@@ -77,6 +82,31 @@ likely to be mangled is a section number.
 
 `generator` names the model that answered, and `generator_substituted` the alias
 it replaced when the requested one was out of quota.
+
+#### `POST /api/memory` — the context update, after the answer
+
+```json
+{"message_id": "<the answer's id>", "conversation_id": "<optional>"}
+```
+
+Returns the updated `ConversationMemory` for the client to send with its next
+question. **The answer never waits for it.** The summariser used to run inside
+`/api/query`, between the answer being ready and being sent, and a slow Gemini
+(60-90s observed) held a two-second answer behind a minute of summarising. Now
+the query handler parks the question, the structured answer and the memory it
+was asked against in `app/rag/pending_memory.py`, keyed by message id, and this
+request collects them.
+
+Parked entries live in process memory for 10 minutes and are taken once — a
+second call, or one after a restart, gets `410`, and the client keeps the
+context it had. Nothing is written for a guest; for a signed-in user with a
+`conversation_id`, the new memory replaces the stored one on the conversation
+and on that answer's row.
+
+The frontend asks for it as soon as an answer renders. If the next question is
+sent while it is still running, the client waits up to 25 seconds (showing that
+the context is updating), then sends the question with the previous context and
+marks that question as sent without the last exchange.
 
 **A refusal is a 200 with `unsupported: true`**, not an error — "the Acts do not
 cover this" is an answer. A **502** means the generator was unreachable, which
@@ -157,8 +187,8 @@ chapter returns nothing rather than the nearest real one.
 Set `RAG_PLAN=0` to fall back to the older pattern router in `app/rag/refine.py`.
 
 **The planner runs on `gpt-oss-120b`** (`planner`, on `GROQ_API_KEY_PLANNER`),
-with Gemini 3.5 Flash Lite (`gemini2`, on `GEMINI_API_KEY_2`) as an automatic
-fallback. Both are marked `internal` in the registry and never appear in the
+with the system fallback (`fallback`, gpt-oss-120b on `GROQ_API_KEY_FALLBACK`)
+behind it. Both are marked `internal` in the registry and never appear in the
 model picker.
 
 The key is a **dedicated prefix, not a fourth numbered one**. `keyring` matches
@@ -168,10 +198,10 @@ question, and a burst of answers must not leave the classifier rate-limited: a
 failed plan degrades the question to plain semantic retrieval, and "who are you"
 then goes to the statute index and comes back with sections scoring -3.90.
 
-The fallback is a different *provider*, not just a different key — an outage or
-a malformed request is not per-key, so a second Groq route would fail with it.
-Gemini held this job before (E16, 1.3-1.8s) and is measured on it, which makes
-it a standby rather than a guess.
+The fallback is the same model on a key nothing else draws on, so a burst that
+rate-limits the planner's key has not touched it. It does not cover a Groq-wide
+outage; Gemini held this job before (E16, 1.3-1.8s) and `RAG_PLANNER_FALLBACK=gemini2`
+puts it back.
 
 This matters more than it looks. The planner is the first step, so its failures
 do not present as planner failures — a failed plan degrades the question to
@@ -250,7 +280,8 @@ conversation.
 {"memory": {"summary": "...", "sections": [], "turns": 4, "answered": 3}}
 ```
 
-Returns the updated `ConversationSummary`, or `null` when the title is
+The client calls it after the context update has landed, since `answered`
+comes from that. Returns the updated `ConversationSummary`, or `null` when the title is
 unchanged — the ordinary outcome. Safe to call more than once.
 
 **Its own request, not part of `POST /api/query`.** Naming is not on the path to
@@ -325,12 +356,12 @@ Ordered best-first (`config.PICKER_ORDER`): `oss120`, `qwen`, `oss`, `gemini`,
 then the rest in registry order. The registry itself is grouped by provider,
 which is the right shape for reading it and the wrong one for choosing from it.
 
-**Internal routes are not listed.** `planner` (`GROQ_API_KEY_PLANNER`) and
-`gemini2` (`GEMINI_API_KEY_2`, the planner's fallback and the conversation
-summariser) are machinery, not choices; offering either as an answer model would
-let a reader spend the classifier's quota and then wonder why the next question
-stopped being routed. It stays resolvable by alias — it is simply not
-advertised. `config.selectable()` is the filter, and the 422 "unknown model"
+**Internal routes are not listed.** `planner` (`GROQ_API_KEY_PLANNER`),
+`summariser` (`GROQ_API_KEY_SUMMARIZER`), `fallback` (`GROQ_API_KEY_FALLBACK`)
+and `gemini2` (unused by default) are machinery, not choices; offering one as an
+answer model would let a reader spend the quota a per-question job depends on —
+the next question then goes unclassified, or its context stops updating. They
+stay resolvable by alias — they are simply not advertised. `config.selectable()` is the filter, and the 422 "unknown model"
 message lists the same set.
 
 Two different things make a route unusable, and they are reported separately.
@@ -379,6 +410,28 @@ two index rebuilds can never overlap; they are held in memory and forgotten on
 restart, which loses nothing — an Act is either loaded (it has a `law_loads`
 commit marker) or it is not.
 
+## When a model fails
+
+Every model call has one fallback: `gpt-oss-120b` on `GROQ_API_KEY_FALLBACK`, a
+key nothing else uses, so whatever took the first model down has not also spent
+the fallback's budget. It covers answers (any provider failure — quota, outage,
+timeout — not only quota; an unknown model id is not retried), the planner and
+its chapter lookup, the conversation summariser, and conversation naming (also
+when Gemini returns an empty title). Each use is logged at WARNING as
+`FALLBACK  <job>: <model> failed (<reason>); using fallback`. Gemini calls are
+abandoned after `RAG_GEMINI_TIMEOUT` seconds so the fallback gets its turn.
+
+The fallback key is budgeted separately from the shared pool: `quota.py` records
+it under `openai/gpt-oss-120b [GROQ_API_KEY_FALLBACK]`, so the pool's three keys
+running out of gpt-oss-120b does not grey out the fallback, and vice versa.
+
+Vision is the exception: gpt-oss-120b cannot read an image.
+
+A weaker planner makes more mistakes, so one rule is enforced in code rather
+than trusted to the prompt: a question that names an Act the catalog holds is
+never `out_of_scope` — it becomes an exact fetch when a section is named, and a
+scoped search otherwise.
+
 ## Where the statute text comes from
 
 Supabase, always first. The catalog (exact lookups) is loaded from the `law_*`
@@ -414,10 +467,11 @@ not have any Act loaded to Supabase since it was last rebuilt.
 |---|---|
 | `GROQ_API_KEY`, `_2`, `_3` | the generators, in rotation (below) |
 | `GROQ_API_KEY_PLANNER` | the planner alone, deliberately outside that rotation |
-| `GEMINI_API_KEY_2` | the planner's fallback and the conversation summariser |
+| `GROQ_API_KEY_FALLBACK` | the system-wide fallback — gpt-oss-120b for every model call that fails |
+| `GROQ_API_KEY_SUMMARIZER` | the conversation summariser (gpt-oss-120b), and nothing else |
 | `GEMINI_API_KEY_3` | naming a conversation, and nothing else |
 | `GEMINI_API_KEY` | optional generator |
-| `INCEPTION_API_KEY` | Mercury, the cross-provider quota fallback |
+| `INCEPTION_API_KEY` | Mercury, a selectable generator |
 | `DEEPGRAM_API_KEY` | voice |
 | `OPENROUTER_API_KEY` | vision, OpenRouter routes |
 
@@ -455,16 +509,17 @@ model is.
 | `RAG_LLM_BACKEND` | `groq` | `groq`, `openrouter`, `gemini`, `inception` |
 | `RAG_INCEPTION_MODEL` | `mercury-2.5` | Inception Mercury default |
 | `RAG_PLANNER_MODEL` | `planner` | the planner — decides category and coordinates |
-| `RAG_PLANNER_FALLBACK` | `gemini2` | tried when the planner's own model fails |
+| `RAG_PLANNER_FALLBACK` | `fallback` | tried when the planner's own model fails |
 | `RAG_NAME_MODEL` | `gemini-3.5-flash-lite` | names a conversation from its summary |
 | `RAG_NAME_AFTER` | `3` | answered turns before a conversation is named |
 | `RAG_TRACE` | `1` | one concise log line per pipeline step; `0` silences |
 | `RAG_PLAN` | `1` | `0` falls back to the old pattern router |
 | `RAG_ROUTER_MODEL` | `lfm` | old router's model, used only when `RAG_PLAN=0` |
 | `RAG_DENSE_K` / `RAG_FINAL_K` | `20` / `8` | candidates reranked / sections returned |
-| `RAG_FALLBACK_GENERATOR` | `mercury` | used when the chosen generator is out of quota |
-| `RAG_MEMORY_MODEL` | `gemini-3.5-flash-lite` | rolling conversation summariser |
-| `RAG_MEMORY_CHARS` | `1400` | ceiling on the summary; the previous exchange is kept verbatim on top (1,000 + 1,500 chars) |
+| `RAG_FALLBACK_GENERATOR` | `fallback` | gpt-oss-120b on its own key; used when any model call fails |
+| `RAG_GEMINI_TIMEOUT` | `20` | seconds before a Gemini call is abandoned for the fallback |
+| `RAG_MEMORY_MODEL` | *(auto)* | summariser alias; `summariser` when its key is set, else `oss120` |
+| `RAG_MEMORY_CHARS` | `800` | ceiling on the summary; the previous exchange is kept verbatim on top (up to 2,000 + 4,000 chars) |
 | `RAG_STT_MODEL` | `nova-3` | Deepgram model; Bengali needs nova-3 |
 | `RAG_STT_LANGUAGE` | `en` | `en`, `bn`, or `multi` (no Bengali in `multi`) |
 | `RAG_WARMUP` | `1` | `0` skips model loading at startup |
@@ -508,6 +563,8 @@ app/rag/
   vision.py        OpenRouter vision — one page image -> text
   memory.py        rolling conversation summary + previous exchange verbatim;
                    section keys from code
+  pending_memory.py answers waiting for their context update (POST /api/memory),
+                   in process memory for 10 minutes, taken once
   naming.py        names a conversation from its summary, on its own key
   keyring.py       several API keys per provider: rotation, and failover on 429
   quota.py         per (model, key) exhaustion and cooldown, for fallback and the picker

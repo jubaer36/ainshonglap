@@ -84,10 +84,27 @@ GENERATORS: dict[str, dict] = {
                   "key_env": "GROQ_API_KEY_PLANNER", "enforces_schema": True,
                   "internal": True,
                   "note": "the planner, on its own Groq key"},
+    # The system-wide fallback: gpt-oss-120b on a Groq key nothing else uses.
+    # Every model call that fails — an answer, the planner, the chapter lookup,
+    # the summariser, conversation naming — retries here. Its own key, so the
+    # outage or quota exhaustion that sent a call here cannot also have spent
+    # the fallback's budget. Not in the picker: it is the net, not a choice.
+    "fallback":  {"backend": "groq",       "model": "openai/gpt-oss-120b",
+                  "key_env": "GROQ_API_KEY_FALLBACK", "enforces_schema": True,
+                  "internal": True,
+                  "note": "system-wide fallback, its own Groq key"},
+    # The conversation summariser, on a Groq key nothing else uses. It runs
+    # after every answer; on its own key it cannot eat the generators' budget.
+    # Failures go to `fallback` like every other call. If the key is missing,
+    # memory.summariser_model() drops to `oss120` on the shared pool.
+    "summariser": {"backend": "groq",      "model": "openai/gpt-oss-120b",
+                  "key_env": "GROQ_API_KEY_SUMMARIZER", "enforces_schema": True,
+                  "internal": True,
+                  "note": "conversation summariser, its own Groq key"},
     "gemini2":   {"backend": "gemini",     "model": "gemini-3.5-flash-lite",
                   "key_env": "GEMINI_API_KEY_2", "enforces_schema": True,
                   "internal": True,
-                  "note": "second Gemini key; planner and conversation summariser"},
+                  "note": "second Gemini key; no longer on any default path"},
     "gemini":    {"backend": "gemini",     "model": "gemini-3.5-flash-lite",
                   "enforces_schema": True,
                   "note": "E1 scored 5/5, but on gemini-2.5-flash"},
@@ -113,12 +130,10 @@ def selectable() -> dict[str, dict]:
 
 DEFAULT_GENERATOR = os.getenv("RAG_GENERATOR", "oss120")
 
-# Used when the chosen generator is out of quota. Wants a different PROVIDER
-# from the default, not just a different model: Groq's daily cap is per model,
-# but an outage or a key problem is not, and a fallback on the same provider
-# would fail with it. Mercury is Inception, enforces the schema, and has its
-# own budget.
-FALLBACK_GENERATOR = os.getenv("RAG_FALLBACK_GENERATOR", "mercury")
+# Used when the chosen generator fails — quota, an outage, a timeout. The
+# `fallback` alias: gpt-oss-120b on GROQ_API_KEY_FALLBACK, a key no other route
+# draws on, so whatever took the first model down has not also spent this one.
+FALLBACK_GENERATOR = os.getenv("RAG_FALLBACK_GENERATOR", "fallback")
 
 # A pasted document — a case brief, a transcribed page — is a different job from
 # a typed question: a wall of narrative prose wrapped around a few statutory
@@ -173,15 +188,27 @@ DEFAULT_ROUTER = os.getenv("RAG_ROUTER_MODEL", "lfm")
 # it into that rotation.
 PLANNER_MODEL = os.getenv("RAG_PLANNER_MODEL", "planner")
 
-# Tried when the planner's own model fails. A different PROVIDER, not just a
-# different key: an outage or a bad request is not per-key, so a second Groq
-# route would fail with it. Gemini 3.5 Flash Lite on GEMINI_API_KEY_2 was the
-# planner before this and is measured on the job (E16), which makes it the
-# obvious standby rather than a guess.
-PLANNER_FALLBACK = os.getenv("RAG_PLANNER_FALLBACK", "gemini2")
+# Tried when the planner's own model fails: the system-wide `fallback` route,
+# on its own key, so a planner outage does not wait behind the generators'
+# rate limits.
+PLANNER_FALLBACK = os.getenv("RAG_PLANNER_FALLBACK", "fallback")
 
 # Planning replaces pattern routing. Off falls back to refine.classify_pattern.
 PLAN_QUERIES = os.getenv("RAG_PLAN", "1") == "1"
+
+
+def quota_name(name: str | None) -> str:
+    """The name an alias's quota is tracked under.
+
+    The model id, for routes on the shared key pool. For a route on a dedicated
+    key (the planner's, the fallback's) the model id plus that key: the default
+    generator, the planner and the fallback are all gpt-oss-120b, and tracked
+    under one name, exhausting the shared keys would mark the fallback's own
+    untouched key spent too — the fallback skipped exactly when it was needed.
+    """
+    _, model = resolve_generator(name)
+    key = generator_key_env(name)
+    return f"{model} [{key}]" if key and key.startswith("GROQ") else model
 
 
 def generator_key_env(name: str | None) -> str | None:

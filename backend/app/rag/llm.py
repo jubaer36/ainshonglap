@@ -42,10 +42,15 @@ class GeminiLLM:
     # runs a summarisation call on every turn.
     KEY_ENV = "GEMINI_API_KEY"
 
+    # Seconds before a Gemini call is abandoned. Flash Lite has answered in 60-90s
+    # under load — long enough that the caller's fallback never got its turn.
+    TIMEOUT = float(os.getenv("RAG_GEMINI_TIMEOUT", "20"))
+
     def __init__(self, model: str = DEFAULT_GEMINI, temperature: float = 0.0,
                  key_env: str | None = None):
         from dotenv import load_dotenv
         from google import genai
+        from google.genai import types
 
         # .env.local sits next to app/, and the API may be started from anywhere
         load_dotenv(ENV_FILE, override=True)
@@ -55,7 +60,8 @@ class GeminiLLM:
             raise RuntimeError(f"{env} not set (expected in backend/.env.local)")
         self.name = model
         self.temperature = temperature
-        self._client = genai.Client(api_key=key)
+        self._client = genai.Client(
+            api_key=key, http_options=types.HttpOptions(timeout=int(self.TIMEOUT * 1000)))
 
     def generate_json(self, system: str, prompt: str, schema: dict) -> dict:
         from google.genai import types
@@ -110,6 +116,15 @@ class GroqLLM:
         self.used_key: str | None = None
 
     @property
+    def quota_name(self) -> str:
+        """Model id on the shared pool; model id + key on a dedicated key.
+
+        See config.quota_name: one model on several separate budgets must not
+        share one exhaustion record.
+        """
+        return self.name if self.key_env == self.KEY_ENV else f"{self.name} [{self.key_env}]"
+
+    @property
     def fleet(self) -> int:
         """How many keys this route currently has configured."""
         return max(keyring.count(self.key_env), 1)
@@ -136,8 +151,8 @@ class GroqLLM:
         if not order:
             raise RuntimeError(
                 f"{self.key_env} not set (expected in backend/.env.local)")
-        fresh = [s for s in order if quota.slot_available(self.name, s.env)]
-        spent = [s for s in order if not quota.slot_available(self.name, s.env)]
+        fresh = [s for s in order if quota.slot_available(self.quota_name, s.env)]
+        spent = [s for s in order if not quota.slot_available(self.quota_name, s.env)]
         order = fresh + spent
 
         response = None
@@ -155,7 +170,7 @@ class GroqLLM:
                     return response
                 # This key is at its ceiling. Record it against (model, key) so
                 # the next question starts elsewhere, then try the next key now.
-                quota.mark_exhausted(self.name, response.text[:300],
+                quota.mark_exhausted(self.quota_name, response.text[:300],
                                      slot=slot.env, fleet=self.fleet)
                 if len(order) > 1:
                     trace.step("key", f"{slot.env} 429 -> next key")
@@ -192,10 +207,10 @@ class GroqLLM:
             # so the model picker can grey this route out and /api/query can
             # fall back instead of handing the caller a 502.
             if response.status_code == 429 or quota.looks_like_quota(detail):
-                quota.mark_exhausted(self.name, detail, slot=self.used_key,
+                quota.mark_exhausted(self.quota_name, detail, slot=self.used_key,
                                      fleet=self.fleet)
             raise RuntimeError(detail)
-        quota.clear(self.name, slot=self.used_key)
+        quota.clear(self.quota_name, slot=self.used_key)
         data = response.json()
         if data.get("error"):
             raise RuntimeError(f"{self.LABEL}: {json.dumps(data['error'])[:300]}")
@@ -359,3 +374,35 @@ def get_llm(backend: str | None = None, model: str | None = None) -> Any:
     raise ValueError(
         f"unknown LLM backend {backend!r} "
         "(expected groq, openrouter, gemini or inception)")
+
+
+def generate_with_fallback(backend: str | None, model: str | None, system: str,
+                           prompt: str, schema: dict, *, job: str) -> tuple[dict, str]:
+    """JSON from `model`; on any failure, from the system fallback route.
+
+    Returns (result, the alias that produced it). For the model calls that used
+    to catch their own errors and give up — a general answer became a refusal,
+    an Act overview lost its prose — so the fallback is reached from inside
+    them too, not only from the request handler. Every use is logged at
+    WARNING, visible with RAG_TRACE=0.
+
+    An unknown model id is not retried: that is a configuration mistake, and a
+    fallback answer would hide it.
+    """
+    import logging
+
+    from app.rag import config
+
+    try:
+        return get_llm(backend, model).generate_json(system, prompt, schema), model or ""
+    except Exception as exc:
+        fallback = config.FALLBACK_GENERATOR
+        text = str(exc).lower()
+        unknown = "model_not_found" in text or "does not exist or you do not have access" in text
+        if not fallback or model == fallback or unknown:
+            raise
+        logging.getLogger("ainshonglap").warning(
+            "FALLBACK  %s: %s failed (%s); using %s",
+            job, model or "default", type(exc).__name__, fallback)
+        return get_llm(None, fallback).generate_json(system, prompt, schema), fallback
+

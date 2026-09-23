@@ -121,35 +121,41 @@ export async function getConversation(id: string): Promise<SavedConversation | n
  * Ask the server to name a conversation from its summary.
  *
  * A separate request on purpose: naming is not on the path to an answer, so it
- * runs after one has already been rendered rather than delaying it. The server
- * decides whether the conversation has earned a name and whether its title is
- * still the system's to change, so this is safe to call more than once and
- * usually returns null.
+ * runs after one has already been rendered rather than delaying it.
  *
- * Returns the refreshed list when the title changed, and null when it did not,
- * so the caller can skip a re-render it does not need.
+ * Returns the server's `status` — the caller keeps asking after each answer
+ * until it is "named" or "kept":
+ *
+ *   named     renamed now; `list` is the refreshed conversation list
+ *   kept      the title is the reader's, or was named before — stop asking
+ *   not_yet   too few answered turns — ask again after the next answer
+ *   failed    the naming model was unreachable — ask again after the next one
+ *
+ * It used to be asked once, after the first answer, when the answer was always
+ * "not yet" — and never again, so no conversation was ever named.
  */
+export type NamingStatus = "named" | "kept" | "not_yet" | "failed";
+
 export async function nameConversation(
   id: string,
   memory: ConversationMemory | null,
-): Promise<SavedConversation[] | null> {
+): Promise<{ status: NamingStatus; list: SavedConversation[] | null }> {
   const headers = await authHeaders();
-  if (!headers.Authorization) return null;
+  if (!headers.Authorization) return { status: "kept", list: null };
   try {
     const response = await fetch(`${API_BASE_URL}/api/conversations/${id}/name`, {
       method: "POST",
       headers: { ...headers, "Content-Type": "application/json" },
       body: JSON.stringify({ memory }),
     });
-    if (!response.ok) return null;
-    // `null` body means the title was left alone, which is the common case.
-    const named = (await response.json()) as Record<string, unknown> | null;
-    if (!named) return null;
+    if (!response.ok) return { status: "failed", list: null };
+    const body = (await response.json()) as { status: NamingStatus };
+    if (body.status !== "named") return { status: body.status, list: null };
   } catch {
     // A name is cosmetic; a failure here must not disturb the conversation.
-    return null;
+    return { status: "failed", list: null };
   }
-  return listConversations();
+  return { status: "named", list: await listConversations() };
 }
 
 /**

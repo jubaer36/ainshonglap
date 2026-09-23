@@ -42,7 +42,11 @@ question + conversation memory ────┘
    ANSWERER (question + fetched evidence -> cited answer)
       |
       v
-   answer + rolling summary -> client, returned next turn
+   answer -> client, at once
+      |
+      v
+   CONTEXT UPDATE (POST /api/memory, afterwards): rolling summary +
+   previous exchange verbatim -> client, sent back with the next question
 ```
 
 Five categories replaced six intents: browse, summarize and lookup are all
@@ -186,6 +190,8 @@ exercised signed in.
 - Source the missing CrPC Second Schedule.
 - Stream stage events so the frontend's waiting messages become observed rather
   than timed.
+- Measure follow-up resolution with the shorter (~100-word) summary plus the
+  verbatim previous exchange (E20 changed it without a number).
 - Retention policy for stored conversations — currently indefinite, which is a
   decision rather than a default.
 - Add `AI_USAGE.md`, architecture diagram and deployment/demo instructions.

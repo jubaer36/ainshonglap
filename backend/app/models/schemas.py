@@ -270,6 +270,9 @@ class AssistantMessage(BaseModel):
     # Where this exchange was stored, for a signed-in user. None for a guest,
     # whose questions are never written down.
     conversation_id: str | None = None
+    # True when the context update for this answer is still to be requested
+    # (POST /api/memory). The answer is sent before the summariser runs.
+    memory_pending: bool = False
     # Set only when this question was answered as a follow-up: the standalone
     # rewrite that was actually executed. Shown to the reader, because a wrong
     # rewrite is otherwise a confident answer to a question nobody asked.

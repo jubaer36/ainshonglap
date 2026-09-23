@@ -19,6 +19,8 @@ interface InputDockProps {
   onModelChange: (alias: string | null) => void;
   /** The rolling conversation summary the next question will be read against. */
   memory: ConversationMemory | null;
+  /** The last answer's context update is still running. */
+  contextUpdating?: boolean;
   /** Stored conversation id, so an uploaded page is filed with this session. */
   conversationId?: string | null;
   onForgetMemory: () => void;
@@ -33,6 +35,7 @@ export function InputDock({
   model,
   onModelChange,
   memory,
+  contextUpdating = false,
   conversationId,
   onForgetMemory,
   onActivateCitation,
@@ -146,6 +149,7 @@ export function InputDock({
               <ModelPicker value={model} onChange={onModelChange} disabled={disabled} />
               <MemoryPanel
                 memory={memory}
+                updating={contextUpdating}
                 onForget={onForgetMemory}
                 onActivateCitation={onActivateCitation}
               />

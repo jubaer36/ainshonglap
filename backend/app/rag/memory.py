@@ -7,9 +7,13 @@ previous question and answer kept word for word, since a follow-up leans
 hardest on exactly the turn a rolling summary compresses first. The context
 stays bounded however long the conversation runs.
 
-Summarisation uses Gemini 3.5 Flash Lite on a **second** API key
-(`GEMINI_API_KEY_2`), because it runs on every turn and should not compete for
-quota with anything else.
+Summarisation runs on gpt-oss-120b (Groq). It used Gemini 3.5 Flash Lite on
+`GEMINI_API_KEY_2` until Gemini started taking 34-64s for a one-word reply:
+every update hit the 20s deadline (`504 DEADLINE_EXCEEDED`) and went to the
+fallback anyway, and a follow-up question waits on the update for up to 25s.
+It has its own key, `GROQ_API_KEY_SUMMARIZER`, and the system fallback
+(`GROQ_API_KEY_FALLBACK`) behind it. Without the key it shares the generators'
+pool.
 
 **The risk this design has, and what is done about it.** A rolling summary is
 lossy by construction and the loss compounds: turn 5's summary is a summary of a
@@ -38,25 +42,35 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 
-MODEL = os.getenv("RAG_MEMORY_MODEL", "gemini-3.5-flash-lite")
-KEY_ENV = "GEMINI_API_KEY_2"
+# A generator alias (config.GENERATORS). Empty = chosen at call time: the
+# dedicated `summariser` route when its key exists, else `oss120` on the pool.
+MODEL = os.getenv("RAG_MEMORY_MODEL", "")
+KEY_ENV = "GROQ_API_KEY_SUMMARIZER"
+
+
+def summariser_model() -> str:
+    """The alias the summary is written by."""
+    if MODEL:
+        return MODEL
+    return "summariser" if os.getenv(KEY_ENV) else "oss120"
 
 # Hard ceiling on what goes back into a prompt. The whole point of a rolling
 # summary is a bounded context; without a cap the model slowly writes a longer
 # summary each turn and the bound is fiction.
-# The summary covers the whole conversation; the latest exchange is also kept
-# word for word (below), so the summary can afford to be a record rather than a
-# headline. 90 words was a headline: by the next question, what had just been
-# asked and answered was already paraphrased away.
-MAX_SUMMARY_CHARS = int(os.getenv("RAG_MEMORY_CHARS", "1400"))
+# The summary is the background; the latest exchange is kept word for word
+# beside it (below), and that is what a follow-up leans on. So the summary is
+# short — one line per turn — and the detail lives in the verbatim exchange.
+# (90 words with no verbatim exchange lost the previous turn; 180 words beside
+# one was more than the planner needed.)
+MAX_SUMMARY_CHARS = int(os.getenv("RAG_MEMORY_CHARS", "800"))
 MAX_SECTIONS = 12
 # The previous question and answer, verbatim — written by code, never by the
 # summariser. A follow-up leans hardest on the turn right before it ("what if
 # he had survived?", "and the second one?"), which is exactly the turn a
 # rolling summary compresses first. Capped so a long listing cannot swamp the
 # planner's prompt.
-MAX_LAST_QUESTION_CHARS = 1000
-MAX_LAST_ANSWER_CHARS = 1500
+MAX_LAST_QUESTION_CHARS = 2000
+MAX_LAST_ANSWER_CHARS = 4000
 
 SYSTEM = (
     "You maintain a running summary of a conversation between a user and a "
@@ -66,11 +80,11 @@ SYSTEM = (
     "and the assistant's newest answer. Return ONE updated summary that "
     "replaces the previous one.\n\n"
     "Rules:\n"
-    "1. Keep it under 180 words. It is a memory aid, not a transcript — but "
-    "a follow-up will be read against it, so keep enough to answer 'what did "
-    "I ask about earlier, and what did you say?' for EACH turn: what the user "
-    "asked, in their terms, and what the assistant concluded, with the "
-    "sections it relied on.\n"
+    "1. Keep it under 100 words. It is background, not a transcript: the "
+    "latest question and answer are kept word for word separately, so do not "
+    "try to preserve them in full. One short sentence per turn: what the user "
+    "asked and what the assistant concluded, with the sections it relied on. "
+    "Older turns may shrink to a few words.\n"
     "2. Copy every section number and Act name EXACTLY as written — '302' must "
     "never become '303', 'Penal Code' must never become 'Criminal Code'. These "
     "are the load-bearing details; prose can be lost, numbers cannot.\n"
@@ -78,8 +92,8 @@ SYSTEM = (
     "to whom). A later question may change one fact and ask again, and the "
     "facts are what makes that resolvable.\n"
     "4. Keep what the user is trying to find out, and anything they clarified.\n"
-    "5. Drop greetings, disclaimers, and the assistant's reasoning. Keep the "
-    "conclusion, not the argument.\n"
+    "5. Drop greetings, disclaimers, explanations and the assistant's "
+    "reasoning. Keep the conclusion, not the argument.\n"
     "6. Write plain third-person prose: 'The user described... The assistant "
     "cited...'. No bullet points, no headings."
 )
@@ -156,21 +170,26 @@ class Memory:
         )
 
 
-def _llm():
-    from app.rag.llm import GeminiLLM
+def _summarise(payload: str) -> dict:
+    """The summariser's model; the system fallback route if it fails, logged."""
+    from app.rag.llm import generate_with_fallback
 
-    return GeminiLLM(MODEL, key_env=KEY_ENV)
+    raw, _ = generate_with_fallback(None, summariser_model(), SYSTEM, payload,
+                                    SCHEMA, job="summariser")
+    return raw
 
 
 def available() -> bool:
     try:
-        _llm()
+        from app.rag.llm import get_llm
+
+        get_llm(None, summariser_model())
         return True
     except Exception:
         return False
 
 
-def answer_text(answer) -> str:
+def answer_text(answer, limit: int = 4000) -> str:
     """What the assistant actually told the user, as plain text.
 
     Built from the structured answer rather than from rendered prose so it
@@ -180,11 +199,11 @@ def answer_text(answer) -> str:
     bits: list[str] = []
     if getattr(answer, "summary", ""):
         bits.append(answer.summary)
-    for claim in (getattr(answer, "claims", None) or [])[:8]:
+    for claim in (getattr(answer, "claims", None) or []):
         sec = claim.get("section")
         text = claim.get("text", "")
         bits.append(f"[s.{sec}] {text}" if sec else text)
-    return "\n".join(b for b in bits if b)[:4000]
+    return "\n".join(b for b in bits if b)[:limit]
 
 
 def failed(answer) -> bool:
@@ -261,7 +280,7 @@ def update(memory: Memory | None, question: str, answer) -> Memory:
                          f"+ Q«{question.strip()}» + A«{said[:40]}»")
     elapsed = trace.timer()
     try:
-        raw = _llm().generate_json(SYSTEM, payload, SCHEMA)
+        raw = _summarise(payload)
         summary = (raw.get("summary") or "").strip()[:MAX_SUMMARY_CHARS]
     except Exception as exc:
         trace.step("memory", f"FAILED, kept stale  {type(exc).__name__}", elapsed())

@@ -19,9 +19,11 @@ already been rendered. Folding it in would have put a second model call between
 the reader and an answer they were already waiting for, once per conversation,
 for a label they were not looking at yet.
 
-Never raises. A conversation with a stale name is a much smaller problem than a
-turn that failed to save, and every caller here treats "" as "keep what you
-have".
+`suggest` returns "" when there is nothing to name and raises `Unavailable`
+when the model could not be reached — kept distinct, because the second means
+"try again next turn" and the first does not. A busy model is retried briefly
+first. The caller never lets either one reach the reader: a missing name is a
+much smaller problem than a failed request.
 """
 
 from __future__ import annotations
@@ -40,6 +42,9 @@ SYSTEM = (
     "1. Two to five words. It is a label in a sidebar, not a sentence.\n"
     "2. Name the SUBJECT, not the conversation. 'Bail for house theft', not "
     "'A discussion about bail'. No 'Conversation about', no 'Questions on'.\n"
+    "   When it covers several topics, name the main LEGAL one, not the latest "
+    "aside - a conversation about prosecution that drifted to coffee is about "
+    "prosecution.\n"
     "3. Describe what was ASKED ABOUT. Do not classify the offence yourself — "
     "if the user described a death, say 'death after assault', not 'murder'. "
     "Naming an offence is a legal conclusion and this is a label.\n"
@@ -65,6 +70,10 @@ MAX_CHARS = 60
 # Stripped off whatever comes back. The model is asked for no quotes and no
 # trailing stop, but a title is a label and a prompt rule is a request.
 TRIM = "\"'“”. "
+
+
+def _clean(raw: dict | None) -> str:
+    return " ".join(((raw or {}).get("title") or "").split()).strip(TRIM).strip()
 
 
 def _llm():
@@ -93,8 +102,31 @@ def earned(memory) -> bool:
     return bool(memory) and getattr(memory, "answered", 0) >= AFTER_ANSWERS
 
 
+class Unavailable(RuntimeError):
+    """The naming model could not be reached — try again on a later turn."""
+
+
+# Gemini answers 503 "high demand" and 429 in bursts. A couple of short waits
+# ride out a spike; beyond that the caller simply tries again next turn.
+RETRIES = 2
+RETRY_WAIT = 2.0
+
+
+def _busy(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return any(t in text for t in ("503", "unavailable", "429", "resource_exhausted",
+                                   "high demand", "overloaded"))
+
+
 def suggest(summary: str) -> str:
-    """A short title for a conversation, or "" to keep the existing one."""
+    """A short title for a conversation, or "" when there is nothing to name.
+
+    Raises `Unavailable` when the model could not be reached. That used to come
+    back as "" too — indistinguishable from "nothing to name" — so a busy model
+    silently cost a conversation its one chance at a name.
+    """
+    import time
+
     summary = (summary or "").strip()
     if not summary:
         return ""
@@ -103,14 +135,39 @@ def suggest(summary: str) -> str:
 
     trace.sent("name", f"{len(summary)} chars of summary")
     elapsed = trace.timer()
-    try:
-        raw = _llm().generate_json(SYSTEM, summary, SCHEMA)
-    except Exception as exc:
-        trace.step("name", f"FAILED, title unchanged  {type(exc).__name__}",
-                   elapsed())
-        return ""
+    raw, failure = None, None
+    for attempt in range(RETRIES + 1):
+        try:
+            raw = _llm().generate_json(SYSTEM, summary, SCHEMA)
+            break
+        except Exception as exc:
+            failure = exc
+            if _busy(exc) and attempt < RETRIES:
+                trace.step("name", f"model busy, retrying ({type(exc).__name__})")
+                time.sleep(RETRY_WAIT * (attempt + 1))
+                continue
+            break
 
-    title = " ".join((raw.get("title") or "").split()).strip(TRIM).strip()
+    title = _clean(raw)
+    if not title:
+        # Gemini failed, or answered with nothing — both seen on real
+        # conversations, the second after 60-90s. The system fallback gets one
+        # try before the conversation waits for its next turn.
+        import logging
+
+        from app.rag import config
+        from app.rag.llm import get_llm
+
+        why = type(failure).__name__ if failure else "empty title"
+        logging.getLogger("ainshonglap").warning(
+            "FALLBACK  naming: %s gave no name (%s); using %s",
+            MODEL, why, config.FALLBACK_GENERATOR)
+        try:
+            title = _clean(get_llm(None, config.FALLBACK_GENERATOR)
+                           .generate_json(SYSTEM, summary, SCHEMA))
+        except Exception as exc:
+            trace.step("name", f"FAILED, will retry next turn  {type(exc).__name__}", elapsed())
+            raise Unavailable(f"{type(exc).__name__}: {str(exc)[:160]}") from exc
     if not title:
         trace.step("name", "nothing usable returned", elapsed())
         return ""
