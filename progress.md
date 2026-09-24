@@ -106,15 +106,10 @@ local files answer, logged.
 
 Responsive from phone to laptop, with resizable side panels. The input grows
 with its text. Answer types look different (clarify, out-of-scope, refusal).
-<<<<<<< HEAD
-Voice gives a transcript to check, never an automatic answer. The name is
-=======
 Sections are labelled "Section 379", and a refusal lists the sections it
 considered as clickable previews. The "not legal advice" disclaimer appears
 once per conversation, under the first answer to a legal question.
-Voice and page images (Groq qwen3.8-27b, max 3 MB) give text to check, never an
-automatic answer. The name is
->>>>>>> c4cefef (UI update for disclaimers and other sections)
+Voice and page images give text to check, never an automatic answer. The name is
 আইনসংলাপ throughout.
 
 ## Known gaps
