@@ -17,7 +17,7 @@ interface MemoryPanelProps {
  * The conversation memory is a rolling summary: after each turn, the previous
  * summary plus the new question and answer go to a small model and come back as
  * one short paragraph, which is the context every following question is read
- * against. That makes it the most consequential hidden state in the system — a
+ * against. That makes it the most consequential hidden state in the system: a
  * follow-up is resolved against this text, so if the summary drifts, the
  * assistant answers a question subtly different from the one asked, with full
  * confidence and real citations.
@@ -66,7 +66,7 @@ export function MemoryPanel({ memory, updating = false, onForget, onActivateCita
         title={
           hasMemory
             ? "What the assistant remembers from this conversation"
-            : "Nothing remembered yet — ask a question first"
+            : "Nothing remembered yet. Ask a question first"
         }
         className={`flex items-center gap-1.5 whitespace-nowrap px-2 py-1 rounded-md border text-[11px] transition-colors ${
           stale
@@ -80,7 +80,7 @@ export function MemoryPanel({ memory, updating = false, onForget, onActivateCita
           {updating ? "progress_activity" : stale ? "running_with_errors" : "psychology"}
         </span>
         {/* Full label from sm up. On a phone the icon stands alone, with the
-            turn count once there is one — the label was the widest thing in a
+            turn count once there is one; the label was the widest thing in a
             toolbar that did not fit. */}
         <span className="hidden sm:inline font-medium">
           {updating
@@ -91,7 +91,9 @@ export function MemoryPanel({ memory, updating = false, onForget, onActivateCita
       </button>
 
       {open && (
-        <div className="absolute bottom-full mb-1 left-0 z-50 w-[26rem] max-h-96 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+        // Phone: a sheet across the screen, above the input, so it never runs
+        // off the edge. From sm up: the popover above the chip.
+        <div className="fixed inset-x-3 bottom-36 z-50 max-h-[60vh] overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg sm:absolute sm:inset-x-auto sm:bottom-full sm:left-0 sm:mb-1 sm:w-[26rem] sm:max-h-96">
           <div className="flex items-center justify-between px-3 py-2 border-b border-slate-100">
             <span className="text-xs font-semibold text-slate-800">
               What the assistant remembers
@@ -114,7 +116,7 @@ export function MemoryPanel({ memory, updating = false, onForget, onActivateCita
           {!hasMemory ? (
             <div className="px-3 py-4 text-[11px] text-slate-500">
               Nothing yet. After your first answer, a short running summary
-              appears here — it is what follow-up questions like “what if he had
+              appears here. It is what follow-up questions like “what if he had
               survived?” are resolved against.
             </div>
           ) : (
@@ -127,7 +129,7 @@ export function MemoryPanel({ memory, updating = false, onForget, onActivateCita
                   <span className="font-medium">Not up to date. </span>
                   The summariser failed on the last turn ({memory?.error}), so
                   the summary reflects the conversation before it. The previous
-                  exchange below is current — it is copied, not summarised.
+                  exchange below is current: it is copied, not summarised.
                 </div>
               )}
 
@@ -166,7 +168,7 @@ export function MemoryPanel({ memory, updating = false, onForget, onActivateCita
                   <div className="text-[10px] uppercase tracking-wide text-slate-400 mb-1">
                     Sections cited so far
                     <span className="ml-1 normal-case tracking-normal text-slate-300">
-                      — kept exactly, not summarised
+                      (kept exactly, not summarised)
                     </span>
                   </div>
                   <div className="flex flex-wrap gap-1">
