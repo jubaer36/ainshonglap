@@ -1,36 +1,4 @@
-"""Fit the D2 abstention threshold on the 608-question set.
-
-The problem it solves. Asked "state some laws of the penal code", retrieval
-returns five sections that share words with the query and answer nothing, and
-the generator is handed them anyway. It refused — but only after a full
-generation call, and only because the model happened to notice. A score gate
-refuses before generating, and does not depend on the model noticing.
-
-The signal. The reranker already separates these cases; nobody had measured
-where. Observed by hand:
-
-    "what is the punishment for theft"        top-1 rerank  +6.15
-    "state some laws of the penal code"       top-1 rerank  -0.30
-
-This script turns that anecdote into an operating point.
-
-Method. For all 608 gold questions, record the top-1 reranker score and whether
-the gold section is anywhere in the top-k. Those two columns are a binary
-classifier: score above threshold -> answer, below -> refuse. Sweep the
-threshold and report both error directions at every point, because only
-reporting one is how a system that refuses everything looks perfect.
-
-  kept miss    retrieval missed and we answered anyway -> the hallucination risk
-  lost hit     retrieval succeeded and we refused      -> the utility cost
-
-There is no single right threshold; there is a curve and a choice. The choice
-belongs in the docs with its numbers attached, which is the point of printing
-the whole sweep rather than one value.
-
-Run (from backend/, ainshonglap conda env active; no API calls):
-
-    python scripts/experiments/fit_threshold.py
-    python scripts/experiments/fit_threshold.py --k 5 --target-precision 0.75
+"""E10: fit a score threshold below which the system refuses before generating.
 """
 
 from __future__ import annotations

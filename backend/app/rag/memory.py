@@ -1,40 +1,5 @@
-"""Conversation memory — a rolling summary, rewritten after every turn.
-
-The shape is: answer the question through the normal pipeline, then hand
-(previous summary + this question + this answer) to a small model and store the
-summary it returns. Next turn, that summary is the context — together with the
-previous question and answer kept word for word, since a follow-up leans
-hardest on exactly the turn a rolling summary compresses first. The context
-stays bounded however long the conversation runs.
-
-Summarisation runs on gpt-oss-120b (Groq). It used Gemini 3.5 Flash Lite on
-`GEMINI_API_KEY_2` until Gemini started taking 34-64s for a one-word reply:
-every update hit the 20s deadline (`504 DEADLINE_EXCEEDED`) and went to the
-fallback anyway, and a follow-up question waits on the update for up to 25s.
-It has its own key, `GROQ_API_KEY_SUMMARIZER`, and the system fallback
-(`GROQ_API_KEY_FALLBACK`) behind it. Without the key it shares the generators'
-pool.
-
-**The risk this design has, and what is done about it.** A rolling summary is
-lossy by construction and the loss compounds: turn 5's summary is a summary of a
-summary of a summary. For ordinary chat that is fine. Here it is not, because
-the thing most likely to be dropped or mangled is a **section number**, and a
-follow-up that inherits "s.303" when the answer said "s.302" is a confidently
-wrong citation with nothing downstream able to catch it.
-
-So the memory carries two things, not one:
-
-    summary   prose, from the model — good at fact patterns, "the user was
-              asked about a night-time theft from a shop"
-    sections  citation keys, copied by CODE from the answer — never written by
-              the summariser, so they cannot be reworded, merged or invented
-
-The prompt also tells the model to keep numbers verbatim, but that is a request.
-The `sections` list is the guarantee.
-
-Never raises: a summarisation outage costs the conversation its memory, which
-degrades follow-ups to single-turn behaviour. It must not cost the user an
-answer they already have.
+"""Conversation memory: a short rolling summary plus the last question and
+answer word for word. Section numbers are copied by code, never by the model.
 """
 
 from __future__ import annotations

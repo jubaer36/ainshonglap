@@ -1,14 +1,5 @@
-"""One interface over the hosted generators used by the application.
-
-Groq Qwen is the default because it is fast and enforces the JSON schema this
-pipeline requires. Gemini and the measured schema-capable OpenRouter routes
-remain available as fallbacks and experiment controls.
-
-Everything returns parsed JSON against a supplied schema. Structured output is
-not a formatting nicety here: it is what makes a missing citation a schema
-violation instead of a prose judgement call. Note the limit, from
-JSONSchemaBench — constrained decoding guarantees the shape, never the truth.
-The gates in `verify.py` are what check the content.
+"""One interface over the hosted models (Groq, Gemini, OpenRouter, Inception),
+with JSON-schema output and a fallback model when one fails.
 """
 
 from __future__ import annotations

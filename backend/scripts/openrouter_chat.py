@@ -1,24 +1,5 @@
-"""Interactive REPL for a model served through OpenRouter.
-
-Same shape as gemini_chat.py and local_llm_chat.py so the three baselines are
-directly comparable — same system prompt, same no-retrieval condition.
-
-Uses `requests` against the REST endpoint rather than the OpenAI SDK: the API
-is OpenAI-compatible, and one POST avoids adding a dependency for four lines of
-work. Swap to the SDK if streaming or tool calls are ever needed.
-
-Run (from backend/, with the ainshonglap conda env active):
-
-    python experiments/openrouter_chat.py                 # REPL, default model
-    python experiments/openrouter_chat.py --model lfm     # alias, or a full id
-    python experiments/openrouter_chat.py --list          # known aliases
-    python experiments/openrouter_chat.py --check --model all   # verify every route (free)
-    python scripts/openrouter_chat.py --json --model lfm  # structured-output probe
-
-Inside the REPL, `/model <alias>` switches without restarting and `/models`
-lists them.
-
-Reads OPENROUTER_API_KEY from backend/.env.local.
+"""Chat with or probe an OpenRouter model; --json checks schema support.
+Run: python scripts/openrouter_chat.py --json --model <alias>
 """
 
 from __future__ import annotations

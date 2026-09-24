@@ -1,19 +1,5 @@
-"""Chunk index + vectors: chunks.json, and the embedder's vectors from OpenRouter.
-
-No model runs locally. Vectors come from nemotron-3-embed on OpenRouter
-(`config.EMBEDDER`, E21) and are written to `embeddings.<name>.npy`, row for row
-with `chunks.json`. Only chunks whose text has no vector yet are sent — each
-request counts against the free-model daily cap (1,000 per account with credits
-bought, 50 without), and adding one Act costs roughly its chunk count / 32.
-
-Exact inner product over unit vectors (cosine), no approximate index: at this
-size an exact scan costs milliseconds and keeps results reproducible.
-
-Run (from backend/, ainshonglap conda env active):
-
-    python scripts/build_index.py              # chunks + nemotron vectors (new text only)
-    python scripts/build_index.py --full       # re-embed every chunk (~73 requests)
-    python scripts/build_index.py --embedder nemotron-3-embed --seed X.npy   # reuse a cache
+"""Write chunks.json and embed new chunks with nemotron-3-embed on OpenRouter
+(about 1 request per 32 chunks).  Run: python scripts/build_index.py
 """
 
 from __future__ import annotations

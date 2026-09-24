@@ -1,31 +1,5 @@
-"""Planner regression set — question, expected category, expected coordinates.
-
-The planner decides what every question becomes, so it is the easiest part of
-the system to break silently: a misplan does not raise, it just answers the
-wrong way. These cases are pinned so a prompt edit that helps one phrasing and
-breaks another shows up as a number.
-
-Four things are measured separately, because they fail separately:
-
-  category    meta / structural / semantic / general
-  scope       the act, chapter, sections and ranges named. A plan can land in
-              the right category and still fetch the wrong chapter.
-  clarify     asked for clarification exactly when the request cannot be
-              executed as written — an ambiguous section number, a subjective
-              selection. Over-asking is as wrong as guessing.
-  invalid     a coordinate the catalog does not have is rejected, never
-              silently swapped for a nearby one.
-
-The first 27 cases are the ones that were pinned against the regex router, with
-its six intents mapped onto the four categories (browse/summarize/lookup all
-become `structural` — they differ by operation, not by machine). Keeping them
-means the planner has to beat what it replaces on the same questions.
-
-Run (from backend/, ainshonglap conda env active):
-
-    python scripts/experiments/plan_cases.py
-    python scripts/experiments/plan_cases.py --model super --sleep 3
-    python scripts/experiments/plan_cases.py --only scope
+"""Planner regression set: expected category and coordinates per question.
+Run: python scripts/experiments/plan_cases.py  (--only to rerun a few)
 """
 
 from __future__ import annotations

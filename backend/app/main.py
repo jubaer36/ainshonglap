@@ -1,19 +1,6 @@
-"""AinShonglap API.
+"""FastAPI app: routes, CORS, startup and /health.
 
-  POST /api/query          question -> cited answer, or a refusal
-  GET  /api/plan           what the planner decided, without answering
-  POST /api/transcribe     voice input -> transcript (never an answer)
-  POST /api/read-image     one page image -> text (never an answer)
-  GET  /api/retrieve       raw retrieval, no generation (inspection/debugging)
-  GET  /api/models         selectable generators
-  GET  /api/acts           indexed acts
-  GET  /api/sections       browse sections
-  GET  /api/sections/{key} one section, by citation key
-  GET  /api/conversations  saved conversations (signed in)
-  GET  /health             liveness + what is loaded
-
-Retrieval is measured (see retrieval-baseline.md / experiments.md); generation
-is verified per-claim at request time rather than trusted.
+Endpoints are listed in backend/API.md.
 """
 
 from __future__ import annotations

@@ -1,15 +1,4 @@
-"""Browsable view of the indexed statute, independent of any question.
-
-Retrieval answers "which sections are relevant". This answers "what does the
-corpus contain" — the statute browser, and citation lookup by key.
-
-Backed by the CATALOG — the same rows answers quote from. It used to be built
-from `chunks.json`, which made a second copy of the text, and the copies
-disagreed for five sections: the chunks glued page-break fragments onto the real
-section, so the preview of `penal-s2` showed 1,155 characters where the section
-is 188. Reading the catalog, with its continuation fragments excluded, the side
-panel shows exactly what an answer cites — from Supabase, like the catalog,
-and from the local file only when the catalog falls back.
+"""Browse the corpus without a question: the statute list and section lookup by key.
 """
 
 from __future__ import annotations

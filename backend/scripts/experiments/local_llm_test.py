@@ -1,14 +1,4 @@
-"""Standalone smoke test for the local LLM-only baseline (step 4).
-
-Loads Qwen2.5-VL-3B-Instruct from the local HF cache, asks it a handful of
-Bangladesh criminal-law questions text-only (no image input), and prints
-each answer for manual inspection. No retrieval, no backend wiring yet —
-this is purely "can the model answer, and how well" before anything gets
-plugged into the FastAPI route.
-
-Run (from backend/, with the ainshonglap conda env active):
-
-    python scripts/experiments/local_llm_test.py
+"""Smoke test for the local Qwen2.5-VL-3B baseline (no retrieval).
 """
 
 from __future__ import annotations

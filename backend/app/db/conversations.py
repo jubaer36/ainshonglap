@@ -1,23 +1,7 @@
-"""Conversation storage in Supabase.
+"""Stored conversations in Supabase.
 
-**This module is the security boundary.** The API connects with the service-role
-key, which bypasses Row Level Security, so the policies in `db/schema.sql` are
-not enforcing anything here — every function below filters by `user_id`, and
-that filter is the only thing standing between one person's legal questions and
-another's.
-
-Two rules, applied without exception:
-
-  1. every statement carries `.eq("user_id", user_id)`, including the ones that
-     already look scoped by `conversation_id`. A conversation id is a uuid, not
-     a capability: given one, an unfiltered read would return someone else's
-     conversation.
-  2. `user_id` always comes from a verified access token (`supabase.user_id`),
-     never from the request body. A client-supplied id is a request to
-     impersonate.
-
-Anonymous use is unchanged: with no token there is no `user_id`, nothing is
-written here, and the browser keeps its own history as before.
+This is the security boundary: the service key bypasses Row Level Security, so
+every query here filters by the verified user_id.
 """
 
 from __future__ import annotations

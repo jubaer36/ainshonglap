@@ -1,25 +1,4 @@
-"""Router regression set — one line per question, expected route beside it.
-
-The router decides whether a question needs retrieval at all, and it is the
-easiest part of the system to break silently: a misroute does not raise, it just
-answers the wrong way. Small models have already flip-flopped on identical
-phrasings between two prompt versions here, so the cases are pinned.
-
-Five categories, each a different destination:
-
-  general   not law at all -> answer normally, no retrieval, no citations
-  browse    "list some laws" -> enumerate from the parsed table of contents
-  summarize "what does this Act cover" -> describe it from its chapter structure
-  lookup    "what does s.302 say" -> fetch that section directly; semantic
-            search is the wrong tool when the citation is already given
-  legal     a scenario needing a provision -> retrieve, generate, cite
-  meta      about the assistant itself
-
-Run (from backend/, ainshonglap conda env active):
-
-    python scripts/experiments/router_cases.py            # route only, cheap
-    python scripts/experiments/router_cases.py --answer   # full pipeline
-    python scripts/experiments/router_cases.py --model nexmini
+"""Regression set for the old router (RAG_PLAN=0).
 """
 
 from __future__ import annotations

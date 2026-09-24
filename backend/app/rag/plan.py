@@ -1,45 +1,7 @@
-"""Stage 1 of answering: a model decides what is being asked, and names where.
+"""Stage 1: a model decides what kind of question this is and where to look.
 
-One small strict-JSON call. It returns a **plan**, never an answer, never
-statutory text, never SQL. Code then validates every coordinate against the
-catalog and executes it. The split is the point:
-
-    model   judgement — which category, which chapter did they mean
-    code    facts — what that chapter actually contains
-
-This replaces the regex router (`refine.classify_pattern`). Patterns were fast
-and stable but could only recognise phrasings someone had already thought of:
-"show me the sections about documentary evidence" matched nothing and fell
-through to semantic search, which answered a listing request with five ranked
-guesses. A model reads intent instead of spelling.
-
-Four categories, because they need four different machines:
-
-    meta        about the assistant -> answered from the catalog manifest,
-                no retrieval, no second model call
-    structural  a named part of a statute -> SQL by coordinates. Exact, ordered,
-                complete. Semantic ranking is the wrong tool once the reader has
-                named what they want.
-    semantic    a situation needing provisions found -> dense retrieval, rerank,
-                threshold. "Someone broke into my shop at night."
-    out_of_scope  a legal question about law this corpus does not contain ->
-                say so, name what is covered, cite nothing
-    general     not a legal question at all -> answered plainly, with no
-                citations and no pretence of grounding
-
-`out_of_scope` is separate from `general` because collapsing them is dangerous
-in one direction only. "What does the Dowry Prohibition Act say?" answered
-plainly is an ungrounded legal answer from parametric memory — the failure E1
-recorded, where the same model placed Evidence Act ss.25-27 in the CrPC. "What
-is the capital of France?" answered plainly is fine. Same category, opposite
-consequences, so they are not the same category.
-
-Reliability comes from the schema and the validator, not from trusting the
-model. A hallucinated chapter is caught because the catalog is asked whether it
-exists; a section number belonging to three Acts becomes a clarification rather
-than a guess. The planner cannot cause a wrong answer to be *cited* — it can
-only cause the wrong records to be fetched, and every coordinate it names is
-checked first.
+It returns a plan, never an answer, law text or SQL. Code then checks every
+coordinate against the catalog before anything runs.
 """
 
 from __future__ import annotations

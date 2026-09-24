@@ -1,11 +1,5 @@
-"""Embedding and reranking on OpenRouter (E21) — the only retrieval models.
-
-Keys are every `OPENROUTER_API_KEY*`, in rotation with failover (`keyring`),
-the same way the Groq generators use theirs. Anything that goes wrong raises
-`Unavailable`: for embedding that means meaning search cannot run (there is no
-local model), and the pipeline says so; for reranking, the search order is used.
-That includes the free-model daily cap — 1,000 requests a day per account with
-credits bought, 50 without, shared by every `:free` model.
+"""Embedding and reranking on OpenRouter — the only retrieval models here.
+Any failure raises Unavailable. Keys rotate like Groq's.
 """
 
 from __future__ import annotations

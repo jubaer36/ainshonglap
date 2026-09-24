@@ -1,37 +1,5 @@
-"""Build the structural catalog: parsed JSON -> Laws/main/catalog.sqlite.
-
-Retrieval answers "which provisions resemble this question". This answers
-"which provisions ARE these" — identity, hierarchy, enumeration, ranges. Two
-different questions, and similarity is the wrong tool for the second: asked for
-Chapter XVI, a vector index returns what reads like Chapter XVI, which is not
-the same set.
-
-Why a database rather than the in-memory dict in `app/rag/library.py`:
-
-  ranges          "sections 378 to 382" is an interval query. The dict keys on
-                  citation strings, where '302A' sorts between '302' and '303'
-                  only if you re-parse it every time.
-  enumeration     "every section in Chapter XVI, in statutory order" is an
-                  ORDER BY, not a scan-and-filter.
-  full text       FTS5 gives exact-phrase search over titles and text, which is
-                  a different instrument from dense retrieval and catches what
-                  embeddings miss (proper nouns, numbers, rare terms).
-  cross-refs      "section 34 read with section 302" is an edge between two
-                  provisions. There is nowhere to put an edge in a flat dict.
-
-The parsed JSON stays the source of truth; this is a rebuildable read model.
-Nothing here is authored — every row is copied from `Laws/main/parsed/*.json`,
-and `scripts/verify/verify_catalog.py` re-reads that JSON to check it.
-
-Deterministic: the file is dropped and rebuilt, rows are inserted in corpus
-order, and ids are assigned by that order. The SQLite file's bytes are not
-guaranteed identical across rebuilds (page allocation is libsqlite's business),
-so `--hash` prints a content digest instead, which is.
-
-Run (from backend/, ainshonglap conda env active):
-
-    python scripts/build_catalog.py
-    python scripts/build_catalog.py --hash      # content digest, for comparing
+"""Build Laws/main/catalog.sqlite from the parsed JSON: sections, chapters and
+cross-references for exact lookups.  Run: python scripts/build_catalog.py
 """
 
 from __future__ import annotations

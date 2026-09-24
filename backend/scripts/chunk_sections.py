@@ -1,21 +1,5 @@
-"""Section-level chunking of the parsed acts (chunking-plan.md).
-
-One chunk per section. A section over budget is split at its own subsection
-boundaries — never mid-provision, because the measured data says that is always
-possible: every oversized section in all three acts has subsections to split at.
-
-Each chunk's embedded text is prefixed with its hierarchy path. That is the
-cheap half of Anthropic's Contextual Retrieval and the fix the legal-RAG
-literature gives for Document-Level Retrieval Mismatch — a bare
-"Whoever commits..." says nothing about which of three heavily-overlapping acts
-it came from. Ancestry is already inline on every parsed section, so this is
-string formatting, not an LLM call.
-
-Run (from backend/, ainshonglap conda env active):
-
-    python scripts/chunk_sections.py                  # all acts
-    python scripts/chunk_sections.py --act crpc --show 5
-    python scripts/chunk_sections.py --max-tokens 384
+"""Split the parsed Acts into chunks: one per section, split at subsections when
+a section is too long.  Run: python scripts/chunk_sections.py
 """
 
 from __future__ import annotations

@@ -1,27 +1,7 @@
-"""Question -> grounded, cited answer, or a refusal (generation-plan.md step 12).
+"""Turn sections into a cited answer, or a refusal.
 
-The design is shaped by one measured fact rather than by preference: served
-retrieval is R@5 59.0%, so **41% of the time the correct section is not in the
-context at all** — and what is there instead is five plausible, adjacent,
-professionally drafted statutory sections. Nothing in the prompt looks broken.
-
-That is the *misleading context* condition, which is the one prompt-based
-abstention handles worst. GRAB-RAG measured models answering <=1% of the time
-when evidence is simply absent but 13.6-74.3% when a fluent wrong passage is
-present. So refusal here is not left to the prompt:
-
-  ask nicely     the system prompt tells the model to refuse rather than
-                 stretch a related section (necessary, not sufficient)
-  make it cheap  the schema has a `sufficient` flag, so refusing is a field to
-                 set rather than prose to compose
-  check after    every claim must cite a retrieved section AND quote it
-                 verbatim; claims that fail are dropped, and an answer with no
-                 surviving claims becomes a refusal (verify.py)
-
-The last one is the only part that does not depend on the model's own judgement,
-which is why it is the part that is not optional.
-
-No disclaimer is attached to answers; the interface shows one, once.
+Every claim must cite a section and quote it word for word; claims that fail the
+check are dropped. Also: general (non-legal) answers and Act outlines.
 """
 
 from __future__ import annotations

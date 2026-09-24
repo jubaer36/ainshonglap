@@ -1,29 +1,5 @@
-"""Naming a conversation — its own model, its own key, its own request.
-
-The first question is a conversation's title until it stops being a good one.
-Two turns in, "What is the punishment for theft?" describes the conversation.
-Five turns in, having moved through bail and arrest procedure, it describes only
-how the conversation opened.
-
-**Deliberately separate from everything else.**
-
-*From the summariser* (`memory.py`), which this could plausibly have lived in:
-they share a provider and a shape, but not a schedule. Summarisation runs on
-every turn and is load-bearing — a follow-up is unresolvable without it. Naming
-runs once per conversation and is cosmetic. Sharing a key would let a sidebar
-label eat the quota the next follow-up depends on.
-
-*From the answer request*: naming is not on the path to an answer, so it is not
-in `POST /api/query`. It has its own endpoint, called after the answer has
-already been rendered. Folding it in would have put a second model call between
-the reader and an answer they were already waiting for, once per conversation,
-for a label they were not looking at yet.
-
-`suggest` returns "" when there is nothing to name and raises `Unavailable`
-when the model could not be reached — kept distinct, because the second means
-"try again next turn" and the first does not. A busy model is retried briefly
-first. The caller never lets either one reach the reader: a missing name is a
-much smaller problem than a failed request.
+"""Give a conversation a short title after three answered turns.
+Runs on its own model and key; a title the user typed is never overwritten.
 """
 
 from __future__ import annotations

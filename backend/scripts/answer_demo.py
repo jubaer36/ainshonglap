@@ -1,29 +1,5 @@
-"""Ask questions end to end — plan, execute, answer — and print the result.
-
-`plan_demo.py` shows what the planner decided. This runs the whole path and
-shows what a reader would actually get: the answer, its citations, and what was
-dropped on the way.
-
-Every answer prints its provenance, because the difference between kinds is the
-point of the architecture:
-
-    structural    quoted from the catalog. No model saw the text.
-    semantic      retrieved, generated, then every claim checked — the cited
-                  section must have been retrieved and the quote must appear in
-                  it verbatim. Claims that fail are dropped and shown below.
-    meta          read from the catalog manifest.
-    out_of_scope  a legal question this corpus cannot answer. Nothing cited.
-    general       the model's own knowledge, labelled as such.
-    clarify       a question back.
-
-The pause between questions is Groq's input-tokens-per-minute limit; a semantic
-answer costs two calls (plan, then generate).
-
-Run (from backend/, ainshonglap conda env active):
-
-    python scripts/answer_demo.py                     # the built-in questions
-    python scripts/answer_demo.py -q "your question"
-    python scripts/answer_demo.py --gap 5 --file mine.txt
+"""Ask questions end to end and print the answer, its citations and what was
+dropped.  Run: python scripts/answer_demo.py
 """
 
 from __future__ import annotations

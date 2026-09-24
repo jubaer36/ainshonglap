@@ -1,29 +1,5 @@
-"""Check the Supabase corpus against the local read models it was loaded from.
-
-    catalog.sqlite, index/chunks.json, index/embeddings.<embedder>.npy
-                          │   read independently
-                          ▼
-    law_* tables in Supabase, read back over the API
-                          │
-                          ▼
-    row counts · text byte-parity · vectors bit-identical · search parity
-
-Independent of `load_supabase.py` on purpose: it does not import the loader's
-row-building code. It re-reads the local files and the database separately and
-joins them on natural keys (citation key, Act + position, vector id). A loader
-bug that reshaped a row the same way on both sides of its own bookkeeping would
-pass a check that shared that bookkeeping; this one cannot share it.
-
-The last check is the one the move depends on. Retrieval numbers were measured
-on FAISS IndexFlatIP, an exact scan; `law_match_chunks` is meant to be the same
-exact scan in Postgres. So for a set of query vectors, both are asked for their
-top 60 and the answers compared. Anything less than identical results means the
-serving path cannot switch.
-
-Run (from backend/, ainshonglap conda env, after load_supabase.py):
-
-    python scripts/verify/verify_supabase.py
-    python scripts/verify/verify_supabase.py --queries 100     # more search probes
+"""Check Supabase against the local files it was loaded from: counts, text, the
+nemotron vectors, and identical search results.
 """
 
 from __future__ import annotations

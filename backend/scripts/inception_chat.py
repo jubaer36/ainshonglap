@@ -1,38 +1,5 @@
-"""Interactive and one-shot smoke test for Inception's Mercury models.
-
-Same shape as `groq_chat.py` and `openrouter_chat.py`, so the three providers
-can be compared on the same questions without reading three scripts.
-
-Mercury is a **diffusion** language model rather than an autoregressive one,
-which is the reason to test it here at all: the claim is a large speed advantage
-at comparable quality. Speed is worth something on this pipeline specifically —
-the planner runs on every question before anything else happens, so its latency
-is added to every request including the ones that end in a refusal.
-
-What this probe has to establish, in order:
-
-  1. the route answers at all, and how fast
-  2. it honours a STRICT JSON schema. `app/rag/answer.py` requires JSON with a
-     verbatim quote per claim; a route that treats the schema as a suggestion
-     returns prose, which the pipeline surfaces as a false refusal rather than
-     as an error. This is the check that decides whether Mercury can be a
-     generator at all.
-  3. what it says without retrieval — which is never evidence of legal
-     accuracy, only of how confidently a model invents section numbers. E1 and
-     E11 both recorded models placing Evidence Act sections in the CrPC.
-
-API shape, from docs.inceptionlabs.ai: OpenAI-compatible chat completions at
-https://api.inceptionlabs.ai/v1, bearer auth, `response_format` of
-`{"type": "json_schema", "json_schema": {..., "strict": true}}`.
-
-Run from backend/ (with the ainshonglap conda environment active):
-
-    python scripts/inception_chat.py --list
-    python scripts/inception_chat.py --json
-    python scripts/inception_chat.py --prompt "What is the punishment for theft?"
-    python scripts/inception_chat.py --model mercury-2 --json
-
-Reads INCEPTION_API_KEY from backend/.env.local. The key is never printed.
+"""Chat with or probe Inception's Mercury models; --json checks schema support.
+Run: python scripts/inception_chat.py --json
 """
 
 from __future__ import annotations

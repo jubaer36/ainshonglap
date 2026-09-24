@@ -1,30 +1,5 @@
-"""Which generators are currently out of quota, and until when.
-
-Free tiers run out. Groq's daily token cap is per model AND per key — a 429
-naming `qwen/qwen3.8-27b` says nothing about `openai/gpt-oss-20b`, which has its
-own budget, and nothing about the same model on a second key — so "the provider
-is down" is the wrong unit. Exhaustion is tracked per (model, key), and a model
-counts as unavailable only once every key it has is blocked. That distinction is
-the whole value of running more than one key: see `keyring.py`.
-
-The answer goes to two places that need it:
-
-    GET /api/models   marks a model unselectable, with the reason and the time
-                      it comes back, so the picker can grey it out instead of
-                      offering a choice that will fail
-    POST /api/query   substitutes the configured fallback rather than returning
-                      a 502, and says in the response which model actually
-                      answered
-
-Held in memory, deliberately. The state is a cache of something the provider
-already knows and will tell us again on the next 429; persisting it would add a
-store to keep correct across restarts for no gain. The cost is that it resets on
-restart and is not shared between workers — the first request after either one
-pays a wasted call and then the record is back.
-
-Only **quota** failures are recorded. A 500, a timeout or a network blip says
-nothing about a model's budget, and marking it unavailable for an hour over a
-transient fault would be worse than the failure.
+"""Remember which models are out of quota (per model and key) and until when,
+so the picker can grey them out and a fallback can be used.
 """
 
 from __future__ import annotations

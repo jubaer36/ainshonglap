@@ -1,38 +1,5 @@
-"""Add a new document: parse it, show a person the result, let them choose.
-
-Two parsers, built for different documents:
-
-    PyMuPDF   parse_law_pdf.py — numbered statutes. Very accurate on Acts laid
-              out like the three already served; on anything else it finds no
-              sections and puts the whole text in `preamble`, where nothing
-              downstream ever reads it.
-    Docling   parse_docling_document.py — any document, by page layout:
-              headings, paragraphs, lists, tables. Cited by passage, not section.
-
-Which one fits is judged by a person, not guessed by a rule. A rule would have
-to know what "parsed properly" means for a document it has never seen, and the
-failure it must catch is the silent kind: text that is all present, but in the
-wrong place. So:
-
-    1. REVIEW   python scripts/ingest_document.py --pdf <file> --slug <slug>
-
-       Parses the whole document with PyMuPDF, picks a few pages spread through
-       it, runs Docling on just those pages, and writes one HTML page showing,
-       for each sampled page, the page image beside what each parser made of
-       it. Nothing is written to the corpus.
-
-    2. CHOOSE   answer the prompt, or run again with --use pymupdf|docling
-
-       pymupdf  saves the parse already made
-       docling  parses the WHOLE document with Docling, then saves that
-
-    Saved to Laws/main/parsed/<slug>.json, marked with `parser` and `doc_type`.
-    Then the usual pipeline: chunk, index, catalog, load, verify — printed at
-    the end.
-
-The review lives in Laws/review/<slug>/ (outside Laws/main, so it is not
-tracked). Sampling is seeded by the slug, so the same document shows the same
-pages every time unless --seed says otherwise.
+"""Add a new document: parse it with PyMuPDF (numbered statutes) and Docling (any
+layout), show 4 sample pages side by side, and let a person pick the parser.
 """
 
 from __future__ import annotations

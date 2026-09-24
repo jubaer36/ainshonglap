@@ -1,49 +1,6 @@
-"""Parse a Bangladesh law PDF into hierarchical JSON — text and structure both
-taken from the PDF itself.
-
-    Act -> Part -> Chapter -> Section -> Subsection -> Clause -> Subclause
-                                      +- Explanation / Illustration
-                                      +- Exception / Proviso
-
-Everything here exists because of a failure observed in these actual PDFs:
-
-  page-split sections   Body lines from every page are sorted into ONE ordered
-                        stream before any section regex runs, so a page break is
-                        just whitespace mid-sentence. Parsing per page is what
-                        made other tools emit the second half of a split section
-                        as a new section.
-
-  running headers       Detected by CONTENT, never by position. A "top 11% of the
-                        page" rule looks right on the Penal Code (header at
-                        y=93.7) and silently eats statutory text from CrPC, whose
-                        body starts at y=72.3 with no running header at all.
-
-  footnotes             Detected by PROPORTIONAL font size plus position. The
-                        tiers differ per document and per page (CrPC body 9.0 /
-                        gloss 8.5; Penal p45 body 11.0 / gloss 10.0; Penal p52
-                        body 10.7 / gloss 9.7 / footnote 8.8), so an absolute
-                        cutoff deleted 341 lines on the Penal Code — every gloss
-                        note and every Illustration.
-
-  gloss/body columns    Detected per page, never hardcoded. The body column is
-                        the x-cluster containing section-number lines; the gloss
-                        is the narrower one. CrPC keeps the gloss on the left
-                        throughout; the Penal Code mirrors it onto the outer
-                        margin, swapping sides every page.
-
-  gloss -> section      Paired by vertical overlap of real coordinates. In the
-                        linear text stream the note leads its section on some
-                        pages and trails it on others.
-
-  contents pages        Skipped. They mimic sections (`154. Information in
-                        cognizable cases`) with no body, and unfiltered they
-                        become phantom duplicate sections.
-
-Run (from backend/, ainshonglap conda env active):
-
-    python scripts/parse_law_pdf.py --act penal
-    python scripts/parse_law_pdf.py --act crpc --pages 20      # first 20 pages
-    python scripts/parse_law_pdf.py --all
+"""Parse a Bangladesh law PDF into JSON: Act -> Part -> Chapter -> Section ->
+subsections, with text and page numbers from the PDF.
+Run: python scripts/parse_law_pdf.py --all
 """
 
 from __future__ import annotations

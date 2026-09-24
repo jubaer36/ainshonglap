@@ -1,31 +1,5 @@
-"""Fifteen questions, one per path the planner can take, shown step by step.
-
-For reading, not grading. Each question prints what every stage did so a person
-can judge it:
-
-    ① PLANNER    the model's raw JSON, and which model produced it
-    ② PLAN       what validation kept, changed or rejected
-    ③ DATA       what was fetched — catalog rows, or retrieved sections with
-                 their dense and reranker scores
-    ④ ANSWER     the answer as served: claims with the quote each one rests on,
-                 claims the citation gates dropped, or the refusal and why
-
-The live per-step log (`RAG_TRACE`) prints above each block as it happens, the
-same lines the server writes.
-
-The statute text comes from Supabase. If the local fallback is used for any
-question, a `FALLBACK` warning prints in the log above that question's block —
-worth noticing, since it means that answer did not come from the database.
-
-Cost: one planner call per question, plus one generator call for the answers
-that need writing (semantic, document, overview, general) — about 22 calls in
-all. `--only` runs a subset when checking a single fix.
-
-Run (from backend/, ainshonglap conda env):
-
-    python scripts/check_questions.py                        # all fifteen
-    python scripts/check_questions.py --only 8 13 14         # just these
-    python scripts/check_questions.py --list                 # the questions, no calls
+"""Fifteen questions, one per planner path, printed step by step for a person
+to judge.  Run: python scripts/check_questions.py --store supabase
 """
 
 from __future__ import annotations

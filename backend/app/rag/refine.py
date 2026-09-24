@@ -1,39 +1,4 @@
-"""Route the question before retrieving, and rewrite it into statutory register.
-
-Two jobs, one LLM call, because paying twice for one round trip is waste.
-
-**Routing.** Not every question is a retrieval question. "So what are you" was
-answered with five unrelated sections and a refusal, which is the wrong answer
-to a reasonable question. Four destinations:
-
-  legal         a provision should answer it -> rewrite, retrieve, generate
-  meta          about the assistant itself -> answer directly, no retrieval
-  browse        enumerate provisions -> the corpus browser, /api/sections
-  out_of_scope  a real question, but not Bangladesh criminal law -> refuse
-
-`browse` exists because "state some laws of the penal code" is an instruction to
-list, not a proposition to look up: no section means "some laws", so all 556 are
-equally relevant and retrieval has nothing to rank. `out_of_scope` stays a
-refusal — a legal assistant answering "what is the capital of France" from
-parametric memory is the failure this whole project is built to avoid.
-
-**Rewriting.** The largest remaining retrieval failure is 28.6% of gold sections
-never retrieved at all, which no reranker can reach because reranking only
-reorders what was already found. The misses share a shape:
-
-    asked     "someone broke into my shop at night and took my cash box"
-    drafted   "Whoever commits theft in any building ... used as a human
-               dwelling, or for the custody of property"
-
-Rewriting attacks that mismatch from the query side. It is gated behind
-`config.REFINE_QUERIES` until it moves a number on the 608-question set
-(`scripts/experiment_refine.py`) — routing ships, rewriting has to earn it.
-
-**Reliability.** Intent classification by a small model is not dependable: the
-same query has been labelled `question` and `browse` by two prompt versions of
-the same 2.6B model. Obvious cases are therefore matched deterministically
-before any model is consulted, and the model only decides what the patterns do
-not.
+"""The old pattern router (used only when RAG_PLAN=0).
 """
 
 from __future__ import annotations

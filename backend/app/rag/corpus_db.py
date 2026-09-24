@@ -1,34 +1,8 @@
-"""The statute corpus, read from Supabase — the app's only primary store.
+"""The statute corpus, read from Supabase.
 
-Two jobs, and they are read differently on purpose.
-
-**Exact lookups** — the catalog. The planner's validation asks the catalog
-several small questions per request (does this Act exist, which Acts have a
-section 25, what is Chapter XVI called). Each one a network round trip would add
-up to half a second a question for data that only changes when an Act is
-reloaded. So the `law_*` structural tables are pulled once into an in-memory
-SQLite database with exactly the schema `catalog.sqlite` has
-(`catalog_schema.SCHEMA`), and `catalog.py` runs its unchanged queries against
-it. Supabase is the store; memory is a cache of it.
-
-The cache follows the database rather than the clock alone: every
-`REFRESH_SECONDS` it compares `law_loads` — one digest per Act — with what it
-built from, and rebuilds when an Act was loaded, reloaded or removed. That is
-what lets a new Act go live without a restart.
-
-**Meaning search** — the vectors. Not cached. Each question's embedding goes to
-`law_match_alt_chunks`, an exact inner-product scan in Postgres, so a newly loaded
-Act is searchable on the very next question and there is no index file to ship.
-
-Only Acts with a commit marker in `law_loads` are used. The loader writes that
-row last; an Act without it was interrupted mid-load and is not trusted.
-
-**When Supabase fails**, both functions raise `Unavailable` and the caller falls
-back to the local files (`catalog.connect`, `pipeline._search`), logging it via
-`fallback.py`. A failure also opens a breaker for `DOWN_SECONDS`: during an
-outage every catalog lookup would otherwise wait out a network timeout before
-falling back, several times per question. With the breaker open they go straight
-to the fallback, and Supabase is tried again when it closes.
+Exact lookups use an in-memory copy of the catalog, refreshed within a minute of
+a change. Meaning search runs in Postgres over the nemotron vectors. If Supabase
+fails, callers fall back to the local files (logged).
 """
 
 from __future__ import annotations

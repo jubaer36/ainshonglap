@@ -1,13 +1,5 @@
-"""Saved conversations, for signed-in users.
-
-Signing in is optional. Without a token these endpoints report that there is
-nothing stored and the browser keeps its own history, which is how the
-assistant works for someone who has not signed in and for a deployment with no
-Supabase at all.
-
-The user id always comes from a **verified** access token. Nothing here reads an
-id from the request body: that would be a request to impersonate, and the
-service-role key would grant it.
+"""Saved conversations for signed-in users: list, open, rename, delete, name.
+Guests get nothing stored.
 """
 
 from __future__ import annotations

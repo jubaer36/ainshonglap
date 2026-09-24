@@ -1,45 +1,5 @@
-"""Send an image to a vision-language model on OpenRouter, and score what comes back.
-
-For this project the interesting question is not "can it see the image" — it can
-— but **how faithfully it reproduces statutory text**, because everything
-downstream assumes the text it was given is the text on the page.
-
-A VLM is not an OCR engine. OCR extracts a character stream and fails visibly
-when it cannot read something; a VLM *describes what it saw*, generatively, and
-fails **plausibly**: `302A` quietly becomes `302`, a proviso it judged redundant
-is dropped, and the output still reads like a clean statute. Nothing downstream
-can catch that — `verify_parsed.py` compares the parse against the PDF's own
-text layer, so if the text itself were invented there would be nothing to
-compare against.
-
-So this script defaults to measuring rather than admiring. Give it a reference
-and it reports character accuracy, section-number fidelity and length drift:
-
-    --pdf FILE --page N    render a page we already parse, and diff the model's
-                           reading against the PyMuPDF extraction of that same
-                           page. That extraction is what the current pipeline
-                           trusts, so it is the right yardstick.
-    --expect FILE.txt      diff against any reference text you supply.
-
-Where a VLM could genuinely help is the case with **no text layer at all** — a
-scanned Act, where the alternative is not "good text vs model text" but "model
-text vs nothing". Docling, the current fallback there, measured worse than
-PyMuPDF wherever PyMuPDF works (61 lines / 5 sections against 247 / 13 on the
-same 6 pages), so the bar is low and worth measuring against.
-
-Models (OpenRouter, free tiers, confirmed image-capable via their models API):
-
-    omni    nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free   text+audio+image+video, 256K
-    lingvl  inclusionai/ling-3.0-flash-vl:free                   text+image+video, 262K
-
-Run (from backend/, ainshonglap conda env active):
-
-    python scripts/vision_chat.py --image page.png
-    python scripts/vision_chat.py --image page.png --model lingvl --ask "What is this?"
-    python scripts/vision_chat.py --pdf "../Laws/main/The Penal Code, 1860.pdf" --page 40
-    python scripts/vision_chat.py --image scan.jpg --expect reference.txt
-
-Reads OPENROUTER_API_KEY from backend/.env.local. The key is never printed.
+"""Test a vision model on a page image and score how faithfully it copies the
+text (section numbers especially).
 """
 
 from __future__ import annotations

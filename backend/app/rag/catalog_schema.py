@@ -1,10 +1,4 @@
-"""The catalog's table layout — one definition, used in two places.
-
-`scripts/build_catalog.py` writes `catalog.sqlite` with it. `corpus_db.py`
-uses it to rebuild the same database in memory from Supabase, so
-`catalog.py` runs the same queries against either and cannot tell which it
-got. Moved here verbatim from the build script: two copies of a schema are
-two schemas the moment someone edits one.
+"""The catalog's table layout, shared by build_catalog.py and corpus_db.py.
 """
 
 SCHEMA = """

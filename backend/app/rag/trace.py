@@ -1,27 +1,4 @@
-"""One concise line per pipeline step.
-
-A question passes through four or five machines before an answer comes back —
-planner, retrieval, generator, citation gates, memory, storage — and when the
-result is surprising the useful question is always *which step surprised you*.
-A refusal can mean retrieval fetched the wrong sections, or the generator
-declined on the right ones, or every claim was dropped by the gates. Those are
-different bugs and they look identical from outside.
-
-Deliberately one line per step, values only:
-
-    ❯ is house theft bailable?
-      plan      semantic act=penal                            1.2s
-      retrieve  5 hits  penal-s380 2.72 · crpc-s4 1.30        1.4s
-      generate  qwen  0 kept / 3 dropped                      3.1s
-      refused   no claim survived citation verification
-      memory    turn 2 · 118 chars
-      saved     c324d684
-
-Not a structured event log and not a replacement for one. It is the thing you
-read while watching the terminal, so it stays narrow enough to scan and never
-prints statutory text, a prompt, or a full answer.
-
-`RAG_TRACE=0` turns it off.
+"""One short log line per pipeline step (RAG_TRACE=0 turns it off).
 """
 
 from __future__ import annotations

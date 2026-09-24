@@ -1,25 +1,6 @@
-"""Supabase client and access-token verification.
+"""Supabase client and access-token checks.
 
-**Everything goes through this API, with the service-role key.** That key
-bypasses Row Level Security by design, so the policies in `db/schema.sql` are
-not what keeps one person's legal questions away from another — the `user_id`
-filter in `app/db/conversations.py` is. Every statement there passes it, and the
-policies remain as a second line for anything that ever connects with an anon
-key.
-
-Token verification is local. The frontend signs in with Supabase and sends the
-access token as a bearer; this reads the token's own `alg` header and picks the
-method:
-
-    RS256 / ES256   new projects, asymmetric. The public key comes from the
-                    project's JWKS endpoint, cached, so a request never waits on
-                    Supabase.
-    HS256           older projects with a shared secret in SUPABASE_JWT_SECRET.
-
-Unconfigured is a supported state, not an error. With no keys the API runs
-exactly as it did before — anonymous, with conversations living in the browser —
-so the assistant works for someone who has not signed in and for a deployment
-with no Supabase at all.
+Uses the service key (bypasses RLS), so callers must always filter by user.
 """
 
 from __future__ import annotations

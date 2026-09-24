@@ -1,10 +1,4 @@
-"""Batch smoke test for the Gemini 2.5 Flash baseline — same 5 questions as
-local_llm_test.py, so results are directly comparable against the local
-Qwen2.5-VL-3B baseline.
-
-Run (from backend/, with the ainshonglap conda env active):
-
-    python scripts/experiments/gemini_test.py
+"""Five-question smoke test for the Gemini baseline.
 """
 
 from __future__ import annotations

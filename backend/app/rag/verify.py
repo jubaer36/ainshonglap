@@ -1,26 +1,5 @@
-"""Deterministic citation gates (generation-plan.md, decision C).
-
-Two checks, no model involved:
-
-  C2 key validity   the cited section is one that was actually retrieved. A
-                    cite to anything else is parametric leakage — the model
-                    answering from memory and dressing it as a citation.
-
-  C3 quote fidelity the verbatim span appears in that section's text. This is
-                    the check that catches E1's failure directly: Qwen2.5-VL-3B
-                    fabricated a quotation of CrPC s.154, and a fabricated quote
-                    cannot survive a string match against text sitting in the
-                    context window.
-
-C3 is unusually cheap for this project specifically. Parsing is deterministic
-and verified against the source PDF, so the cited section's exact text is known.
-Projects whose chunk text is a lossy PDF extraction cannot do this — their
-"quote" and their source disagree for reasons that have nothing to do with the
-model.
-
-Matching is normalised for whitespace, quote glyphs and case only. It is NOT
-fuzzy: a paraphrase is supposed to fail. The point is to distinguish quoting
-from summarising, and a near-match threshold would erase that distinction.
+"""Citation checks, no model involved: the cited section must have been
+retrieved (C2), and its quote must appear in it word for word (C3).
 """
 
 from __future__ import annotations

@@ -1,17 +1,5 @@
-"""Interactive and one-shot smoke test for models served directly by Groq.
-
-This deliberately tests Groq rather than Groq models routed through OpenRouter,
-so latency, rate limits and structured-output support describe the provider the
-application would actually call.
-
-Run from backend/ (with the ainshonglap conda environment active):
-
-    python scripts/groq_chat.py
-    python scripts/groq_chat.py --prompt "What is the punishment for theft?"
-    python scripts/groq_chat.py --json
-    python scripts/groq_chat.py --list
-
-Reads GROQ_API_KEY from backend/.env.local. The key is never printed.
+"""Chat with or probe a Groq model; --json checks it enforces the JSON schema.
+Run: python scripts/groq_chat.py --json
 """
 
 from __future__ import annotations

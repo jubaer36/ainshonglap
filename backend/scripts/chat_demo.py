@@ -1,27 +1,5 @@
-"""Multi-turn conversation against the running API — memory included.
-
-`answer_demo.py` asks single questions. This holds a conversation: it sends the
-memory back each turn exactly as the frontend does, and prints what the rolling
-summary becomes, so the thing that is hard to see — whether a follow-up was
-resolved into the right standalone question — is visible.
-
-Watch for three things:
-
-  follow_up         did the planner recognise a question that leans on earlier
-                    turns? It defaults to false, and a false negative shows up
-                    as a confused answer rather than an error.
-  resolved          the standalone rewrite that was actually executed. This is
-                    where a wrong memory becomes a confident answer to a
-                    question nobody asked.
-  summary           the rolling memory after the turn. Section numbers in it
-                    must stay verbatim; that is the lossy part of the design.
-
-Run (from backend/, with the API running):
-
-    python scripts/chat_demo.py                       # built-in conversation
-    python scripts/chat_demo.py --api http://localhost:8083
-    python scripts/chat_demo.py -q "..." -q "..."     # your own turns
-    python scripts/chat_demo.py --interactive
+"""Hold a multi-turn conversation against the running API and print how the
+memory changes.  Run: python scripts/chat_demo.py
 """
 
 from __future__ import annotations

@@ -1,25 +1,8 @@
-"""retrieve(question) -> ranked sections, on OpenRouter only.
+"""retrieve(question) -> ranked sections.
 
-  1. embed the question with nemotron-3-embed (OpenRouter), then an exact
-     inner-product search over the chunk vectors — sections AND subsections
-     (E5) — in Supabase (`law_alt_chunks`), or the local copy if Supabase fails.
-  2. collapse to distinct sections. Several vectors can point at one section, so
-     over-fetching then de-duplicating keeps the candidate set 20 sections deep.
-  3. optionally rerank those candidates with the Nemotron reranker (profile
-     `nemotron-embed+rerank`); the default takes the search order (E21: R@1
-     48.4, R@20 86.5 on the 608 questions — above the local BGE pipeline).
-
-A child vector carries its PARENT section's metadata, so a subsection hit is a
-section hit and the citation still points at the section.
-
-No model runs in this process. When OpenRouter cannot embed the question —
-the free-model daily cap, an outage, a timeout — there is nothing to fall back
-to, and `SearchUnavailable` says so; the API turns it into a 503 with a plain
-message. Exact lookups by section, range, chapter or Act never come here.
-
-`retrieve_many` exists so the eval scripts run this exact code rather than
-their own copy of it — a split once made the logged numbers describe a pipeline
-nothing could serve.
+Embed the question with nemotron-3-embed (OpenRouter), search the vectors,
+collapse hits to distinct sections, optionally rerank. No local model: if
+OpenRouter fails, meaning search raises SearchUnavailable (a 503).
 """
 
 from __future__ import annotations

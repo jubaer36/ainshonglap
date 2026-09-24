@@ -1,16 +1,7 @@
-"""Adding and removing sources from the frontend — admins only.
+"""Add and remove sources from the frontend (admins only, checked on the token).
 
-    GET    /api/sources/admin              am I allowed to? (drives the UI)
-    POST   /api/sources                    upload a PDF; starts its review
-    GET    /api/sources/jobs               documents still being added, or failed
-    GET    /api/sources/jobs/{id}          progress, and the review when ready
-    POST   /api/sources/jobs/{id}/choose   {"parser": "pymupdf" | "docling"}
-    POST   /api/sources/jobs/{id}/discard  abandon an add before it is indexed
-    DELETE /api/sources/{slug}             remove a source (never a core Act)
-
-Every write needs a signed-in user whose email is in ADMIN_EMAILS, checked on
-the verified token here — hiding the buttons in the UI is not the protection.
-The core Acts are refused by `app.ingest.sources` whoever asks.
+Endpoints: /api/sources/admin, POST /api/sources, /api/sources/jobs[/{id}],
+/jobs/{id}/choose, /jobs/{id}/discard, DELETE /api/sources/{slug}.
 """
 
 from __future__ import annotations

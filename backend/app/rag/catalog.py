@@ -1,20 +1,7 @@
-"""Read side of the structural catalog — exact fetch by coordinates.
+"""Exact lookups by section, range, chapter or Act, with parameterized SQL.
 
-The division this module exists to enforce: **a model names the coordinates,
-this code fetches them.** Every query here is parameterized and every predicate
-is built from validated values, so no model output ever reaches SQLite as SQL.
-A planner that hallucinates "Chapter XCIX" produces an empty result, which the
-caller reports as "no such chapter" — never the nearest real chapter, which is
-what a vector index would have returned.
-
-Opened read-only. Nothing in the serving path writes to the catalog; it is
-rebuilt from parsed JSON by `scripts/build_catalog.py` and checked by
-`scripts/verify/verify_catalog.py`.
-
-Continuation fragments (`continuation = 1`) are excluded from every listing by
-default. They are five parse artifacts where a page break was re-read as a
-section heading; they are kept in the table because the text is in the document,
-but listing them would show a reader "section 344" twice.
+A model only names the coordinates; this code fetches them. A coordinate that
+does not exist returns nothing, never the nearest match.
 """
 
 from __future__ import annotations

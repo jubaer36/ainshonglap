@@ -1,27 +1,5 @@
-"""Several API keys for one provider, used in turn.
-
-Groq's free tier is capped per key **and** per model: a daily token budget for
-`openai/gpt-oss-120b` on one key says nothing about the same model on another
-key, and nothing about `qwen/qwen3.8-27b` on the same one. Three keys therefore
-multiply the budget, but only if requests actually spread across them.
-
-Two mechanisms, and they are not the same thing:
-
-    rotation   every call starts at the next key, so a steady stream of
-               questions divides roughly evenly rather than burning key 1 to
-               its daily cap while keys 2 and 3 sit untouched.
-    failover   a 429 on one key is tried immediately on the next, because a
-               per-minute ceiling on one key is not a per-minute ceiling on
-               another. Only when every key refuses is it worth sleeping.
-
-Discovery is by convention: `GROQ_API_KEY`, then `GROQ_API_KEY_2`,
-`GROQ_API_KEY_3`, and so on until a number is missing. Adding a fourth key is an
-edit to `.env.local`, not to this file. A provider with one key — Inception,
-OpenRouter — produces a single slot and behaves exactly as it did before.
-
-The rotation counter is per prefix, in memory, and shared across threads. It is
-not shared across workers, which only means two workers each start their own
-cycle; the spread is still far better than one key taking everything.
+"""Use several API keys for one provider in turn: rotate per call, and move to
+the next key at once on a 429.
 """
 
 from __future__ import annotations

@@ -1,30 +1,4 @@
-"""Verify the chunks against the parsed JSON they came from.
-
-Same discipline as verify_parsed.py: the chunker's own "0 sections lost" is
-self-reported and cannot be the proof. Everything here is recomputed from
-`Laws/main/parsed/` independently of anything the chunker recorded.
-
-  K1  text fidelity     Each section's chunks, concatenated in order, must
-                        reproduce that section's text as a WORD SEQUENCE —
-                        not as a set. A set comparison passes even when text is
-                        duplicated or scrambled, which is how the first version
-                        of this check missed both.
-  K2  no duplication    No section's text may appear twice across its chunks.
-                        Over-eager merging silently doubles content.
-  K3  coverage          Every section yields >= 1 chunk; every chunk maps to a
-                        real section. Nothing invented, nothing dropped.
-  K4  ids               Chunk ids are unique — they become vector-store keys.
-  K5  metadata          Every chunk's metadata matches its source section, and
-                        the hierarchy prefix agrees with the metadata. A chunk
-                        whose prefix and metadata disagree would cite wrongly.
-  K6  size              Distribution, and how many exceed the budget.
-  K7  prefix            Every chunk carries a hierarchy prefix and a body; a
-                        prefix-only or body-only chunk is malformed.
-
-Run (from backend/, ainshonglap conda env active):
-
-    python scripts/verify/verify_chunks.py
-    python scripts/verify/verify_chunks.py --act crpc --verbose
+"""Check the chunks against the parsed JSON: no text lost, reordered or duplicated.
 """
 
 from __future__ import annotations

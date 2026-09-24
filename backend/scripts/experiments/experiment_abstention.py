@@ -1,39 +1,5 @@
-"""E8 — does the generator answer anyway when retrieval missed? (generation-plan.md)
-
-The question this settles:
-
-  Served R@5 is 59.0%, so 41% of the time the correct section is NOT among the
-  five given to the generator — and what IS there is five plausible, adjacent,
-  professionally drafted statutory sections. Nothing in the prompt looks broken.
-
-  That is the *misleading context* condition. GRAB-RAG (arXiv 2608.22228) found
-  prompt-based abstention collapses precisely there: models answer <=1% of the
-  time when evidence is simply absent, but 13.6-74.3% when a fluent wrong
-  passage is present, and 59.6% of those answers echo the wrong entity verbatim.
-  That was 3.8-8B models on adversarial entity swaps; ours is a larger model on
-  merely-wrong passages, so the result transfers in direction at best.
-
-What is measured is the SHIPPING pipeline — `app.rag.answer.answer()`, prompt
-and C2/C3 gates together — not an isolated prompt. The gates are part of the
-abstention mechanism, so measuring the prompt alone would describe a system we
-do not run. This is the same mistake E7 caught: measuring a component instead of
-what is served.
-
-Two strata, drawn from the same 608-question gold set:
-
-  gold_absent    the correct section is NOT retrieved -> answering is the
-                 failure. This is the condition under test.
-  gold_present   it IS retrieved -> refusing is the failure. The control, and
-                 the price of abstention: a system that refuses everything
-                 scores perfectly on the first stratum alone.
-
-Sequential by default, because the free OpenRouter tier is rate-limited and a
-burst of parallel requests buys nothing here.
-
-Run (from backend/, ainshonglap conda env active):
-
-    python scripts/experiments/experiment_abstention.py --n 20          # 40 calls
-    python scripts/experiments/experiment_abstention.py --n 20 --dry-run
+"""E8: does the generator answer anyway when retrieval missed?
+Run: python scripts/experiments/experiment_abstention.py --n 20
 """
 
 from __future__ import annotations

@@ -1,11 +1,4 @@
-"""Interactive REPL for the local LLM-only baseline — loads model once,
-then lets you type questions and see answers until you quit.
-
-Run (from backend/, with the ainshonglap conda env active):
-
-    python experiments/local_llm_chat.py
-
-Type a question and hit enter. Empty line / Ctrl-D / "exit" to quit.
+"""Chat with the local LLM baseline in the terminal (no retrieval).
 """
 
 from __future__ import annotations

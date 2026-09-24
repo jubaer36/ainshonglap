@@ -1,10 +1,4 @@
-"""Answer -> the AssistantMessage the frontend already renders.
-
-Kept separate from `answer.py` so the pipeline has no opinion about presentation
-and the API contract has no opinion about retrieval.
-
-No disclaimer is attached to answers: the interface states it once, in the
-"Before you start" notice, rather than repeating it under every reply.
+"""Answer -> the message format the frontend renders.
 """
 
 from __future__ import annotations
