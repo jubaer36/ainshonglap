@@ -1,19 +1,4 @@
-"""Record every time the app falls back from Supabase to the local files.
-
-Supabase is where the statute text is read from. The local files — the catalog,
-the FAISS index — are kept only so a Supabase outage degrades the app instead of
-stopping it. A fallback is therefore always news: an answer served from the
-local copy was not served from the database of record, and if a corpus update
-was loaded in the meantime, the local copy does not have it.
-
-So it is logged at WARNING — visible even with `RAG_TRACE=0`, which silences
-only the per-step info lines. Throttled per source, because the catalog is
-consulted many times per question and an outage would otherwise print the same
-line dozens of times a request; the first use always logs, then at most one line
-per source every `EVERY` seconds, with a count of the uses in between.
-
-`active()` feeds `/health`, so "running on the fallback" is visible without
-reading logs.
+"""Log every time the local files answer instead of Supabase.
 """
 
 from __future__ import annotations

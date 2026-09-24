@@ -1,33 +1,7 @@
-"""Adding and removing sources while the app is running.
+"""Add or remove a source while the app runs, as background jobs.
 
-The same steps as the command-line pipeline — parse, review, chunk, embed,
-catalog, load, verify — run as background jobs the frontend can start, watch
-and steer. Nothing here is a second implementation: every step calls the
-script that already does it (`parse_law_pdf`, `parse_docling_document`,
-`chunk_sections`, `build_index`, `build_catalog`, `load_supabase`), so the
-command line and the app cannot drift apart.
-
-**Core Acts cannot be removed.** The Code of Criminal Procedure, the Penal
-Code and the Evidence Act are the corpus the assistant is built around;
-`config.CORE_ACTS` names them, and removal refuses them here — not just in the
-UI, since an API call does not go through the UI.
-
-**One job at a time.** Jobs run on a single worker thread, in order. Two index
-rebuilds overlapping would each write a half-finished index over the other.
-
-**Adding is two steps, with a person in between.** `start_add` parses with
-PyMuPDF and previews Docling on a few sampled pages; the job then waits in
-`review` until someone looks at the pages and calls `choose`. That is the same
-review `scripts/ingest_document.py` writes as HTML, delivered as data instead.
-
-Embedding happens in this process, through the model the API already has
-loaded — no second copy on the GPU — and only for new text: `build_index`
-reuses the vector of every chunk it has seen before. Adding one Act embeds that
-Act; removing one embeds nothing.
-
-Jobs are held in memory. A restart forgets them, which loses nothing that
-matters: the corpus itself is either fully loaded (it has a commit marker in
-`law_loads`) or it is not.
+Same steps as the command-line pipeline (parse, review, chunk, embed, catalog,
+load, verify). Core Acts can never be removed. One job runs at a time.
 """
 
 from __future__ import annotations

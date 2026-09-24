@@ -1,30 +1,6 @@
-"""Embed the chunks with BGE-M3 and build a FAISS index (retrieval-plan.md).
-
-BGE-M3 because: its 8192-token window takes our oversized chunks without
-truncation, it runs locally so ingestion has no API dependency, and it is one
-of the two models the statute-retrieval literature actually evaluated. A paid
-legal-tuned model is an upgrade to be measured against this, not assumed.
-
-Dense-only, no BM25. For statutory corpora the evidence is that hybrid does not
-reliably help and can slightly hurt — a hypothesis to test against our own eval
-set, not a default.
-
-Index is inner-product over L2-normalised vectors, i.e. cosine similarity. Flat
-(exhaustive) rather than approximate: at this corpus size an ANN index would
-trade recall for a speedup we do not need.
-
-Run (from backend/, ainshonglap conda env active):
-
-    python scripts/build_index.py              # all acts into one index
-    python scripts/build_index.py --batch 8    # smaller batches if VRAM is tight
-    python scripts/build_index.py --granularity section   # E5 off, for A/B
-    python scripts/build_index.py --embedder nemotron-3-embed   # E21 vectors
-
-`--embedder` builds another model's vectors for the SAME chunks.json
-(`embeddings.<name>.npy`), for the `nemotron-embed` retrieval profile. That model
-runs on OpenRouter: each call counts against the free-model daily cap (1,000
-requests, shared by every :free model on the account), so only chunks without a
-vector are sent — adding one Act costs roughly its chunk count / 32 requests.
+"""Embed the chunks and build the vector index (BGE-M3 + FAISS). Only new text is
+embedded.  Run: python scripts/build_index.py  (--embedder nemotron-3-embed for
+the OpenRouter vectors)
 """
 
 from __future__ import annotations

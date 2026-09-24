@@ -1,14 +1,4 @@
-"""Cross-encoder reranking (experiments.md E4, +9.2pp Recall@1).
-
-Why it helps here: dense Recall@1 was 32.7% against Recall@20 of 66.6% — two
-thirds of the time the right section IS retrieved, only ranked badly. A
-bi-encoder compares two independently produced vectors and the margins are
-thin; a cross-encoder reads query and passage together in one pass.
-
-Ceiling: reranking only reorders what retrieval already found, so it cannot
-exceed Recall@20. Raising that ceiling is what E5 (dual granularity) is for.
-
-Cost is not a concern at this scale — 20 candidates per query, no QPS pressure.
+"""Cross-encoder reranking of the retrieved sections (bge-reranker-v2-m3).
 """
 
 from __future__ import annotations

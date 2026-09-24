@@ -1,28 +1,5 @@
-"""Walk through the planner one question at a time, and show what it decided.
-
-No pass/fail. This prints what the model actually returned and what the catalog
-actually fetched, so a person can read it and judge. `plan_cases.py` is the
-graded version; this is the one for looking.
-
-Three blocks per question:
-
-    model     the raw JSON Groq returned — the model's own words, before any
-              code touched them
-    plan      the same thing after validation: coordinates checked against the
-              catalog, a chapter number canonicalised, an ambiguous section
-              turned into a question
-    result    what those coordinates actually select. Structural only — the
-              semantic and general executors are not built yet.
-
-The pause between questions is because Groq's free tier limits input tokens per
-minute, and the planner sends ~780 of them per call.
-
-Run (from backend/, ainshonglap conda env active):
-
-    python scripts/plan_demo.py                    # the built-in questions
-    python scripts/plan_demo.py --gap 5            # shorter pause
-    python scripts/plan_demo.py -q "your question" # just this one
-    python scripts/plan_demo.py --file mine.txt    # one question per line
+"""Show what the planner decides for each question, and what the catalog fetches.
+Run: python scripts/plan_demo.py
 """
 
 from __future__ import annotations

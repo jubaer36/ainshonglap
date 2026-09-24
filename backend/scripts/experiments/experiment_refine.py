@@ -1,36 +1,4 @@
-"""E9 — does rewriting the query into statutory register improve retrieval?
-
-The target is the biggest remaining failure: 28.6% of gold sections are never
-retrieved at all, which no reranker can reach because reranking only reorders
-what was already found. The hypothesis is a register mismatch — questions are
-narrative, statutes are drafted — so rewriting the query before embedding should
-recover some of that bucket.
-
-Three arms over the same questions:
-
-  baseline   the question as asked
-  refined    the LLM's statutory restatement alone
-  combined   original + restatement + terms (what app/rag/refine.py serves)
-
-`combined` is the shipping default on the theory that a rewrite can only add
-recall if the original is kept — a rewrite that drops a distinguishing detail
-would otherwise lose a section the plain question would have found. That is a
-theory, which is why `refined` is measured alongside it rather than assumed
-worse.
-
-Cost. One LLM call per question, reused across all three arms (the rewrite is
-computed once). Retrieval is local and free. Subsample with --n; the full 608
-would be 608 calls.
-
-Read the result against +/-3.7pp at n=608, and much wider on a subsample — the
-script prints the interval for the n actually used. E2 and E3 both imported a
-technique from published work and found nothing here; this is the third such
-import and gets the same standard of proof.
-
-Run (from backend/, ainshonglap conda env active):
-
-    python scripts/experiments/experiment_refine.py --n 60
-    python scripts/experiments/experiment_refine.py --n 60 --model lfm
+"""E9: does rewriting the question into statutory wording improve retrieval?
 """
 
 from __future__ import annotations

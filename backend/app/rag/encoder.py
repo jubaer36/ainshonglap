@@ -1,12 +1,4 @@
-"""BGE-M3 dense encoding.
-
-transformers directly rather than sentence-transformers: 6.x tries to load an
-AutoProcessor for this repo and raises. BGE-M3's dense vector is simply the CLS
-token of the last hidden state, L2-normalised, so the wrapper buys nothing.
-
-Normalised vectors mean inner product == cosine, which is what the FAISS
-IndexFlatIP expects. Query and document vectors MUST come from this same
-function — a different pooling on either side makes the inner product noise.
+"""BGE-M3 embeddings (the CLS vector, normalised), loaded once per process.
 """
 
 from __future__ import annotations

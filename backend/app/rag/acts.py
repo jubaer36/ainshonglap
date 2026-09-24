@@ -1,22 +1,5 @@
-"""The Acts the corpus holds — asked of the catalog, never listed in code.
-
-Every "which Acts do we have?" in the app answers from here: the planner's
-scope, citation keys, short names in citations, the sentences that say what the
-assistant covers, spotting which Act a piece of text refers to. They used to be
-separate hardcoded three-entry lists, which is why a fourth Act, loaded and
-searchable, still came back keyed `act-s13` and was ruled out of scope by a
-planner told there were "exactly three Acts".
-
-The catalog is the source because it is what the app actually serves: loaded
-from Supabase, rebuilt within a minute of an Act being loaded or removed. So
-adding or removing an Act changes all of the above with no code edit and no
-restart. Nothing is cached here — the catalog is an in-memory database and
-these are small reads.
-
-Short names are derived, not stored: "The Arms Act, 1878" -> "Arms Act". That
-is right for most titles; conventional abbreviations like "CrPC" cannot be
-derived, so the CrPC is shown as "Code of Criminal Procedure". The slug is also
-accepted wherever text is matched, and `crpc` is its slug.
+"""Which Acts the corpus holds, read from the catalog (never hard-coded):
+names, short names, citation keys, and spotting an Act named in text.
 """
 
 from __future__ import annotations

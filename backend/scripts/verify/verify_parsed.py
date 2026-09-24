@@ -1,39 +1,5 @@
-"""Verify the parsed JSON against the source PDF and an independent oracle.
-
-The parser reports its own `orphaned: 0`, which is worth having but proves
-nothing on its own — a parser that drops text can also drop it from its own
-accounting. Every check here is therefore computed by RE-READING the PDF, not
-by trusting anything the parser wrote.
-
-Checks, in order of how much they would hurt if they failed:
-
-  C1  text recovery        Every word the PDF has (minus furniture) must appear
-                           in the JSON. Catches whole sections, pages or acts
-                           going missing. This is the "nothing is lost" proof.
-  C2  page coverage        Every body page must contribute at least one section
-                           or continuation. A page contributing nothing means a
-                           whole page vanished.
-  C3  section continuity   Numbering gaps are listed, then each is re-checked
-                           against the PDF: a gap is only a BUG if that section
-                           actually exists in the source. Many are genuine
-                           repeals.
-  C4  oracle diff          Sections and text compared against bdlaws.jsonl, an
-                           independently scraped copy. Catches anything both the
-                           parser and the PDF-reader agree on but get wrong.
-  C5  hierarchy integrity  Chapters unique and non-interleaved, one part per
-                           chapter, sections ascending within a chapter, every
-                           section reachable from exactly one chapter.
-  C6  child nesting        Subsection/clause/subclause sequences must count from
-                           1 / a / i without gaps, and blocks must sit at
-                           section level.
-  C7  citation soundness   page_start <= page_end, pages within the document,
-                           and the section's own number appears in its text.
-
-Run (from backend/, ainshonglap conda env active):
-
-    python scripts/verify/verify_parsed.py                # all acts
-    python scripts/verify/verify_parsed.py --act crpc
-    python scripts/verify/verify_parsed.py --verbose      # list every failure
+"""Check the parsed JSON against the PDF and the independent bdlaws copy: every
+word recovered, no phantom or missing sections.
 """
 
 from __future__ import annotations

@@ -1,39 +1,5 @@
-"""Measure retrieval against gold sections (retrieval-plan.md step 3).
-
-The point of this file is to make every later choice — reranking, hybrid, a
-paid embedder — an argued decision rather than a guess. Nothing gets adopted
-before it moves a number here.
-
-Gold standard: `Laws/bangladesh-legal-qa-dataset`, which ships QA pairs
-carrying the Act and section each answer comes from. It was scraped
-independently of our PDFs, so it is a genuine external judge rather than
-something derived from the thing being tested.
-
-Reported:
-  Recall@k     did the gold section appear in the top k
-  MRR          1/rank of the first correct hit — rewards ranking it first
-  Act accuracy did the top hit come from the right Act at all. This isolates
-               Document-Level Retrieval Mismatch, the failure the hierarchy
-               prefix exists to prevent, and it is the one that matters most:
-               citing the right section number of the wrong statute is worse
-               than returning nothing.
-
-It measures `app.rag.pipeline`, the same code the API serves. Earlier this file
-had its own inline retrieval loop, which is how the logged numbers came to
-describe a pipeline that could not actually be served.
-
-Run (from backend/, ainshonglap conda env active):
-
-    python scripts/eval_retrieval.py                  # dense + rerank (as served)
-    python scripts/eval_retrieval.py --no-rerank      # dense only
-    python scripts/eval_retrieval.py --split single_hop --k 1 3 5 10
-    python scripts/eval_retrieval.py --show-failures 10
-    python scripts/eval_retrieval.py --profile nemotron-embed    # E21 profiles
-
-`--profile` picks a retrieval profile (config.RETRIEVAL_PROFILES). The two that
-use OpenRouter spend one request PER QUESTION — 608 for the full set, more than
-half the free-model daily cap (1,000; a free-tier key has 50). Use `--split` to
-run a subset, or read E21 in experiments.md, which has all three measured.
+"""Score retrieval on the 608 gold questions: Recall@k, MRR, right-Act rate.
+Run: python scripts/eval_retrieval.py  (--profile for the OpenRouter ones)
 """
 
 from __future__ import annotations

@@ -1,47 +1,5 @@
-"""Speech-to-text probe for voice input — Deepgram, evaluated on what matters here.
-
-Voice input for a legal assistant has one failure mode that dwarfs the rest:
-**a misheard number cites the wrong law.** "Section 379" heard as "section 279"
-is not a slightly worse transcript, it is a different offence, and every stage
-downstream — planner, catalog fetch, citation gates — will faithfully answer the
-wrong question. Word error rate averages that away, so this script reports it
-separately.
-
-Three metrics, in order of how much they matter:
-
-  number accuracy   every digit string in the reference, found in the transcript.
-                    This is the one that decides whether voice input is safe.
-  keyterm recall    did 'cognizable', 'bailable', 'Penal Code' survive? Statutory
-                    vocabulary is rare in general speech and is exactly what an
-                    STT model smooths into something commoner.
-  WER               the usual aggregate, for comparison with published numbers.
-
-**Language, and the finding that shapes this.** Bengali is `bn` and is supported
-only by nova-3. It is **not** in Deepgram's `multi` code-switching set (English,
-Spanish, French, German, Hindi, Russian, Portuguese, Japanese, Italian, Dutch).
-So "theft er jonno ki shasti?" — English legal nouns inside a Bangla sentence,
-which is how people here actually talk about law — has no single-model answer.
-`--language bn` and `--language en` each handle half of it. Measuring that gap
-is the point of `--compare`.
-
-Keyterm prompting (nova-3, up to 500 tokens, 20-50 recommended) is the lever
-against the second failure. `--keyterms` builds the list from the catalog, so
-the terms boosted are the Acts and vocabulary actually in the corpus rather than
-a guess.
-
-No new dependencies: recording shells out to `arecord`, conversion to `ffmpeg`,
-and the edit distance is implemented here rather than pulling in `jiwer`.
-
-Run (from backend/, ainshonglap conda env active):
-
-    python scripts/deepgram_stt.py --record 6                  # mic -> transcript
-    python scripts/deepgram_stt.py --file q.wav
-    python scripts/deepgram_stt.py --file q.wav --expect "what does section 379 say"
-    python scripts/deepgram_stt.py --file q.wav --keyterms     # + corpus keyterms
-    python scripts/deepgram_stt.py --file q.wav --compare      # en vs bn vs keyterms
-    python scripts/deepgram_stt.py --record 6 --ask            # transcribe, then answer
-
-Reads DEEPGRAM_API_KEY from backend/.env.local. The key is never printed.
+"""Test Deepgram speech-to-text. Reports section-number accuracy, since a misheard
+number cites the wrong law.  Run: python scripts/deepgram_stt.py --record 6
 """
 
 from __future__ import annotations

@@ -1,32 +1,4 @@
-"""Check `catalog.sqlite` against the parsed JSON it was built from.
-
-The build script reports what it thinks it inserted. That is not evidence: a
-builder that drops a section drops it from its own count too. So this re-reads
-`Laws/main/parsed/*.json` and compares, the same way `verify_parsed.py` re-reads
-the PDF rather than trusting the parser.
-
-What is checked:
-
-  counts        acts, chapters, sections, subsections — from the JSON, per act
-  text parity   every section's text, byte for byte, not a length or a hash of
-                what the builder happened to hold in memory
-  identity      citation keys unique; no section orphaned from its chapter
-  ordering      statutory order, i.e. 302 < 302A < 303, which is the one thing
-                lexicographic sorting gets wrong and nobody notices until a
-                range query returns the wrong interval
-  hierarchy     every nested child present, with its parent link intact
-  FTS parity    the search index covers exactly the sections table
-  cross-refs    resolvable targets actually exist; unresolved ones are reported
-                as a rate, not failed — drafters cite repealed and out-of-corpus
-                provisions, and that is the document's business, not a bug
-  determinism   rebuild into a temp file; the content digest must match
-
-Exit code is 1 if any check fails, so it can gate a rebuild.
-
-Run (from backend/, ainshonglap conda env active):
-
-    python scripts/verify/verify_catalog.py
-    python scripts/verify/verify_catalog.py --skip-rebuild   # faster
+"""Check catalog.sqlite against the parsed JSON it was built from.
 """
 
 from __future__ import annotations

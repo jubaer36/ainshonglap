@@ -1,29 +1,6 @@
-"""Stage 2 of answering: run a validated plan.
-
-`plan.py` decided what the question is and named where to look. Nothing here
-re-decides that. Each executor takes coordinates the catalog has already
-confirmed exist, or a semantic query, and produces an `Answer`.
-
-    meta          capability facts, read from the catalog, no model call
-    structural    exact SQL fetch — one section, a range, a chapter, an Act
-    semantic      retrieve, rerank, generate, verify every claim
-    out_of_scope  say the corpus does not hold this, cite nothing
-    general       answer plainly, no citations, labelled ungrounded
-    clarify       ask the question the planner could not answer for itself
-
-Two rules that are easy to get wrong and expensive to get wrong:
-
-**The Act is a filter on structural plans and a hint on semantic ones.** When a
-reader writes "Penal Code section 302" they have named the Act and it bounds the
-answer. When they describe a scenario, the planner's Act guess does not: asked
-about men who beat someone to death and were arrested without a warrant, the
-planner returns `act=crpc`, correct for the arrest and wrong for the homicide.
-Filtering retrieval by it would drop the Penal Code sections the question needs.
-
-**A structural fetch quotes; it never paraphrases.** The reader asked for the
-provision, so the provision is the answer, verbatim from the catalog. That makes
-it the one path where quoted text is correct by construction — no model sees it,
-so no model can alter it.
+"""Run a checked plan: one function per question type (meta, structural,
+semantic, document, out of scope, general, clarify). Nothing here re-decides
+what the question is.
 """
 
 from __future__ import annotations

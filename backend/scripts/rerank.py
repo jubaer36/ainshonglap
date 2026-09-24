@@ -1,36 +1,4 @@
-"""A/B the cross-encoder reranker against dense-only (experiments.md E4).
-
-Why a cross-encoder, and why this one:
-
-  the failure it fixes   Recall@1 is far below Recall@20 — most of the time the
-                         right section IS retrieved, only ranked badly. Margins
-                         are thin (0.7385 vs 0.7179 on the s.54 example), which
-                         is what happens when two independently produced
-                         vectors are compared. A cross-encoder reads query and
-                         chunk together in one pass instead.
-
-  bge-reranker-v2-m3     Reported to win 50-67% of the time on queries under
-                         300 characters but to fall off sharply past that. 93%
-                         of our eval questions are under 300 (median 198), so
-                         the profile matches. Qwen3-Reranker-0.6B is flat across
-                         lengths and marginally stronger on MTEB — E6 could not
-                         validly measure it (see app/rag/reranker.py), so it is
-                         untested, not rejected.
-
-  latency is a non-issue Cross-encoders are criticised for cost, but that is
-                         about large candidate sets. We score 20 candidates per
-                         query with no QPS pressure.
-
-Ceiling: reranking only reorders what retrieval already found, so it cannot
-exceed Recall@20. Raising that ceiling is E5's job, not this one.
-
-Both arms run through `app.rag.pipeline`, so the "+ rerank" row is literally
-what the API serves.
-
-Run (from backend/, ainshonglap conda env active):
-
-    python scripts/rerank.py --topk 20
-    python scripts/rerank.py --topk 50 --model BAAI/bge-reranker-v2-m3
+"""E4: compare retrieval with and without the cross-encoder reranker.
 """
 
 from __future__ import annotations

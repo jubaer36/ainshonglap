@@ -1,29 +1,5 @@
-"""Image input — a photo of one page, read into text. Never an answer.
-
-Same shape as `speech.py`, for the same reason: the image is turned into text,
-the text is shown to the reader, and only then does it become an ordinary
-question. A vision model that answered directly would be an ungrounded legal
-answer with a picture attached.
-
-**Strictly one page, strictly an image.** PDFs are rejected rather than
-converted, and that is a product decision rather than a missing feature:
-
-  * a PDF has a text layer, and `scripts/parse_law_pdf.py` reads it with page
-    numbers, font sizes and column positions — everything a VLM throws away.
-    Routing a PDF through a vision model would replace verified extraction with
-    a generative guess.
-  * multi-page input invites "summarise this Act", which is a different
-    operation with a different failure mode, and nothing here paginates.
-  * the honest use is the case with no text layer at all: a photograph of a
-    page, a scan someone was handed.
-
-**What a VLM does, and does not, guarantee.** It is not OCR. OCR extracts
-characters and fails visibly; a VLM describes what it saw and fails *plausibly*
-— `302A` becomes `302`, a proviso judged redundant disappears, and the result
-still reads like clean statute. So the transcription is treated as a draft of a
-question, never as a source. Nothing it produces is ever cited: if the reader
-asks about the text, the answer is retrieved from the indexed Acts and verified
-against them, exactly as a typed question would be.
+"""Image input: a photo of one page -> text. The text is shown to the user to
+check; it is never an answer and never cited.
 """
 
 from __future__ import annotations

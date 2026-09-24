@@ -1,23 +1,4 @@
-"""A/B the assumptions baked into chunking, before building on top of them.
-
-Two decisions were made on published results from other people's corpora and
-have never been measured here:
-
-  the hierarchy prefix   40 tokens on every chunk (~25% of a 172-token median),
-                         adopted because Contextual Retrieval reports 49% fewer
-                         retrieval failures. Untested on this data.
-  the 512-token budget   picked as a round number, not from evidence.
-
-Both are cheap to settle: re-embed variants of the same corpus and score each
-against the same 608 gold questions. If the prefix is neutral or harmful, every
-later experiment sits on a bad base — which is worth knowing before adding a
-reranker on top of it.
-
-Run (from backend/, ainshonglap conda env active):
-
-    python scripts/experiments/experiment_retrieval.py --what prefix
-    python scripts/experiments/experiment_retrieval.py --what budget
-    python scripts/experiments/experiment_retrieval.py --what all
+"""E2/E3: do the chunk prefix and the chunk size matter for retrieval?
 """
 
 from __future__ import annotations

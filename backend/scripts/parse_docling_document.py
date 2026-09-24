@@ -1,28 +1,5 @@
-"""Parse a document that is not a numbered statute, using Docling's layout model.
-
-`parse_law_pdf.py` is built for Acts: it finds sections by their numbers
-("302. …") and fails — silently, by putting everything in `preamble` — on a
-judgment, a circular, a book chapter, or an Act written in a style it does not
-know. Docling reads the page layout instead: titles, section headings,
-paragraphs, lists and tables, whatever the numbering.
-
-The output has exactly the shape `parse_law_pdf.py` writes — `chapters` holding
-`sections` — so chunking, the catalog, embedding and the Supabase load all take
-it unchanged. What changes is what a "section" is:
-
-    statute    a numbered provision, cited by its own number ("s.302")
-    document   a passage: one heading and the text under it, numbered in
-               reading order (1, 2, 3 …) and capped at MAX_WORDS so a long
-               stretch without headings does not become one giant unit
-
-`doc_type: "document"` records which, so citations can be labelled honestly —
-passage 12 of a judgment is not "section 12" of anything.
-
-Tables are kept as Markdown text inside their passage. Page furniture (running
-headers and footers) is left out: Docling separates it from the body, and it
-would otherwise be repeated in every passage.
-
-Deterministic for a given file and Docling version, like the statute parser.
+"""Parse a document that is not a numbered statute, by page layout (Docling), into
+the same JSON shape as parse_law_pdf.py.
 """
 
 from __future__ import annotations

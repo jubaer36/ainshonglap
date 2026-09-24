@@ -1,18 +1,5 @@
-"""Page images kept with the session that used them.
-
-An image read into a question is evidence, not a transient input. The
-transcription that reaches the pipeline is a **vision model's reading** of the
-page — generative, and wrong in ways that read as correct (`302A` quietly
-becoming `302`). Storing the page alongside its reading is what makes that
-checkable later; storing only the text would leave a reopened session asserting
-things with nothing to verify them against.
-
-Stored only for signed-in users. A guest's image is read and discarded with
-everything else from their session, which is what they chose on the way in.
-
-Files are private and served through short-lived signed URLs. A public bucket
-would mean a permanent unauthenticated link to a photograph of somebody's legal
-document.
+"""Page images saved with a signed-in user's conversation, next to the text read
+from them, so the reading can be checked later. Guests' images are not kept.
 """
 
 from __future__ import annotations

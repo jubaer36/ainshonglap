@@ -1,13 +1,4 @@
-"""Interactive REPL for the Gemini 2.5 Flash baseline (API-based, no local
-weights). Same shape as local_llm_chat.py so results are comparable
-side-by-side against the Qwen2.5-VL-3B local baseline.
-
-Run (from backend/, with the ainshonglap conda env active):
-
-    python experiments/gemini_chat.py
-
-Type a question and hit enter. Empty line / Ctrl-D / "exit" to quit.
-Reads GEMINI_API_KEY from backend/.env.local.
+"""Chat with the Gemini baseline in the terminal (no retrieval).
 """
 
 from __future__ import annotations

@@ -1,9 +1,0 @@
-{
-  "embedder": "nemotron-3-embed",
-  "count": 2404,
-  "sections": 1376,
-  "children": 1028,
-  "granularity": "both",
-  "normalised": true,
-  "metric": "inner_product"
-}

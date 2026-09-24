@@ -1,24 +1,4 @@
-"""E5 — retrieval granularity: does embedding smaller units help? (parent-child)
-
-E3 varied the *split budget* and found it flat, but that only changes the 3-8%
-of sections large enough to split. It never tested the retrieval **unit**.
-
-Parent-child ("small-to-big") retrieval embeds finer units and returns the
-coarser parent. Reported to improve accuracy 15-30% on queries needing broad
-context, at the cost of added distractors. Our eval scores at SECTION level, so
-a subsection hit still counts — which makes this directly measurable without
-touching the gold standard.
-
-Variants:
-  section     one vector per section (current)
-  subsection  one vector per top-level subsection/clause; hits map back to the
-              parent section for scoring — more, sharper vectors
-  both        index both granularities; the parent is returned either way
-
-Run (from backend/, ainshonglap conda env active):
-
-    python scripts/experiments/experiment_granularity.py
-    python scripts/experiments/experiment_granularity.py --rerank
+"""E5: does embedding subsections as well as sections help retrieval?
 """
 
 from __future__ import annotations

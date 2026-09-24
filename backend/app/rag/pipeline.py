@@ -1,28 +1,8 @@
-"""retrieve(question) -> ranked sections. The whole of E4 + E5 in one call.
+"""retrieve(question) -> ranked sections.
 
-Three stages, each one an experiment that moved a number on the 608-question
-eval set:
-
-  1. dense search over a dual-granularity index (E5). Sections AND their
-     subsections both have vectors, which lifted Recall@20 from 66.6% to 70.4%
-     — the ceiling stage 3 cannot raise for itself.
-  2. collapse to distinct sections. Several vectors can point at one section, so
-     the top-20 *vectors* can be far fewer than 20 sections. Over-fetching then
-     de-duplicating is what makes the candidate set 20 sections deep again.
-  3. cross-encoder rerank of those candidates (E4, +9.2pp Recall@1).
-
-A child vector carries its PARENT section's metadata, so a subsection hit is a
-section hit and the citation still points at the section.
-
-`retrieve_many` exists so the eval scripts run this exact code rather than
-their own copy of it — the previous split is how the logged numbers came to
-describe a pipeline nothing could actually serve.
-
-Which embedder and reranker run is a **retrieval profile** (E21,
-`config.RETRIEVAL_PROFILES`): the server default, `profile=` here, or
-`use_profile()` for the rest of one request. The stages above are the same for
-every profile; only the models change. A profile that needs OpenRouter falls
-back to the local one when OpenRouter cannot serve it, and says so in the log.
+Search the vectors, collapse hits to distinct sections, then rerank. Which
+models do this is a retrieval profile (config.RETRIEVAL_PROFILES); OpenRouter
+profiles fall back to the local one when OpenRouter fails.
 """
 
 from __future__ import annotations

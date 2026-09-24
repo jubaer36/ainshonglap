@@ -1,10 +1,5 @@
-"""Raw retrieval, exposed on its own so it can be inspected without an LLM.
-
-`/api/query` still answers from the mock module: answer generation is step 11
-of `plan.md` and does not exist yet, and synthesising an answer here would put
-un-generated prose behind a real citation, which is the exact failure the whole
-project is built to avoid. This endpoint returns what retrieval actually found,
-nothing more.
+"""GET /api/retrieve — the retrieval step on its own, with scores, so it can be
+inspected without generating an answer.
 """
 
 from __future__ import annotations

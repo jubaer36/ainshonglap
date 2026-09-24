@@ -1,41 +1,5 @@
-"""Remove an Act from the corpus — from Supabase, and from the local fallback.
-
-    python scripts/remove_act.py --act arms              # asks you to confirm
-    python scripts/remove_act.py --act arms --yes        # no prompt
-    python scripts/remove_act.py --act arms --supabase-only
-
-What it does, in order:
-
-    1. Supabase   deletes the Act's row; every section, subsection, reference,
-                  vector and load record under it goes with it (cascade). The
-                  app stops searching it at once and drops it from its catalog,
-                  its planner scope and the statute browser within a minute —
-                  no restart. This is the step that matters for users.
-
-    2. Local      moves Laws/main/parsed/<slug>.json and chunks/<slug>.json to
-                  Laws/removed/<slug>/ (untracked, recoverable — not deleted),
-                  then rebuilds the local catalog and FAISS index without it.
-                  Those are the fallback: left alone, a Supabase outage would
-                  bring the removed Act back into answers.
-
-    3. Re-sync    reloads Supabase from the rebuilt index. Vector positions shift
-                  when an Act leaves the index, and the verifier compares the two
-                  stores by position; the loader skips any Act whose content did
-                  not change. Then verify_supabase.py checks both stores agree.
-
-Step 2 embeds nothing: build_index reuses every remaining chunk's vector.
-`--supabase-only` skips steps 2 and 3, and says plainly that the fallback still
-holds the Act.
-
-The core Acts (config.CORE_ACTS — the CrPC, the Penal Code, the Evidence Act)
-are refused outright.
-
-The source PDF is left where it is. Nothing re-adds an Act on its own: the
-pipeline reads Laws/main/parsed/, and the Act's file is no longer there. To put
-it back, move the two files back and run chunk -> index -> catalog -> load.
-
-The frontend does the same through /api/sources for users listed in
-ADMIN_EMAILS; this is the command-line route to it.
+"""Remove an Act from Supabase and the local files (never a core Act).
+Run: python scripts/remove_act.py --act arms
 """
 
 from __future__ import annotations

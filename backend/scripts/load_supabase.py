@@ -1,35 +1,5 @@
-"""Load the statute corpus into Supabase, one Act at a time.
-
-    catalog.sqlite              ─┐
-    index/chunks.json           ─┼─►  law_acts, law_chapters, law_sections,
-    index/embeddings.npy        ─┘    law_subsections, law_cross_references,
-                                      law_chunks (+ vectors), law_loads
-
-Reads the LOCAL read models rather than re-parsing, on purpose. Each of them is
-already verified against its own input — `verify_catalog.py` against the parsed
-JSON, `verify_chunks.py` likewise — and re-deriving section ordering, duplicate
-detection or cross-reference extraction here would be a second implementation
-of logic that already has one, and two implementations drift. This script only
-moves rows; `verify/verify_supabase.py` then re-reads both ends and compares.
-
-Embeddings are loaded from `embeddings.npy` as they are. Nothing is re-embedded,
-so the vectors in Postgres are the exact vectors FAISS searches, and the
-retrieval numbers carry over unchanged — which is the whole premise of the move.
-
-**One Act is the unit.** Deleting an Act's row cascades to everything under it,
-so a reload is: delete, insert in dependency order, then write the `law_loads`
-row LAST. A load is many API calls and cannot be one transaction; that final
-row is the commit marker. An Act with no matching digest in `law_loads` was
-interrupted and is not to be trusted, and re-running this script repairs it.
-
-Idempotent: an Act whose digest already matches `law_loads` is skipped.
-
-Run (from backend/, ainshonglap conda env, after db/migrations/002_corpus.sql):
-
-    python scripts/load_supabase.py --dry-run        # build rows, touch nothing
-    python scripts/load_supabase.py --all            # every Act, skipping unchanged
-    python scripts/load_supabase.py --act penal      # one Act
-    python scripts/load_supabase.py --all --force    # reload even if unchanged
+"""Load the corpus into Supabase, one Act at a time, from the local read models.
+Unchanged Acts are skipped.  Run: python scripts/load_supabase.py --all
 """
 
 from __future__ import annotations

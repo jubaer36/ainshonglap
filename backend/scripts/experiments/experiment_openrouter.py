@@ -1,29 +1,5 @@
-"""OpenRouter's free embedders and reranker against BGE-M3 + bge-reranker (E21).
-
-Same harness as the served pipeline, only the models swapped:
-
-  dense  embed the 2,320 chunks of the local index (sections + subsections,
-         the three core Acts), exact inner-product search, 60 vectors
-         collapsed to 20 distinct sections (`pipeline._collapse`)
-  rerank the same 20 candidates, re-scored by a cross-encoder
-
-Scored on the 608-question eval set with `eval_retrieval.score`, so the numbers
-line up with retrieval-baseline.md. BGE-M3 uses the vectors already in
-`Laws/main/index/embeddings.npy`, so the baseline costs no API calls.
-
-Each model is used the way its card says:
-  nemotron embedders   input_type "query" / "passage" (asymmetric; honoured by
-                       the API — the same text differs by cosine 0.46-0.73)
-  lfm-2.5-embedding    "query: " / "document: " prefixes (input_type ignored);
-                       512-token input limit, so the 44 longest chunks are cut
-  nemotron reranker    POST /rerank, one request per question (20 documents)
-
-Everything fetched is cached under Laws/experiments/openrouter/ (gitignored),
-so a run stopped by a rate limit resumes where it stopped.
-
-    python scripts/experiments/experiment_openrouter.py --stage embed
-    python scripts/experiments/experiment_openrouter.py --stage rerank --on bge-m3
-    python scripts/experiments/experiment_openrouter.py --stage report
+"""E21: OpenRouter's free embedders and reranker vs BGE-M3 + bge-reranker.
+Caches every result so a run stopped by the daily cap resumes.
 """
 
 from __future__ import annotations

@@ -1,12 +1,4 @@
-"""Retrieved sections -> the `Citation` shape the frontend already renders.
-
-The API contract was written against the mock module and uses display-oriented
-fields (`badge`, `source`, `note`); chunk metadata is provenance-oriented
-(`act_no`, `page_start`, `source_pdf`). This is the one place the two are
-reconciled, so neither side has to learn the other's vocabulary.
-
-Page numbers come from the PDF the text was parsed out of, so a citation and
-the text it cites always come from the same document.
+"""Retrieved sections -> the citation objects the frontend shows.
 """
 
 from __future__ import annotations
