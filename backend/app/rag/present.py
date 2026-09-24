@@ -3,9 +3,8 @@
 Kept separate from `answer.py` so the pipeline has no opinion about presentation
 and the API contract has no opinion about retrieval.
 
-The disclaimer is appended here, from a constant, on every path including
-refusals. That placement is deliberate: the brief requires a disclaimer, and a
-disclaimer produced by the model is one the model can forget to produce.
+No disclaimer is attached to answers: the interface states it once, in the
+"Before you start" notice, rather than repeating it under every reply.
 """
 
 from __future__ import annotations
@@ -15,7 +14,7 @@ import uuid
 from app.models.schemas import (AssistantMessage, BulletsBlock, Citation,
                                 CitationSegment, ParagraphBlock, StrongSegment,
                                 TextSegment)
-from app.rag.answer import DISCLAIMER, Answer
+from app.rag.answer import Answer
 from app.rag import acts
 from app.rag.citations import to_citations
 
@@ -49,7 +48,7 @@ def to_message(a: Answer) -> AssistantMessage:
         blocks.append(_para(TextSegment(text=a.claims[0]["text"])))
         blocks.append(_para(
             TextSegment(text="Source: "),
-            CitationSegment(key=top.key, label=f"s.{top.section}")))
+            CitationSegment(key=top.key, label=f"Section {top.section}")))
     elif a.kind == "outline":
         # Structure, not statutory claims: the lines are titles from the parsed
         # hierarchy, so there is nothing to quote. An enumerated listing does
@@ -105,17 +104,22 @@ def to_message(a: Answer) -> AssistantMessage:
         if a.ambiguous and a.clarification:
             blocks.append(_para(StrongSegment(text="To narrow it down: "),
                                 TextSegment(text=a.clarification)))
-        # The sections that were considered are still shown. A refusal that
-        # explains what it looked at is reviewable; a bare "I don't know" is not.
-        # Each one is named with its act: "s.5" identifies nothing when all three
-        # acts have a section 5.
+        # The sections that were considered are still shown — as citations,
+        # so each one opens its text like any cited section. A refusal that
+        # shows what it looked at is reviewable; a bare "I don't know" is not.
+        # Each is named with its Act: "Section 5" identifies nothing when every
+        # Act has a section 5.
         if a.sources:
-            considered = ", ".join(
-                f"{acts.short_for_name(h.act)} s.{h.section}"
-                for h in a.sources[:5]
-            )
-            blocks.append(_para(TextSegment(
-                text=f"Sections considered and rejected: {considered}.")))
+            shown = a.sources[:5]
+            citations = to_citations(shown)
+            segs = [TextSegment(text="Sections considered and rejected: ")]
+            for i, h in enumerate(shown):
+                if i:
+                    segs.append(TextSegment(text=", "))
+                segs.append(CitationSegment(
+                    key=h.key, label=f"{acts.short_for_name(h.act)}, Section {h.section}"))
+            segs.append(TextSegment(text="."))
+            blocks.append(_para(*segs))
     else:
         top = a.sources[0] if a.sources else None
         heading = a.summary or "Answer"
@@ -131,11 +135,8 @@ def to_message(a: Answer) -> AssistantMessage:
             key = by_key.get(c["section"])
             segs = [TextSegment(text=c["text"] + " ")]
             if key:
-                segs.append(CitationSegment(key=key, label=f"s.{c['section']}"))
+                segs.append(CitationSegment(key=key, label=f"Section {c['section']}"))
             blocks.append(_para(*segs))
-
-    blocks.append(_para(StrongSegment(text="Disclaimer. "),
-                        TextSegment(text=DISCLAIMER)))
 
     # A refused `legal`/`structural` answer is reported as `refused` rather than
     # by the machine that failed: the reader's question was not answered, and

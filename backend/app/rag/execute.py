@@ -243,7 +243,7 @@ EXPLAIN_SYSTEM = (
     "4. Explain only what the text says. Do not add case law, other statutes, "
     "or how courts apply it, and do not answer questions the user did not ask.\n"
     "5. Set sufficient=true: the sections are exactly the ones asked about.\n"
-    "6. Do not add a disclaimer; one is attached automatically."
+    "6. Do not add a disclaimer."
 )
 
 
@@ -334,11 +334,11 @@ def _enumerate(plan: Plan, total: int, rows: list[dict]) -> Answer:
         # is the "five sections disguised as completeness" failure again.
         head += f". Showing the first {len(rows)}"
 
-    # With one Act, "s.1" is unambiguous. With two it is not — both have a
-    # section 1, and an undifferentiated list reads as one Act's numbering.
+    # With one Act, "Section 1" is unambiguous. With two it is not — both have
+    # a section 1, and an undifferentiated list reads as one Act's numbering.
     multi = len(plan.acts) > 1
-    claims = [{"text": (f"{r['act']} s.{r['number']} " if multi
-                        else f"s.{r['number']} ")
+    claims = [{"text": (f"{r['act']}, Section {r['number']}: " if multi
+                        else f"Section {r['number']}: ")
                        + (r["title"] or "(untitled)"),
                "section": str(r["number"]), "quote": ""} for r in rows]
     return Answer(plan.question, refused=False, reason=None, kind="outline",
@@ -523,7 +523,7 @@ DOCUMENT_SYSTEM = (
     "automatically.\n"
     "4. If the provided sections do not cover what is being asked, set "
     "sufficient=false.\n"
-    "5. Do not add a disclaimer; one is attached automatically.\n"
+    "5. Do not add a disclaimer.\n"
     "6. If the user asks you to explain, interpret or break down a provision - by "
     "number, or by pasting its text - do not just repeat it. Explain it element "
     "by element in plain words: what conduct it covers, each condition it "

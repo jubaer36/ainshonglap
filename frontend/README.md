@@ -10,8 +10,9 @@ The UI carries no decorative copy. Text that described sources the corpus does
 not have — "Supreme Court Precedents & Gazettes", "Verified Precedents" — was
 removed rather than reworded: for a tool whose value is that every claim is
 checkable, chrome that overstates its sources is worse than none. The required
-disclaimer is appended server-side to every answer, so it appears where it is
-read instead of permanently under the input box.
+"legal information, not legal advice" disclaimer appears once per conversation,
+under the first answer to a legal question (`lib/disclaimer.ts`), rather than
+under every answer.
 
 ## Features
 
@@ -34,11 +35,13 @@ read instead of permanently under the input box.
   ingestion pipeline (the Docker image), which it reports as `manage: false`. Adding opens a dialog that uploads the
   PDF, shows sampled pages beside what each parser read, and indexes it with
   the parser chosen — the recommended choice follows how cleanly PyMuPDF read
-  the document. The welcome screen and the "Before you start" notice name the
+  the document. Closing it to run in the background leaves a greyed row with
+  the job's status in the list; clicking the row reopens the dialog. The welcome screen and the "Before you start" notice name the
   current Acts from the same list
 - distinct rendering per answer `kind`: quoted sections, chapter listings,
   cited answers, ungrounded general answers, out-of-scope boundaries,
-  clarification questions and refusals
+  clarification questions and refusals. Section pills read "Section 379"; a
+  refusal lists the sections it considered as pills that open their text
 - a provenance badge stating how each answer was produced — quoted verbatim from
   the catalog, cited and checked, or not from the Acts at all
 - page images beside the Ask button: one PNG, JPEG or WebP of **at most 3 MB**

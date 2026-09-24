@@ -28,15 +28,19 @@ The corpus is what is in **`Laws/main/`**. Three **core Acts** are permanent —
 the Code of Criminal Procedure 1898, the Penal Code 1860, and the Evidence Act
 1872 (`config.CORE_ACTS`); nothing may remove them. Other sources are added one
 at a time, deliberately — through the app's add-source review or
-`scripts/ingest_document.py` — and can be removed again. Only the three core
-Acts are loaded right now; the Arms and Police Act PDFs in `Laws/main/` were
-added and removed again.
+`scripts/ingest_document.py` — and can be removed again. Loaded now: the three
+core Acts plus the Arms Act, 1878 (`arms_act`) and the Citizenship Act, 1951
+(`citizenship_act`).
 
 The ~31 other PDFs in `Laws/` are candidates, not corpus, and include duplicate
 copies of acts already in `main/` (a `(bdlaws.minlaw.gov.bd copy)` beside the
 original). Do not glob `Laws/*.pdf` — it would pull in duplicates and material
-nobody chose to add. Everything outside `Laws/main/` is gitignored, including
-`Laws/review/` (parse reviews) and `Laws/removed/` (files of removed sources).
+nobody chose to add.
+
+**`Laws/` is not tracked by git** from the commit that dropped it onward — PDFs,
+parsed JSON, chunks, index and catalog alike. Earlier commits still contain
+`Laws/main/`. A fresh clone therefore has no corpus files; the running app does
+not need them (it reads Supabase), but the pipeline scripts do.
 
 `Laws/bdlaws/bdlaws.jsonl` is an independently scraped copy of all Bangladesh
 acts. It is a **validation oracle only** — never a content source. Statutory

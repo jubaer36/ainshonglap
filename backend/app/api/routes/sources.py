@@ -2,6 +2,7 @@
 
     GET    /api/sources/admin              am I allowed to? (drives the UI)
     POST   /api/sources                    upload a PDF; starts its review
+    GET    /api/sources/jobs               documents still being added, or failed
     GET    /api/sources/jobs/{id}          progress, and the review when ready
     POST   /api/sources/jobs/{id}/choose   {"parser": "pymupdf" | "docling"}
     POST   /api/sources/jobs/{id}/discard  abandon an add before it is indexed
@@ -75,6 +76,16 @@ def add_source(file: UploadFile = File(...), slug: str = Form(...),
     except sources.Refused as exc:
         raise _refused(exc) from exc
     return job.public()
+
+
+@router.get("/jobs")
+def unfinished_jobs(authorization: str | None = Header(None)) -> list[dict]:
+    """Documents still being added (or failed), for the sources list."""
+    from app.ingest import sources
+
+    _admin(authorization)
+    _manageable()
+    return [j.public(with_review=False) for j in sources.unfinished_adds()]
 
 
 @router.get("/jobs/{job_id}")

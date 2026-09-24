@@ -1,9 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AddSourceDialog } from "@/components/sources/AddSourceDialog";
 import { fetchActs, fetchSections } from "@/lib/api";
-import { TERMINAL, getJob, removeSource, type SourceJob } from "@/lib/sources";
+import {
+  TERMINAL, getJob, listUnfinishedJobs, removeSource, type SourceJob,
+} from "@/lib/sources";
 import type { Act, SectionSummary } from "@/lib/types";
 import { invalidateActs } from "@/lib/useActs";
 import { useIsAdmin } from "@/lib/useIsAdmin";
@@ -43,7 +45,12 @@ export function StatuteBrowser({ onActivateCitation }: StatuteBrowserProps) {
   const [unreachable, setUnreachable] = useState(false);
   // Source management — only rendered for admins; the server enforces it.
   const admin = useIsAdmin();
-  const [adding, setAdding] = useState(false);
+  // The add dialog: closed, a new upload, or reopened on a job under way.
+  const [dialog, setDialog] = useState<{ resumeJobId?: string } | null>(null);
+  // Documents still being added (or failed). Shown as rows that cannot be
+  // browsed yet; a click reopens the dialog on that job.
+  const [pending, setPending] = useState<SourceJob[]>([]);
+  const pendingIds = useRef<Set<string>>(new Set());
   const [confirming, setConfirming] = useState<string | null>(null);
   const [removals, setRemovals] = useState<Record<string, SourceJob>>({});
   const [removeError, setRemoveError] = useState<string | null>(null);
@@ -63,6 +70,35 @@ export function StatuteBrowser({ onActivateCitation }: StatuteBrowserProps) {
       .then(setActs)
       .catch(() => setUnreachable(true));
   }, []);
+
+  // A job leaving the unfinished list has finished or been discarded, so the
+  // Act list may have changed.
+  const refreshPending = useCallback(() => {
+    listUnfinishedJobs()
+      .then((list) => {
+        const ids = new Set(list.map((j) => j.id));
+        const left = [...pendingIds.current].some((id) => !ids.has(id));
+        pendingIds.current = ids;
+        setPending(list);
+        if (left) reloadActs();
+      })
+      .catch(() => {
+        /* not an admin, or source management unavailable: no pending rows */
+      });
+  }, [reloadActs]);
+
+  useEffect(() => {
+    if (admin) refreshPending();
+  }, [admin, refreshPending]);
+
+  // Follow jobs that are working. One waiting for its review, or failed, only
+  // changes when someone acts on it in the dialog, which refreshes on close.
+  useEffect(() => {
+    const active = pending.some((j) => ["queued", "reviewing", "building"].includes(j.status));
+    if (!active || dialog) return;
+    const timer = setTimeout(refreshPending, 3000);
+    return () => clearTimeout(timer);
+  }, [pending, dialog, refreshPending]);
 
   // Follow running removals until they finish, then refresh the list.
   useEffect(() => {
@@ -135,7 +171,7 @@ export function StatuteBrowser({ onActivateCitation }: StatuteBrowserProps) {
       {admin && (
         <button
           type="button"
-          onClick={() => setAdding(true)}
+          onClick={() => setDialog({})}
           className="w-full flex items-center gap-1.5 px-2 py-1.5 rounded-lg border border-dashed border-slate-300 text-[11px] text-slate-600 hover:bg-slate-50 hover:text-slate-900"
         >
           <span className="material-symbols-outlined text-[15px]">add</span>
@@ -145,7 +181,10 @@ export function StatuteBrowser({ onActivateCitation }: StatuteBrowserProps) {
       {removeError && (
         <p className="px-1 text-[11px] text-rose-600">{removeError}</p>
       )}
-      {acts.map((act) => {
+      {pending.map((job) => (
+        <PendingRow key={job.id} job={job} onOpen={() => setDialog({ resumeJobId: job.id })} />
+      ))}
+      {acts.filter((act) => !pending.some((j) => j.slug === act.slug)).map((act) => {
         const open = activeAct === act.slug;
         const removal = removals[act.slug];
         const removing = removal && !TERMINAL.includes(removal.status);
@@ -257,12 +296,58 @@ export function StatuteBrowser({ onActivateCitation }: StatuteBrowserProps) {
           </div>
         );
       })}
-      {adding && (
+      {dialog && (
         <AddSourceDialog
-          onClose={() => setAdding(false)}
+          resumeJobId={dialog.resumeJobId}
+          onClose={() => {
+            setDialog(null);
+            refreshPending();
+          }}
           onAdded={reloadActs}
+          onJobStarted={(job) => {
+            pendingIds.current.add(job.id);
+            setPending((current) => [...current.filter((j) => j.id !== job.id), job]);
+          }}
         />
       )}
     </div>
+  );
+}
+
+const PENDING_LABEL: Record<string, { text: string; tone: string }> = {
+  queued: { text: "reading…", tone: "text-slate-400" },
+  reviewing: { text: "reading…", tone: "text-slate-400" },
+  review: { text: "review needed", tone: "text-amber-600" },
+  building: { text: "indexing…", tone: "text-slate-400" },
+  failed: { text: "failed", tone: "text-rose-600" },
+};
+
+/**
+ * A document still being added. Greyed and not browsable — it has no sections
+ * yet — but clickable: it reopens the add dialog on this job, so closing that
+ * dialog to let the job run in the background never loses track of it.
+ */
+function PendingRow({ job, onOpen }: { job: SourceJob; onOpen: () => void }) {
+  const label = PENDING_LABEL[job.status] ?? { text: job.status, tone: "text-slate-400" };
+  const working = ["queued", "reviewing", "building"].includes(job.status);
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      title="Still being added — click to see its progress"
+      className="w-full flex items-center justify-between gap-2 p-2 rounded-lg text-left text-xs text-slate-400 hover:bg-slate-50"
+    >
+      <span className="flex items-center gap-2 min-w-0 flex-1">
+        {working ? (
+          <span className="h-3.5 w-3.5 flex-shrink-0 animate-spin rounded-full border-2 border-slate-200 border-t-slate-500 motion-reduce:animate-none" />
+        ) : (
+          <span className={`material-symbols-outlined text-[16px] flex-shrink-0 ${label.tone}`}>
+            {job.status === "failed" ? "error" : "rate_review"}
+          </span>
+        )}
+        <span className="truncate italic">{job.name}</span>
+      </span>
+      <span className={`font-mono text-[10px] flex-shrink-0 ${label.tone}`}>{label.text}</span>
+    </button>
   );
 }

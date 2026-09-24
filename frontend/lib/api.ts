@@ -383,6 +383,22 @@ function normalizeSectionSummary(raw: Record<string, unknown>): SectionSummary {
 
 // The backend's Pydantic models serialize as snake_case; the frontend types
 // are camelCase. This is the single conversion point.
+/**
+ * Answers used to end with a "Disclaimer." paragraph; it is now shown once, in
+ * the "Before you start" notice. Conversations stored before that still carry
+ * the paragraph, so it is dropped here too and old and new answers look alike.
+ */
+function withoutDisclaimer(blocks: AssistantMessage["blocks"]): AssistantMessage["blocks"] {
+  return (blocks ?? []).filter(
+    (block) =>
+      !(
+        block.type === "paragraph" &&
+        block.segments[0]?.type === "strong" &&
+        block.segments[0].text.trim().startsWith("Disclaimer")
+      ),
+  );
+}
+
 export function normalizeAssistantMessage(raw: Record<string, unknown>): AssistantMessage {
   return {
     id: raw.id as string,
@@ -403,7 +419,7 @@ export function normalizeAssistantMessage(raw: Record<string, unknown>): Assista
     memoryPending: Boolean(raw.memory_pending),
     notice: (raw.notice as string) ?? null,
     suggestedModel: (raw.suggested_model as string) ?? null,
-    blocks: raw.blocks as AssistantMessage["blocks"],
+    blocks: withoutDisclaimer(raw.blocks as AssistantMessage["blocks"]),
     citations: raw.citations as AssistantMessage["citations"],
     references: ((raw.references as Record<string, unknown>[]) ?? []).map(normalizeReference),
     quickActions: ((raw.quick_actions as Record<string, unknown>[]) ?? []).map(

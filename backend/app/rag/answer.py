@@ -21,8 +21,7 @@ present. So refusal here is not left to the prompt:
 The last one is the only part that does not depend on the model's own judgement,
 which is why it is the part that is not optional.
 
-The disclaimer is added by `to_message()` from a constant, never by the model.
-A disclaimer the generator emits is one the generator can omit.
+No disclaimer is attached to answers; the interface shows one, once.
 """
 
 from __future__ import annotations
@@ -36,11 +35,6 @@ from app.rag.pipeline import Retrieved, retrieve
 from app.rag.refine import Refined, extract_scope, parse_citation, refine
 from app.rag.citations import strip_prefix
 from app.rag.verify import VerifiedAnswer, check_claims
-
-DISCLAIMER = (
-    "This is legal information drawn from the text of the Acts, not legal "
-    "advice. For advice on a specific situation, consult a qualified lawyer."
-)
 
 SYSTEM = (
     "You are a legal information assistant for Bangladesh criminal law. You are "
@@ -60,7 +54,7 @@ SYSTEM = (
     "answer every reading with its own claims, set ambiguous=true, and say in "
     "`clarification` what would pin it down. Only set sufficient=false when the "
     "answer is absent, never when it is merely split across several sections.\n"
-    "5. Do not add a disclaimer; one is attached automatically.\n"
+    "5. Do not add a disclaimer.\n"
     "6. If the user asks you to explain, interpret or break down a provision - by "
     "number, or by pasting its text - do not just repeat it. Explain it element "
     "by element in plain words: what conduct it covers, each condition it "
@@ -231,7 +225,7 @@ def lookup_answer(question: str, ref: Refined | None) -> Answer | None:
     if not found:
         return None
     if len(found) > 1:
-        names = ", ".join(f"{r['act']} s.{number}" for r in found)
+        names = ", ".join(f"{r['act']}, Section {number}" for r in found)
         return Answer(question, refused=True, refined=ref,
                       reason=f"section {number} exists in more than one Act "
                              f"({names}) — name the Act")
@@ -406,7 +400,7 @@ def browse_answer(question: str, ref: Refined | None, limit: int = 60,
         for sec in c["sections"]:
             if shown >= limit:
                 break
-            claims.append({"text": f"  s.{sec['section']} "
+            claims.append({"text": f"  Section {sec['section']}: "
                                    f"{sec['title'] or '(untitled)'}",
                            "section": sec["section"], "quote": ""})
             shown += 1
