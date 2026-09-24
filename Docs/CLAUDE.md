@@ -5,20 +5,26 @@ section-level citations.
 
 ## Read these, in this order
 
-- **`entry-assessment.md`** — the actual task. This is the project brief: what
-  is being built, what the deliverables are, how it will be judged. Treat it as
-  the spec.
-- **`plan.md`** — the pipeline steps and which one is current.
-- **`progress.md`** — what has been built so far, and why.
+All paths are relative to `Docs/`.
 
-Supporting detail, read only when working on that area:
+- **`notes/entry-assessment.md`**: the actual task. This is the project brief:
+  what is being built, what the deliverables are, how it will be judged. Treat
+  it as the spec.
+- **`notes/plan.md`**: the pipeline steps and which one is current.
+- **`notes/progress.md`**: what has been built so far, and why.
+
+Public docs, linked from the README: `architecture.md` (architecture and
+technology choices), `ingestion.md` (adding a document, step by step),
+`experiments-summary.md` and `experiments.md` (every experiment; read before
+re-testing something).
+
+Working notes in `notes/`, read only when working on that area:
 `parsing-plan.md` (parser options tested and the decision),
 `chunking-plan.md` (chunking options and the decision),
 `retrieval-plan.md` (embedder and retrieval options and the decision),
 `retrieval-baseline.md` (measured retrieval numbers),
 `generation-plan.md` (answer generation, citation enforcement, abstention options),
 `query-routing-plan.md` (model-authored plans, SQLite catalog, broad coverage),
-`experiments.md` (experiment log — read before re-testing something),
 `similar-projects.md` (what comparable repos chose at each stage),
 `verification.md` (how parsing and chunking are checked).
 

@@ -7,131 +7,221 @@ When the Acts do not support an answer, it says so instead of guessing.
 
 > Legal information, not legal advice.
 
+**Live demo: https://ainshonglap.onrender.com/**
+
+It runs on Render's free tier, which puts the backend to sleep when idle. The
+first visit wakes it up, and that takes about a minute. If the model list or
+the Acts show as unavailable, wait a minute and reload.
+
 ## Run it
 
-You need Python 3.12 (conda), Node 22, a Supabase project, and Groq and
-OpenRouter API keys.
-
-**1. Backend**
+You need conda, Node 20.9+, a Supabase project, and Groq and OpenRouter API keys. From the
+repository root:
 
 ```bash
-conda create -n ainshonglap python=3.12 && conda activate ainshonglap
-cd backend
-pip install -r requirements.txt
-cp .env.example .env.local        # fill in the keys (see below)
-uvicorn app.main:app --reload     # http://localhost:8000  (/docs, /health)
+./run_backend.sh      # http://localhost:8000
+./run_frontend.sh     # http://localhost:3000
+./run_docker.sh       # optional: the backend in Docker instead
 ```
 
-**2. Frontend**
+The first run creates `backend/.env.local` from the example. Fill in the keys
+and run it again.
+
+**Keys** go in `backend/.env.local` (see `backend/.env.example`):
+
+| | keys |
+|---|---|
+| Required | `GROQ_API_KEY`, `OPENROUTER_API_KEY` (search), `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` |
+| More Groq capacity | `GROQ_API_KEY_2`, `_3`, `GROQ_API_KEY_PLANNER`, `GROQ_API_KEY_SUMMARIZER`, `GROQ_API_KEY_FALLBACK` |
+| Features | `OPENROUTER_API_KEY_2`, `DEEPGRAM_API_KEY` (voice), `GEMINI_API_KEY_3` (conversation names), `ADMIN_EMAILS` (who can add sources) |
+
+## Basic architecture
+
+```mermaid
+flowchart TD
+    User([You]) -->|"question, voice or photo"| FE["Frontend<br/>Next.js"]
+    FE --> P["Planner<br/>what kind of question is this?"]
+
+    P -->|"names a section, chapter or Act"| C[("Catalog<br/>exact lookup")]
+    P -->|"describes a situation"| S["Meaning search<br/>find the closest sections, rerank"]
+    P -->|"small talk, or law we don't hold"| D["Short reply<br/>no citations"]
+
+    S --> V[("Vectors")]
+    C --> G["Generator<br/>writes the answer from those sections only"]
+    V --> G
+    G --> K{"Is every quote<br/>really in its section?"}
+    K -->|"yes"| A["Answer with citations"]
+    K -->|"no"| R["Point dropped;<br/>if none left, it says it can't answer"]
+
+    subgraph DB["Supabase"]
+        C
+        V
+    end
+
+    subgraph Add["Adding a law (once per document)"]
+        PDF["PDF"] --> Parse["Split into sections<br/>and check against the PDF"] --> Emb["Split into chunks<br/>and embed"]
+    end
+    Emb --> DB
+```
+
+1. **You ask.** Type a question, speak it, or send a photo of a page. Voice and
+   photos are turned into text that you check before sending.
+2. **The planner reads it** and decides what kind of question it is. It never
+   writes the answer; it only says where to look.
+3. **The right sections are fetched.** A named section ("section 302") is looked
+   up exactly. A situation ("someone broke into my shop") goes to meaning
+   search, which finds the closest sections and puts the best first. Small talk,
+   or a law the app doesn't hold, gets a short reply with no citations.
+4. **The answer is written from those sections only.** Every point names its
+   section and quotes it.
+5. **Every quote is checked** against the section's real text. A point whose
+   quote isn't there is dropped. If nothing is left, the app says it can't
+   answer instead of guessing.
+6. **Follow-ups work** because a short summary of the conversation is kept and
+   sent with the next question.
+
+**Adding a law** happens once per document: the PDF is split into sections,
+checked against the PDF, cut into chunks, embedded, and stored in Supabase. The
+app picks it up within a minute, without a restart.
+Can only be done by admin
+
+Every step of adding a document, with a diagram, is in
+[Docs/ingestion.md](Docs/ingestion.md).
+
+**Built with:** Next.js (frontend), FastAPI (backend), Supabase (Postgres +
+pgvector, optional accounts), Groq `gpt-oss-120b` (planner and answers),
+nemotron-3-embed on OpenRouter (search; no model runs locally), Groq
+qwen3.8-27b (reading page images).
+
+For the detailed architecture (the exact model, database and service at each
+step) and why each technology was chosen over the alternatives, see
+[Docs/architecture.md](Docs/architecture.md).
+
+## Main features
+
+- **Answers with checked citations**: every point quotes its section, and code
+  checks the quote is really in it; points that fail are dropped.
+  `backend/app/rag/verify.py`
+- **Exact lookups and meaning search**: a planner decides whether you named a
+  section (fetched exactly) or described a situation (searched by meaning).
+  `backend/app/rag/plan.py`, `execute.py`, `catalog.py`
+- **Explains a section on request**: "explain section 302" breaks it into its
+  parts (what it covers, conditions, punishment, exceptions), each quoted.
+  `backend/app/rag/execute.py`
+- **Honest refusals**: if the Acts don't cover a question it says so, and shows
+  the sections it looked at as clickable previews. `backend/app/rag/present.py`
+- **Remembers the conversation**: a short summary plus the last question and
+  answer, updated after each answer without slowing it down.
+  `backend/app/rag/memory.py`, `pending_memory.py`
+- **Voice and photo input**: speech (Deepgram) or a photo of a page becomes
+  text you check before sending. `backend/app/rag/speech.py`, `vision.py`
+- **Add and remove laws from the app** (admins): upload a PDF, compare two
+  parsers on sample pages, pick one; it is indexed in the background and live
+  within a minute. `backend/app/ingest/sources.py`, `frontend/components/sources/`
+- **Several models, never stuck**: pick the answer model; API keys rotate, and
+  every model call has a fallback. `backend/app/rag/llm.py`, `keyring.py`, `quota.py`
+- **Optional accounts**: guests store nothing; signed-in users get saved,
+  auto-named conversations, each visible only to its owner.
+  `backend/app/db/conversations.py`, `backend/app/rag/naming.py`
+- **Laws served from Supabase**: Postgres for exact lookups, pgvector for
+  search, with local copies as a logged fallback. `backend/app/rag/corpus_db.py`
+
+**More detail:**
+[architecture and technology choices](Docs/architecture.md) ·
+[adding a document, step by step](Docs/ingestion.md) ·
+[experiments summary](Docs/experiments-summary.md) ·
+[full experiment log](Docs/experiments.md) ·
+[how AI was used](AI_USAGE.md)
+
+## Evaluation
+
+The system was checked in three ways.
+
+**1. Retrieval, against known answers.** The Bangladesh legal QA dataset
+(`Laws/bangladesh-legal-qa-dataset`, not in the repository) has 2,165 questions,
+each tagged with the Act and section that answers it. Questions answered by an
+Act this app doesn't hold were left out, leaving **608 questions**. For each
+one, the retrieved sections were compared with the expected section:
+
+- was the right section found?
+- how high was it ranked?
+- did the top result come from the right Act?
+
+Retrieval was scored on all 608 questions. Checking the full written answers
+needs several model calls per question, and the free API daily limits made that
+impossible for the whole set; one OpenRouter search combination also stopped at
+119 of 608. The separate `bdlaws.jsonl` copy of the Acts was used to check the
+parsed law text, not the answers.
 
 ```bash
-cd frontend
-cp .env.example .env.local        # NEXT_PUBLIC_SUPABASE_URL / _ANON_KEY
-npm install
-npm run dev                       # http://localhost:3000
+cd backend && python scripts/eval_retrieval.py
 ```
 
-**First time only — load the laws into Supabase.** The `Laws/` folder is not in
-the repository (earlier commits contain `Laws/main/`); put the corpus files in
-`Laws/main/` first. In the Supabase SQL editor run `backend/db/schema.sql`, then
-each file in `backend/db/migrations/` in order. Then, from `backend/`:
+**2. The planner, question type by question type.** The planner sorts each
+question into a type (a named section, a situation, a document, small talk, a
+law the app doesn't hold, a question about the app). Several questions were
+written for each type and checked to see that each went to the right type:
+about 40 in a graded set (`scripts/experiments/plan_cases.py`) and 15 walked
+through step by step and read by hand (`scripts/check_questions.py`).
 
-```bash
-python scripts/load_supabase.py --all
-python scripts/load_supabase.py --embedder nemotron-3-embed --all
-```
+**3. A law student's review.** After deployment, a law student from the
+University of Dhaka used the live app. The answers quoted the Acts word for word
+and nothing wrong was found; the main limit was the small number of Acts it has
+in its source index.
 
-**Keys** (`backend/.env.local`): `GROQ_API_KEY`, `OPENROUTER_API_KEY` (search)
-and `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` are required. The rest are
-optional — each one turns on a feature or gives a job its own quota:
-`GROQ_API_KEY_2`/`_3`, `GROQ_API_KEY_PLANNER`, `GROQ_API_KEY_SUMMARIZER`,
-`GROQ_API_KEY_FALLBACK`, `OPENROUTER_API_KEY_2`, `GEMINI_API_KEY_3`
-(conversation names), `DEEPGRAM_API_KEY` (voice), `ADMIN_EMAILS`.
+## Experiments and results
 
-**Or run the backend in Docker** (~435 MB, ~90 MB of memory; no models inside):
+20 experiments are documented. More were run than that: model speed tests,
+the parser comparisons (8 PDF parsers tried) and the chunking trials were not
+all written up as experiments. A change was kept only if it improved a measured
+number. How the documented ones shaped the current system:
 
-```bash
-docker build -f backend/Dockerfile -t ainshonglap-backend:deployable .
-docker run -d --name ainshonglap-api -p 8000:8080 \
-  --env-file backend/.env.local ainshonglap-backend:deployable
-```
+- **Search (8 experiments).** Chunk size and chunk headings made no difference.
+  A reranker was the first clear win, and indexing subsections as well as
+  sections found more. A low-score refusal threshold was tested and dropped as
+  too costly. Free OpenRouter models were then tested and two beat the local
+  pipeline, so they became options (the deployed site uses one).
+- **Answering (5).** A model without retrieval invented law, so retrieval and
+  quote-checked citations are mandatory. Groq was chosen for speed and a strict
+  answer format; Mercury was slower here. One traced refusal showed the answer
+  prompt is too strict for "am I guilty if…" questions.
+- **Planning and data (5).** An exact-lookup catalog was built for named
+  sections and chapters. A planner model replaced pattern matching (42 of 42
+  test questions routed right), moved to its own key, and learned to handle two
+  Acts in one question. Moving the laws to Supabase changed no result.
+- **Memory and voice (2).** Both work in use; memory moved off Gemini after its
+  calls took up to a minute.
 
-## How it works
+Each experiment's purpose and result: [Docs/experiments-summary.md](Docs/experiments-summary.md).
 
-```text
-question
-  -> planner (LLM, strict JSON): what kind of question, and where to look
-  -> validated against the catalog — unknown sections return nothing, never a guess
-  -> exact fetch by section / chapter / Act   OR   meaning search (OpenRouter)
-  -> generator (LLM): answer as claims, each with a section and a quote
-  -> every quote must appear word for word in the cited section, or is dropped
-  -> answer with citations, or a refusal
-```
+## Limitations and future improvements
 
-- **Laws**: parsed from the PDFs into sections, checked against the PDFs and an
-  independent copy of the Acts, stored in Supabase (Postgres + pgvector). Local
-  copies are a logged fallback.
-- **Search**: nemotron-3-embed on OpenRouter, exact search over the stored
-  vectors. No model runs locally. If OpenRouter is down or out of daily quota,
-  meaning search says so; exact section lookups still work.
-- **Models**: Groq `gpt-oss-120b` plans and answers by default; others can be
-  picked in the UI. Every model call has a fallback on its own key.
-- **Voice and images**: speech (Deepgram) or a photo of a page (Groq
-  `qwen3.8-27b`, max 3 MB) becomes text you check before sending.
-- **Stack**: FastAPI backend, Next.js frontend, optional Supabase accounts
-  (guests store nothing).
+**Limitations**
 
-## Adding a document
+- **Slow answers.** One question makes several model calls (planner, search,
+  answer, memory), so answers take a few seconds or more.
+- **Hard-to-parse PDFs.** Law PDFs vary a lot in layout, so reading them into
+  clean sections, and splitting those into good chunks, is difficult for new
+  documents.
+- **No Bangla support.** Bangla laws are not included, and voice input doesn't
+  handle Bangla (or Bangla mixed with English).
+- **Free-tier limits.** Daily API limits cap how many questions, page images and
+  voice clips can be processed; images are one page and at most 3 MB.
+- **General-purpose models.** The answering models are not trained on law, and
+  only a handful of Acts are loaded.
 
-In the app (admins): upload a PDF, compare four sample pages with what each
-parser read (PyMuPDF for numbered statutes, Docling for anything else), pick
-one. It is parsed, indexed and live within a minute — no restart. Or:
+**Future improvements**
 
-```bash
-python scripts/ingest_document.py --pdf "Laws/main/The Arms Act, 1878.pdf" \
-    --slug arms --name "The Arms Act, 1878" --act-no "XI of 1878"
-python scripts/remove_act.py --act arms
-```
+- Fine-tune a model on Bangladesh law, or use a legal-specific model, for
+  better answers.
+- Replace the planner with a small model fine-tuned for sorting questions, for
+  much lower latency.
+- Add Bangla laws and Bangla voice input.
+- Improve parsing and chunking for PDFs with unusual layouts.
 
-The three core Acts cannot be removed.
+## AI usage
 
-## Evaluation and results
-
-Retrieval is scored on 608 external questions with known answers
-(`Laws/bangladesh-legal-qa-dataset`): did the right section come back, and from
-the right Act.
-
-```bash
-python scripts/eval_retrieval.py --split single_hop   # 222 OpenRouter requests; all 608 without --split
-```
-
-| retrieval | R@1 | R@5 | R@20 | right Act |
-|---|---|---|---|---|
-| `nemotron-embed` (default) | **48.4%** | **75.0%** | **86.5%** | 88.5% |
-| local BGE-M3 + reranker (on `main`, for comparison) | 41.8% | 59.0% | 71.4% | 87.5% |
-
-Each question costs one OpenRouter request (free tier: 1,000 a day per account
-with credits, 50 without). `RAG_RETRIEVAL=nemotron-embed+rerank` adds the
-Nemotron reranker (a second request; no gain measured on 119 questions).
-±3.7 points is noise at this size. Every experiment — including the ones that
-did nothing — is in `experiments.md`.
-
-## Limitations
-
-- The three core Acts plus the Arms Act, 1878 and the Citizenship Act, 1951 are
-  loaded; no amendments or case law. Retrieval was measured on the core three.
-- A question raising two legal issues can come back with sections for only one.
-- Answers that need reasoning from a rule to its consequence ("if I can't prove
-  I'm innocent, am I guilty?") are refused even when the right sections are found.
-- The CrPC Second Schedule (bailable / cognizable) is not in the corpus.
-- Answer quality is not measured yet — only retrieval is.
-
-Next steps: `plan.md`.
-
-## More detail
-
-- `backend/API.md` — endpoints and configuration
-- `plan.md` / `progress.md` — what is next / what is built
-- `experiments.md` — every experiment and result
-- `parsing-plan.md`, `chunking-plan.md`, `retrieval-plan.md`,
-  `generation-plan.md`, `query-routing-plan.md` — design decisions
+AI (mainly Claude Code with Claude Sonnet 5) was used for research and for
+writing most of the code; every choice was tested before it was kept. What
+it was used for, how its output was checked, and which of its suggestions
+were rejected: [AI_USAGE.md](AI_USAGE.md).
