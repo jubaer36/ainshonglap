@@ -60,10 +60,6 @@ function blockToText(block: ContentBlock): string {
  * Citations are kept inline and the sources are listed underneath with their
  * section text, because an answer's value here is that every claim points at a
  * provision — stripped of that it is just confident prose.
- *
- * The disclaimer travels with it for the same reason it is appended
- * server-side: legal information leaving this window should not shed the note
- * that it is not legal advice.
  */
 export function assistantMessageToText(message: AssistantMessage): string {
   const parts: string[] = [];

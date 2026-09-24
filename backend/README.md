@@ -185,7 +185,7 @@ inside the pipeline would surface as a false refusal. Requests pin
 
 ## Current limitations
 
-- only the three core Acts are loaded; retrieval metrics describe them
+- the three core Acts plus the Arms Act and the Citizenship Act are loaded; retrieval metrics describe the core three
 - a Docling-parsed source is cited as "Section N", not "Passage N" — the catalog does not record document type yet
 - `refine.py` (the old router, `RAG_PLAN=0` only) and `verify_parsed.py` still know only the core Acts
 - legal generation sees eight reranked sections, limiting broad coverage

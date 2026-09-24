@@ -97,6 +97,11 @@ export async function uploadSource(input: {
   return call<SourceJob>("/api/sources", { method: "POST", body: form, headers: await headers() });
 }
 
+/** Documents still being added, or failed — for the pending rows in the list. */
+export async function listUnfinishedJobs(): Promise<SourceJob[]> {
+  return call<SourceJob[]>("/api/sources/jobs", { headers: await headers() });
+}
+
 export async function getJob(id: string): Promise<SourceJob> {
   return call<SourceJob>(`/api/sources/jobs/${id}`, { headers: await headers() });
 }

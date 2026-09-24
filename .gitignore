@@ -4,8 +4,8 @@
 # Note: git will not descend into an ignored directory, so the directory itself
 # has to be un-ignored before anything inside it can be.
 Laws/*
-!Laws/*.md
-!Laws/main/
+# !Laws/*.md
+# !Laws/main/
 
 # OS junk
 .DS_Store
@@ -60,10 +60,10 @@ backend/scripts/*_out/
 # write so an interrupted run resumes. Large, derived, and reproducible from the
 # index — unlike the *_results.json files, which are the measured findings that
 # experiments.md cites and are tracked deliberately.
-Laws/main/index/abstention_ctx_k*.json
-Laws/main/index/threshold_scores_k*.json
-Laws/main/index/refine_cache_*.json
-Laws/main/index
+# Laws/main/index/abstention_ctx_k*.json
+# Laws/main/index/threshold_scores_k*.json
+# Laws/main/index/refine_cache_*.json
+# Laws/main/index/*
 
 
 

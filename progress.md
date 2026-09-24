@@ -6,9 +6,9 @@ What is built, and why. Measurements: `experiments.md`. Next: `plan.md`.
 
 | | |
 |---|---|
-| Corpus | 3 core Acts — CrPC 1898 (508 sections), Penal Code 1860 (557), Evidence Act 1872 (182). Others can be added from the app |
-| Storage | Supabase (Postgres + pgvector); local SQLite + FAISS as a logged fallback |
-| Retrieval | 3 profiles — best R@1 50.8%, best R@20 86.5% (E21) |
+| Corpus | 3 core Acts — CrPC 1898 (508 sections), Penal Code 1860 (557), Evidence Act 1872 (182) — plus the Arms Act, 1878 and the Citizenship Act, 1951, added from the app. `Laws/` is no longer tracked in git |
+| Storage | Supabase (Postgres + pgvector); local SQLite + a vector file as a logged fallback |
+| Retrieval | nemotron-3-embed on OpenRouter, no local model — R@1 48.4%, R@20 86.5% (E21) |
 | Answers | Planner → validated fetch → cited claims → quote check → answer or refusal |
 | App | FastAPI + Next.js; voice, images, memory, optional accounts, admin-managed sources |
 | Deploy | CPU Docker image (~6 GB), GCP Cloud Run plan |
@@ -89,6 +89,9 @@ in their own Supabase table next to BGE-M3's (1024-dim).
   picks. The statute parser silently fails on non-statutes, so it is a choice,
   not a guess.
 - Only new text is embedded; the app picks the change up within a minute.
+- A document being added shows in the sources list as a greyed row with its
+  status (reading, review needed, indexing, failed); clicking it reopens the
+  dialog, so closing it to run in the background never loses track of it.
 - The Docker image cannot run the pipeline, so there the controls are hidden
   and the API answers 503.
 
@@ -103,7 +106,15 @@ local files answer, logged.
 
 Responsive from phone to laptop, with resizable side panels. The input grows
 with its text. Answer types look different (clarify, out-of-scope, refusal).
+<<<<<<< HEAD
 Voice gives a transcript to check, never an automatic answer. The name is
+=======
+Sections are labelled "Section 379", and a refusal lists the sections it
+considered as clickable previews. The "not legal advice" disclaimer appears
+once per conversation, under the first answer to a legal question.
+Voice and page images (Groq qwen3.8-27b, max 3 MB) give text to check, never an
+automatic answer. The name is
+>>>>>>> c4cefef (UI update for disclaimers and other sections)
 আইনসংলাপ throughout.
 
 ## Known gaps

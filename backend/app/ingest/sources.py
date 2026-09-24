@@ -128,6 +128,21 @@ def get(job_id: str) -> Job | None:
     return _jobs.get(job_id)
 
 
+def unfinished_adds() -> list[Job]:
+    """Add jobs a person may still need to see: running, waiting for the parser
+    review, or failed and not yet discarded. Oldest first.
+
+    This is what lets the sources list show a document that is still being
+    added, and reopen its dialog, after that dialog was closed to let it run in
+    the background. In memory, like the jobs: a restart forgets them.
+    """
+    with _lock:
+        jobs = list(_jobs.values())
+    return sorted((j for j in jobs if j.kind == "add"
+                   and j.status not in ("done", "discarded")),
+                  key=lambda j: j.created)
+
+
 def _submit(job: Job, fn) -> Job:
     with _lock:
         _jobs[job.id] = job

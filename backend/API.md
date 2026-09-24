@@ -26,6 +26,7 @@ RAG_WARMUP=0 uvicorn app.main:app --reload   # skip model load (corpus endpoints
 | PATCH | `/api/conversations/{id}` | rename one |
 | GET | `/api/sources/admin` | may the caller manage sources? |
 | POST | `/api/sources` | upload a PDF; starts its review (admin) |
+| GET | `/api/sources/jobs` | documents still being added, or failed — the sources list shows each as a pending row that reopens its dialog (admin) |
 | GET | `/api/sources/jobs/{id}` | job progress, and the review when ready (admin) |
 | POST | `/api/sources/jobs/{id}/choose` | `{"parser": "pymupdf"\|"docling"}` — index it (admin) |
 | POST | `/api/sources/jobs/{id}/discard` | abandon an add before indexing (admin) |
@@ -130,7 +131,7 @@ grounded answer", which makes "which Act did you mean?" indistinguishable from
 | `general` | false | 0 | **not** a legal question; the model's own knowledge, uncited and unchecked |
 | `out_of_scope` | true | 0 | a legal question about law outside the Acts held. Nothing was searched. |
 | `clarify` | true | 0 | the request needs one more detail — an ambiguous section number, a subjective selection |
-| `refused` | true | 0 | retrieval ran and nothing survived the citation gates |
+| `refused` | true | 0–5 | retrieval ran and nothing survived the citation gates; the sections it considered are listed as citations, so each can be opened |
 
 `out_of_scope` is kept apart from `general` deliberately. Answering "what does
 the Dowry Prohibition Act say" from the model's own knowledge would be an
@@ -150,8 +151,9 @@ text (`app/rag/verify.py`):
 - **C3** the quoted span appears verbatim in that section
 
 Claims failing either are dropped. If none survive, the answer becomes a
-refusal. The disclaimer is appended server-side from a constant, on every path,
-so the model cannot omit it.
+refusal. Answers carry no disclaimer from the API: the frontend adds it once
+per conversation, under the first answer to a legal question (not small talk,
+`meta`, `out_of_scope` or `clarify`).
 
 ### GET `/api/plan?q=...`
 

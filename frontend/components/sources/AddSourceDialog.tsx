@@ -11,6 +11,11 @@ interface AddSourceDialogProps {
   onClose: () => void;
   /** Called once when the source is indexed, so lists can refresh. */
   onAdded: () => void;
+  /** Reopen a job already under way (from its row in the sources list)
+   *  instead of starting a new upload. */
+  resumeJobId?: string;
+  /** Called when an upload creates a job, so the list can show it at once. */
+  onJobStarted?: (job: SourceJob) => void;
 }
 
 /**
@@ -28,7 +33,7 @@ interface AddSourceDialogProps {
  * inside the sidebar it inherited the sidebar's stacking layer, and the input
  * dock showed through the backdrop.
  */
-export function AddSourceDialog({ onClose, onAdded }: AddSourceDialogProps) {
+export function AddSourceDialog({ onClose, onAdded, resumeJobId, onJobStarted }: AddSourceDialogProps) {
   const [file, setFile] = useState<File | null>(null);
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
@@ -39,6 +44,14 @@ export function AddSourceDialog({ onClose, onAdded }: AddSourceDialogProps) {
   const [busy, setBusy] = useState(false);
   const reported = useRef(false);
   const inBrowser = useSyncExternalStore(noop, () => true, () => false);
+
+  // Reopened from the sources list: pick the job up where it is — reading,
+  // waiting for the review, indexing, or failed.
+  useEffect(() => {
+    if (!resumeJobId) return;
+    getJob(resumeJobId).then(setJob).catch((e: Error) => setError(e.message));
+  }, [resumeJobId]);
+  const resuming = Boolean(resumeJobId) && !job && !error;
 
   // Poll until the job needs a person (review) or has finished.
   useEffect(() => {
@@ -83,6 +96,7 @@ export function AddSourceDialog({ onClose, onAdded }: AddSourceDialogProps) {
   const status = job?.status;
   const reviewing = status === "review" && job?.review;
   const step = !job ? 0 : status === "done" ? 3 : status === "building" ? 2 : 1;
+  const uploading = !job && !resuming && !resumeJobId;
   const working = Boolean(job && !TERMINAL.includes(job.status) && status !== "review");
 
   const body = (
@@ -104,13 +118,13 @@ export function AddSourceDialog({ onClose, onAdded }: AddSourceDialogProps) {
           <div className="min-w-0 space-y-3">
             <div>
               <h2 id="add-source-title" className="font-serif text-lg font-semibold text-slate-900">
-                {job ? job.name : "Add a source"}
+                {job ? job.name : resumeJobId ? "Loading…" : "Add a source"}
               </h2>
               <p className="text-[13px] text-slate-500">
-                {!job && "Upload a PDF. You check a few of its pages before anything is added."}
+                {uploading && "Upload a PDF. You check a few of its pages before anything is added."}
                 {reviewing && "Compare each page with what the two parsers read from it, then pick one."}
-                {(status === "queued" || status === "reviewing") && "Reading the document. The pages to check appear here in a moment."}
-                {status === "building" && "Indexing. You can close this; it keeps going on the server."}
+                {(status === "queued" || status === "reviewing") && "Reading the document. You can close this — it stays in the sources list, and a click there reopens it."}
+                {status === "building" && "Indexing. You can close this — it keeps going, and its row in the sources list reopens it."}
                 {status === "done" && "Added. It can be searched and cited now."}
                 {status === "failed" && "This didn't finish. Nothing half-added is left behind."}
                 {status === "discarded" && "Discarded. Nothing was added."}
@@ -134,7 +148,14 @@ export function AddSourceDialog({ onClose, onAdded }: AddSourceDialogProps) {
             <p className="mb-4 rounded-lg bg-rose-50 px-3 py-2 text-[13px] text-rose-800">{error}</p>
           )}
 
-          {!job && (
+          {resuming && (
+            <div className="flex items-center gap-3 text-[13px] text-slate-600">
+              <span className="h-5 w-5 flex-shrink-0 animate-spin rounded-full border-2 border-slate-200 border-t-slate-800 motion-reduce:animate-none" />
+              Loading its progress…
+            </div>
+          )}
+
+          {uploading && (
             <UploadForm
               file={file} name={name} slug={slug} actNo={actNo}
               onFile={(f) => {
@@ -183,7 +204,7 @@ export function AddSourceDialog({ onClose, onAdded }: AddSourceDialogProps) {
         </div>
 
         <footer className="flex flex-wrap items-center justify-end gap-2 border-t border-slate-100 px-5 py-3">
-          {!job && (
+          {uploading && (
             <>
               <button type="button" onClick={onClose}
                 className="rounded-lg px-3 py-2 text-[13px] text-slate-600 hover:bg-slate-100">
@@ -192,7 +213,14 @@ export function AddSourceDialog({ onClose, onAdded }: AddSourceDialogProps) {
               <button
                 type="button"
                 disabled={busy || !file || !name.trim() || !/^[a-z][a-z0-9_]{1,30}$/.test(slug)}
-                onClick={() => file && run(() => uploadSource({ file, slug, name, actNo }))}
+                onClick={() =>
+                  file &&
+                  run(async () => {
+                    const started = await uploadSource({ file, slug, name, actNo });
+                    onJobStarted?.(started);
+                    return started;
+                  })
+                }
                 className="rounded-lg bg-slate-900 px-4 py-2 text-[13px] font-medium text-white hover:bg-slate-800 disabled:bg-slate-300"
               >
                 {busy ? "Uploading…" : "Upload and review"}
@@ -223,7 +251,7 @@ export function AddSourceDialog({ onClose, onAdded }: AddSourceDialogProps) {
             </button>
           )}
 
-          {status === "building" && (
+          {working && (
             <button type="button" onClick={onClose}
               className="rounded-lg px-3 py-2 text-[13px] text-slate-600 hover:bg-slate-100">
               Close — keep it running

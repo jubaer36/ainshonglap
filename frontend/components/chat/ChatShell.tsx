@@ -21,6 +21,7 @@ import { Sidebar } from "../layout/Sidebar";
 import { FirstTimeNotice } from "./FirstTimeNotice";
 import { InputDock } from "./InputDock";
 import { MessageAssistant } from "./MessageAssistant";
+import { disclaimerMessageId } from "@/lib/disclaimer";
 import { MessageUser } from "./MessageUser";
 import { SuggestedQuestions } from "./SuggestedQuestions";
 import { ThinkingBubble } from "./ThinkingBubble";
@@ -438,6 +439,8 @@ export function ChatShell() {
   // that followed it would still describe the answer it replaced. `canRetry`
   // stays the transient "not while a request is in flight" guard.
   const lastMessageId = messages[messages.length - 1]?.id ?? null;
+  // The first answer to a legal question carries the disclaimer, once.
+  const disclaimerId = disclaimerMessageId(messages);
 
   return (
     <div className="flex-1 flex flex-col h-full min-h-0">
@@ -509,6 +512,7 @@ export function ChatShell() {
                         : undefined
                     }
                     canRetry={!loading}
+                    showDisclaimer={message.id === disclaimerId}
                   />
                 ),
               )}

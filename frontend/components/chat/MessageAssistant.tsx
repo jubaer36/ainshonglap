@@ -7,6 +7,7 @@ import { BlockRenderer } from "./BlockRenderer";
 import { QuickActionButton } from "./QuickActionButton";
 import { UnsupportedAnswer } from "./UnsupportedAnswer";
 import { BrandMark } from "@/components/brand/BrandMark";
+import { DISCLAIMER } from "@/lib/disclaimer";
 
 interface MessageAssistantProps {
   message: AssistantMessage;
@@ -15,6 +16,9 @@ interface MessageAssistantProps {
   /** Re-run the question this answer came from, optionally on another model. */
   onRetry?: (withModel?: string) => void;
   canRetry?: boolean;
+  /** The first answer to a legal question in the conversation carries the
+   *  disclaimer, once. */
+  showDisclaimer?: boolean;
 }
 
 export function MessageAssistant({
@@ -23,6 +27,7 @@ export function MessageAssistant({
   onFollowup,
   onRetry,
   canRetry = true,
+  showDisclaimer = false,
 }: MessageAssistantProps) {
   // Retry is offered where asking again could plausibly succeed: a transport
   // failure, a generator that was unreachable, a refusal that came from
@@ -133,6 +138,11 @@ export function MessageAssistant({
                   onActivateCitation={onActivateCitation}
                 />
               ))}
+              {showDisclaimer && (
+                <p>
+                  <strong>Disclaimer.</strong> {DISCLAIMER}
+                </p>
+              )}
             </div>
 
             {(message.quickActions?.length ?? 0) > 0 && (

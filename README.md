@@ -30,9 +30,10 @@ npm install
 npm run dev                       # http://localhost:3000
 ```
 
-**First time only — load the laws into Supabase.** In the Supabase SQL editor
-run `backend/db/schema.sql`, then each file in `backend/db/migrations/` in
-order. Then, from `backend/`:
+**First time only — load the laws into Supabase.** The `Laws/` folder is not in
+the repository (earlier commits contain `Laws/main/`); put the corpus files in
+`Laws/main/` first. In the Supabase SQL editor run `backend/db/schema.sql`, then
+each file in `backend/db/migrations/` in order. Then, from `backend/`:
 
 ```bash
 python scripts/load_supabase.py --all
@@ -113,7 +114,8 @@ did nothing — is in `experiments.md`.
 
 ## Limitations
 
-- Only the three core Acts are loaded; no amendments or case law.
+- The three core Acts plus the Arms Act, 1878 and the Citizenship Act, 1951 are
+  loaded; no amendments or case law. Retrieval was measured on the core three.
 - A question raising two legal issues can come back with sections for only one.
 - Answers that need reasoning from a rule to its consequence ("if I can't prove
   I'm innocent, am I guilty?") are refused even when the right sections are found.
