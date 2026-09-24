@@ -328,7 +328,9 @@ function postFormWithPhases<T>(
  *  — a PDF has a text layer that the ingestion parser reads far more reliably
  *  than a vision model can. */
 export const IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp"];
-export const IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+// Matches the server (backend/app/rag/vision.py): Groq refuses a base64 image
+// over 4 MB, which a 3 MB file just fits under.
+export const IMAGE_MAX_BYTES = 3 * 1024 * 1024;
 
 /**
  * Read the text off a single page image. Does NOT ask the question — the
@@ -341,6 +343,10 @@ export async function readImage(
   onPhase?: (phase: "uploading" | "processing", percent?: number) => void,
   conversationId?: string | null,
 ): Promise<ImageReading> {
+  // Refused before any upload, whoever calls this; the server refuses it too.
+  if (file.size > IMAGE_MAX_BYTES) {
+    throw new ApiError(413, `image is larger than ${IMAGE_MAX_BYTES / (1024 * 1024)} MB`);
+  }
   const form = new FormData();
   form.append("image", file, file.name);
   // The conversation the page belongs to, so a signed-in session can show the

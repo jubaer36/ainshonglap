@@ -113,7 +113,7 @@ export function ImageButton({
         onClick={() => inputRef.current?.click()}
         disabled={disabled || busy}
         aria-label="Read a page from an image"
-        title="Read one page from an image (PNG, JPEG or WebP, max 5 MB). PDFs are not accepted — the text lands in the box for you to check."
+        title="Read one page from an image (PNG, JPEG or WebP, max 3 MB). PDFs are not accepted. The text lands in the box for you to check."
         className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium text-slate-500 hover:text-slate-800 hover:bg-slate-200/60 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
       >
         <span className="material-symbols-outlined text-[16px]">

@@ -1,5 +1,6 @@
-"""Image input: a photo of one page -> text. The text is shown to the user to
-check; it is never an answer and never cited.
+"""Image input: a photo of one page (max 3 MB) -> text, read by Groq
+qwen3.8-27b. The text is shown to the user to check; it is never an answer and
+never cited.
 """
 
 from __future__ import annotations
@@ -8,18 +9,28 @@ import base64
 import os
 import pathlib
 
-API = "https://openrouter.ai/api/v1/chat/completions"
+API = "https://api.groq.com/openai/v1/chat/completions"
 ENV_FILE = pathlib.Path(__file__).resolve().parents[2] / ".env.local"
 
-# Confirmed image-capable through OpenRouter's models API.
-MODEL = os.getenv("RAG_VISION_MODEL", "inclusionai/ling-3.0-flash-vl:free")
+# Groq's qwen/qwen3.8-27b — its model record lists image input. Earlier
+# OpenRouter defaults were withdrawn from the free tier (ling-3.0-flash-vl) or
+# replaced. Runs on the shared GROQ_API_KEY* pool, in rotation.
+MODEL = os.getenv("RAG_VISION_MODEL", "qwen/qwen3.8-27b")
+# A reasoning model. Copying printed text needs no thinking, and thinking would
+# spend the output budget, so it is switched off and any reasoning is hidden.
+# Empty leaves both to the model.
+REASONING_EFFORT = os.getenv("RAG_VISION_REASONING", "none")
 TIMEOUT = int(os.getenv("RAG_VISION_TIMEOUT", "180"))
 
 # One page as a photo or screenshot. An allowlist rather than a blocklist: the
 # question is what we can honestly read, not what we can refuse.
 ALLOWED_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/webp"}
 ALLOWED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
-MAX_BYTES = int(os.getenv("RAG_VISION_MAX_MB", "5")) * 1024 * 1024
+# 3 MB, and not configurable upward: Groq refuses a base64 image over 4 MB, and
+# base64 adds a third — so 3 MB is the largest file that can actually be read.
+# Enforced in the browser, in the upload route (read no further than this), and
+# again in `check`.
+MAX_BYTES = min(int(os.getenv("RAG_VISION_MAX_MB", "3")), 3) * 1024 * 1024
 
 PROMPT = (
     "Transcribe ALL text in this image exactly as printed, in reading order.\n\n"
@@ -42,11 +53,15 @@ class UnsupportedImage(ValueError):
     """Not a single-page image this can honestly read."""
 
 
+class ImageTooLarge(UnsupportedImage):
+    """Over MAX_BYTES — reported as 413 rather than 415."""
+
+
 def available() -> bool:
     from dotenv import load_dotenv
 
     load_dotenv(ENV_FILE, override=True)
-    return bool(os.environ.get("OPENROUTER_API_KEY"))
+    return bool(os.environ.get("GROQ_API_KEY"))
 
 
 def check(data: bytes, content_type: str | None, filename: str | None) -> str:
@@ -59,8 +74,9 @@ def check(data: bytes, content_type: str | None, filename: str | None) -> str:
     if not data:
         raise UnsupportedImage("the file is empty")
     if len(data) > MAX_BYTES:
-        raise UnsupportedImage(
-            f"image is larger than {MAX_BYTES // (1024 * 1024)} MB")
+        raise ImageTooLarge(
+            f"image is larger than {MAX_BYTES // (1024 * 1024)} MB. Send a smaller "
+            f"photo or a screenshot of the page")
 
     # Magic bytes first — the only part of this the sender does not control.
     if data[:5] == b"%PDF-":
@@ -111,11 +127,12 @@ def read_image(data: bytes, content_type: str | None = None,
 
     mime = check(data, content_type, filename)
 
+    from app.rag import keyring
+
     load_dotenv(ENV_FILE, override=True)
-    key = os.environ.get("OPENROUTER_API_KEY")
-    if not key:
-        raise VisionUnavailable(
-            "OPENROUTER_API_KEY not set (expected in backend/.env.local)")
+    slots = keyring.rotation("GROQ_API_KEY")
+    if not slots:
+        raise VisionUnavailable("GROQ_API_KEY not set (expected in backend/.env.local)")
 
     url = f"data:{mime};base64,{base64.b64encode(data).decode()}"
     body = {
@@ -130,22 +147,45 @@ def read_image(data: bytes, content_type: str | None = None,
         "temperature": 0.0,
         "max_tokens": 8192,
     }
+    if REASONING_EFFORT:
+        body["reasoning_effort"] = REASONING_EFFORT
+        body["reasoning_format"] = "hidden"
 
-    try:
-        resp = requests.post(
-            API, json=body, timeout=TIMEOUT,
-            headers={"Authorization": f"Bearer {key}",
-                     "Content-Type": "application/json"})
-    except requests.RequestException as exc:
-        raise VisionUnavailable(f"openrouter unreachable: {type(exc).__name__}") from exc
+    def post(slot):
+        try:
+            return requests.post(
+                API, json=body, timeout=TIMEOUT,
+                headers={"Authorization": f"Bearer {slot.value}",
+                         "Content-Type": "application/json"})
+        except requests.RequestException as exc:
+            raise VisionUnavailable(f"groq unreachable: {type(exc).__name__}") from exc
+
+    # Every GROQ_API_KEY*, in turn: a key at its rate or daily limit (429) moves
+    # to the next. Anything else is the request or the model, and another key
+    # would fail the same way.
+    resp = None
+    for slot in slots:
+        resp = post(slot)
+        if resp.status_code == 400 and "reasoning" in resp.text.lower() and \
+                "reasoning_effort" in body:
+            # The model does not take these settings: ask again without them.
+            body.pop("reasoning_effort")
+            body.pop("reasoning_format")
+            resp = post(slot)
+        if resp.status_code != 429:
+            break
 
     if resp.status_code != 200:
-        raise VisionUnavailable(f"openrouter {resp.status_code}: {resp.text[:200]}")
+        raise VisionUnavailable(f"groq {resp.status_code}: {resp.text[:200]}")
 
     data_json = resp.json()
     choice = (data_json.get("choices") or [{}])[0]
-    text = ((choice.get("message") or {}).get("content") or "").strip()
+    text = ((choice.get("message") or {}).get("content") or "")
+    # Some providers inline the thinking instead of separating it.
+    import re
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.S).strip()
     if not text:
-        raise VisionUnavailable(
-            f"the model returned nothing (finish_reason={choice.get('finish_reason')})")
+        why = choice.get("finish_reason")
+        hint = " — the reasoning used up the token budget" if why == "length" else ""
+        raise VisionUnavailable(f"the model returned nothing (finish_reason={why}){hint}")
     return {"text": text, "model": body["model"], "chars": len(text)}
