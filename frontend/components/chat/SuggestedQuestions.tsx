@@ -1,7 +1,5 @@
-// Drawn from what the three indexed acts actually contain, so a first-time
-// visitor sees the system working rather than declining. The last is
-// deliberately outside the corpus: refusing is a feature, and it should be
-// reachable without having to guess a question that triggers it.
+// Drawn from what the indexed Acts actually contain, so a first-time visitor
+// sees the system working.
 const SUGGESTIONS = [
   {
     label: "Punishment for theft",
@@ -14,10 +12,6 @@ const SUGGESTIONS = [
   {
     label: "Arrest without warrant",
     question: "When can the police arrest someone without a warrant?",
-  },
-  {
-    label: "Out of scope (shows a refusal)",
-    question: "How do I register a private limited company in Bangladesh?",
   },
 ];
 
